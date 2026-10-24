@@ -134,6 +134,30 @@ tail -n +2 /tmp/cache-files | xargs stat -c '%n %i %Y' > /tmp/cache-before`);
   const started = performance.now();
   await ctr(consumer, "images", "pull", "--platform", platform, "--snapshotter", "erofs", base);
   console.log(`${platform}: preload ${((performance.now() - started) / 1000).toFixed(2)}s`);
+  // Reproduce systemd's cgroup layout: init lives in a child while the parent
+  // delegates a domain controller. CLONE_INTO_CGROUP(parent) must fail EBUSY,
+  // then runc must use a fresh exec.Cmd and join init's actual child cgroup.
+  await exec(consumer, "docker", "run", "--detach", "--name", "exec-cgroup-check",
+    "--privileged", "--cgroupns=host", "--network=none", "--entrypoint", "sh", base, "-ec", `
+parent="/sys/fs/cgroup$(awk -F: '$1 == 0 {print $3}' /proc/self/cgroup)"
+mkdir "$parent/exec-child"
+echo $$ > "$parent/exec-child/cgroup.procs"
+echo +memory > "$parent/cgroup.subtree_control"
+touch /tmp/exec-cgroup-ready
+exec sleep infinity
+`);
+  for (let attempt = 0; ; attempt++) {
+    const ready = await command(["docker", "exec", consumer, "docker", "exec", "exec-cgroup-check", "test", "-f", "/tmp/exec-cgroup-ready"], false);
+    if (ready.code === 0) break;
+    assert(attempt < 30, `cgroup exec fixture failed: ${ready.stderr}`);
+    await Bun.sleep(100);
+  }
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const actual = await exec(consumer, "docker", "exec", "exec-cgroup-check", "cat", "/proc/self/cgroup");
+    assert.match(actual.trim(), /\/exec-child$/, "exec must join init's delegated child cgroup");
+  }
+  await exec(consumer, "docker", "rm", "--force", "exec-cgroup-check");
+  console.log(`${platform}: cgroup-v2 exec fallback passed`);
   const assertNoBaseBlobs = async () => {
     const content = new Set((await ctr(consumer, "content", "list", "--quiet")).trim().split("\n"));
     for (const digest of baseLayers) assert(!content.has(digest), `base blob downloaded: ${digest}`);

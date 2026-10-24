@@ -117,11 +117,15 @@ ADD --checksum=sha256:953fb6d2f4b6284284939d7d2659b1bc0a20f748d210f9f7f8f5f47ba0
 WORKDIR /src
 RUN tar xf /tmp/runc.tar.xz --strip-components=1 && tar xf /tmp/debian.tar.xz \
     && while read -r patch; do case "$patch" in ''|'#'*) continue ;; esac; git apply "debian/patches/$patch"; done < debian/patches/series
+# Upstream runc #5091: Go 1.26 forbids retrying Start on the same exec.Cmd.
+# Systemd moves init to a child cgroup, forcing CLONE_INTO_CGROUP to fall back.
+COPY patches/0007-runc-go126-exec-retry.patch /tmp/exec-retry.patch
+RUN git apply /tmp/exec-retry.patch
 ARG TARGETARCH
 RUN --mount=type=cache,id=kintsugi-runtime-runc-go,target=/root/.cache/go-build \
     case "$TARGETARCH" in arm64) compiler=aarch64-linux-gnu ;; amd64) compiler=x86_64-linux-gnu ;; *) exit 1 ;; esac \
     && CGO_ENABLED=1 GOOS=linux GOARCH="$TARGETARCH" CC="${compiler}-gcc" PKG_CONFIG_LIBDIR="/usr/lib/${compiler}/pkgconfig" \
-      go build -mod=vendor -trimpath -tags 'apparmor seccomp selinux ambient' -ldflags '-s -w -X main.version=1.4.0-0ubuntu1' -o /out/runc .
+      go build -mod=vendor -trimpath -tags 'apparmor seccomp selinux ambient' -ldflags '-s -w -X main.version=1.4.0-0ubuntu1+kintsugi-exec-retry' -o /out/runc .
 
 FROM ubuntu AS runtime
 LABEL org.opencontainers.image.title="Kintsugi Docker runtime" \

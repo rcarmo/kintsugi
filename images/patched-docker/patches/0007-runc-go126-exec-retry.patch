@@ -1,0 +1,144 @@
+From 82b7597a26726b6d52967f4142678e30be5ff870 Mon Sep 17 00:00:00 2001
+From: Kir Kolyshkin <kolyshkin@gmail.com>
+Date: Thu, 29 Jan 2026 13:39:45 -0800
+Subject: [PATCH 2/3] libct: check cmd.Err after exec.Command call
+
+Theoretically, exec.Command can set cmd.Err.
+
+Practically, this should never happen (Linux, Go <= 1.26, exePath is
+absolute), but in the unlikely case it does, let's fail early.
+
+This is related to the cloneCmd (to be introduced by the following
+commit) which chooses to not copy the Err field. Theoretically,
+exec.Command can set Err and so the first call to cmd.Start will fail
+(since Err != nil), and the second call to cmd.Start may succeed because
+Err == nil. Yet, this scenario is highly unlikely, but better be safe
+than sorry.
+
+Signed-off-by: Kir Kolyshkin <kolyshkin@gmail.com>
+---
+ libcontainer/container_linux.go | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/libcontainer/container_linux.go b/libcontainer/container_linux.go
+index af9172a89a4..b4368547caf 100644
+--- a/libcontainer/container_linux.go
++++ b/libcontainer/container_linux.go
+@@ -528,6 +528,12 @@ func (c *Container) newParentProcess(p *Process) (parentProcess, error) {
+ 	}
+ 
+ 	cmd := exec.Command(exePath, "init")
++	// Theoretically, exec.Command can set cmd.Err. Practically, this
++	// should never happen (Linux, Go <= 1.26, exePath is absolute),
++	// but in the unlikely case it just did, let's fail early.
++	if cmd.Err != nil {
++		return nil, fmt.Errorf("exec.Command: %w", cmd.Err)
++	}
+ 	cmd.Args[0] = os.Args[0]
+ 	cmd.Stdin = p.Stdin
+ 	cmd.Stdout = p.Stdout
+
+From cb31d62f1ca71843dc9851c9be993b1a0d30c8a9 Mon Sep 17 00:00:00 2001
+From: Kir Kolyshkin <kolyshkin@gmail.com>
+Date: Mon, 26 Jan 2026 16:46:36 -0800
+Subject: [PATCH 3/3] Fix exec vs Go 1.26
+
+Since [PR 4812], runc exec tries to use clone3 syscall with
+CLONE_INTO_CGROUP, falling back to the old method if it is not
+supported.
+
+One issue with that approach is, a
+
+> Cmd cannot be reused after calling its [Cmd.Start], [Cmd.Run],
+> [Cmd.Output], or [Cmd.CombinedOutput] methods.
+
+(from https://pkg.go.dev/os/exec#Cmd).
+
+This is enforced since Go 1.26, see [CL 728642], and so runc exec
+actually fails in specific scenarios (go1.26 and no CLONE_INTO_CGROUP
+support).
+
+The easiest workaround is to pre-copy the p.cmd structure (copy = *cmd).
+From the [CL 734200] it looks like it is an acceptable way, but it might
+break in the future as it also copies the private fields, so let's do a
+proper field-by-field copy. If the upstream will add cmd.Clone method,
+we will switch to it.
+
+Also, we can probably be fine with a post-copy (once the first Start has
+failed), but let's be conservative here and do a pre-copy.
+
+[PR 4812]: https://github.com/opencontainers/runc/pull/4812
+[CL 728642]: https://go.dev/cl/728642
+[CL 734200]: https://go.dev/cl/734200
+
+Reported-by: Efim Verzakov <efimverzakov@gmail.com>
+Signed-off-by: Kir Kolyshkin <kolyshkin@gmail.com>
+---
+ libcontainer/cmd_clone.go     | 37 +++++++++++++++++++++++++++++++++++
+ libcontainer/process_linux.go |  5 ++++-
+ 2 files changed, 41 insertions(+), 1 deletion(-)
+ create mode 100644 libcontainer/cmd_clone.go
+
+diff --git a/libcontainer/cmd_clone.go b/libcontainer/cmd_clone.go
+new file mode 100644
+index 00000000000..67418070f08
+--- /dev/null
++++ b/libcontainer/cmd_clone.go
+@@ -0,0 +1,37 @@
++package libcontainer
++
++import "os/exec"
++
++// cloneCmd creates a copy of exec.Cmd. It is needed because cmd.Start
++// must only be used once, and go1.26 actually enforces that (see
++// https://go-review.googlesource.com/c/go/+/728642). The implementation
++// is similar to
++//
++//	cmd = *c
++//	return &cmd
++//
++// except it does not copy private fields, or fields populated
++// after the call to cmd.Start.
++//
++// NOTE if Go will add exec.Cmd.Clone, we should switch to it.
++func cloneCmd(c *exec.Cmd) *exec.Cmd {
++	cmd := &exec.Cmd{
++		Path:        c.Path,
++		Args:        c.Args,
++		Env:         c.Env,
++		Dir:         c.Dir,
++		Stdin:       c.Stdin,
++		Stdout:      c.Stdout,
++		Stderr:      c.Stderr,
++		ExtraFiles:  c.ExtraFiles,
++		SysProcAttr: c.SysProcAttr,
++		// Don't copy Process, ProcessState, Err since
++		// these fields are populated after the start.
++
++		// Technically, we do not use Cancel or WaitDelay,
++		// but they are here for the sake of completeness.
++		Cancel:    c.Cancel,
++		WaitDelay: c.WaitDelay,
++	}
++	return cmd
++}
+diff --git a/libcontainer/process_linux.go b/libcontainer/process_linux.go
+index b3487fd0b1b..fd075d4b9ad 100644
+--- a/libcontainer/process_linux.go
++++ b/libcontainer/process_linux.go
+@@ -380,11 +380,14 @@ func (p *setnsProcess) startWithCgroupFD() error {
+ 		defer fd.Close()
+ 	}
+ 
++	cmdCopy := cloneCmd(p.cmd)
+ 	err = p.startWithCPUAffinity()
+ 	if err != nil && p.cmd.SysProcAttr.UseCgroupFD {
+ 		logrus.Debugf("exec with CLONE_INTO_CGROUP failed: %v; retrying without", err)
+ 		// SysProcAttr.CgroupFD is never used when UseCgroupFD is unset.
+-		p.cmd.SysProcAttr.UseCgroupFD = false
++		cmdCopy.SysProcAttr.UseCgroupFD = false
++		// Must not reuse exec.Cmd.
++		p.cmd = cmdCopy
+ 		err = p.startWithCPUAffinity()
+ 	}
+ 
