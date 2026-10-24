@@ -50,7 +50,7 @@ The name comes from **金継ぎ**, the Japanese art of repairing pottery with go
 
 ## Installation
 
-The current release is [v0.4.6](https://github.com/rcarmo/kintsugi/releases/tag/v0.4.6); see the [release notes](https://github.com/rcarmo/kintsugi/releases/tag/v0.4.6). Releases publish app, System and workspace images and advance `latest`; `stable` is promoted separately. Publishing does not update or restart an installation.
+The current release is [v0.4.7](https://github.com/rcarmo/kintsugi/releases/tag/v0.4.7); see the [release notes](release_notes/v0.4.7.md). Releases publish app, System and workspace images and advance `latest`; `stable` is promoted separately. Publishing does not update or restart an installation.
 
 Use a dedicated Linux server with Docker. The installer defaults to `ghcr.io/rcarmo/kintsugi` and `ghcr.io/rcarmo/kintsugi-system`; matching images must be available before installation.
 
