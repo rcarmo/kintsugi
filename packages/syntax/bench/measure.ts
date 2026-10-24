@@ -15,7 +15,8 @@ export interface Measurement {
 
 export async function measure(path: HighlightPath, fixture: Fixture, chunkSize = 0, budgetMs = 10_000): Promise<Measurement> {
   const code = source(fixture);
-  const inputLength = path === "write" ? JSON.stringify({ path: fixture, content: code }).length : code.length;
+  // child.ts streams decoded content into renderToolCard, not serialized tool JSON.
+  const inputLength = code.length;
   const child = Bun.spawn([process.execPath, new URL("./child.ts", import.meta.url).pathname, path, fixture, String(chunkSize)], {
     stdout: "pipe", stderr: "pipe",
   });

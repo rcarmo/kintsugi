@@ -445,8 +445,8 @@ done
 
 Existing workspaces are discovered before the server starts listening. Each active
 workspace then runs its startup checklist in the background with phase `provisioningPhase`.
-Readiness checks the ingress and egress gateways, parent sockets, and the workspace's
-saved image preload list. Failure retains the container for repair and presents
+Workspace preparation checks the ingress and egress gateways and parent sockets,
+and installs the workspace's saved preloaded images. Failure retains the container for repair and presents
 **Retry** and **Continue anyway**. Use
 `POST /workspaces/:id/provisioning/continue?action=retry` to retry runtime preparation,
 or omit the query parameter to explicitly bypass the failure. Bypassing makes the
@@ -454,9 +454,10 @@ workspace enter `runningPhase` while retaining its preparation warning. Until st
 the workspace shows its checklist instead of its Agents or Work views. Kintsugi and
 other workspaces remain available throughout.
 
-The list and detail responses include optional `issues` entries with `kind` and
-`message`. Image inspection runs independently at Kintsugi startup. Readiness checks
-run again when a workspace resumes or Kintsugi restarts; bypassing a failure does not
+The list and detail responses include optional `warnings` entries with `kind` and
+`message`. Running workspace details also include each warning's `title`, `state`
+and `action`. Image inspection runs independently at Kintsugi startup. Workspace
+preparation runs again when a workspace resumes or Kintsugi restarts; bypassing a failure does not
 permanently disable checks. Existing workspaces keep their saved preload references
 when template settings change.
 
@@ -510,6 +511,26 @@ Rename with `POST /workspaces/:id/sidebar-title` and `{ "title": "..." }`. Park,
 - `POST /workspaces/:id/agents/:agentId/abort`
 
 Message submission returns `202 Accepted`; it does not wait for inference to finish.
+For Builtin Agents, `mode` defaults to `"steer"`: while the Agent is busy, it joins
+the running turn. `"send"` and `"followUp"` queue the message until that turn ends.
+Newly accepted submissions include an `x-kintsugi-submission-id` response header;
+retain it to address that submission. An already-known `requestId` returns an
+acknowledgement without creating a second submission.
+An optional `requestId` (1–128 letters, numbers, underscores or hyphens) makes a
+retried message submission idempotent; reuse it only for that same submission.
+
+- `POST /workspaces/:id/agents/:agentId/queued-inputs/:submissionId/steer`
+  turns a queued follow-up into steering. If the Agent is idle after a failed turn
+  with input still queued, it resumes the queue in written order without resending.
+  JSON replies include `{ "input": { "submissionId": "...", "steered": true } }`;
+  `steered: false` means that submission could not be steered.
+- `POST /workspaces/:id/agents/:agentId/queued-inputs/:submissionId/cancel`
+  cancels that queued submission. JSON replies include the submission ID and a
+  boolean `cancelled` result.
+
+Use `Accept: application/json` and the matching `Origin` header for these requests.
+Claude Code and Codex steer busy sessions automatically; `/openapi.json` describes
+the routes supported by each Agent type.
 
 ## Present the result
 

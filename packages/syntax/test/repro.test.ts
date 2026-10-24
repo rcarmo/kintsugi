@@ -19,6 +19,19 @@ describe("Slay highlighting reproducer", () => {
     expect([...prefixes("abcdef", 3)]).toEqual(["abc", "abcdef"]);
   });
 
+  test("counts decoded write prefixes rather than the obsolete serialized-JSON length", async () => {
+    const code = source("style.css");
+    const result = await measure("write", "style.css", 32);
+    const expected = [...prefixes(code, 32)].length;
+    expect(expected).not.toBe(Math.ceil(JSON.stringify({ path: "style.css", content: code }).length / 32));
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.timedOut).toBe(false);
+    expect(result.expectedUpdates).toBe(expected);
+    expect(result.samples).toHaveLength(expected);
+    expect(result.samples.at(-1)!.inputCharacters).toBe(code.length);
+  }, 15_000);
+
   test("measures actual write highlighter invocations", async () => {
     const result = await measure("write", "board.js", 2048);
     expect(result.stderr).toBe("");
