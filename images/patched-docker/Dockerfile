@@ -1,14 +1,14 @@
 # syntax=docker/dockerfile:1
 # Shared base for workspace and service daemons. Neither Kintsugi nor workspace
 # policy belongs here. Build from this directory with ./build.sh --load.
-FROM docker:29.6.1-dind@sha256:66d292e5c26bd33a6f6f61cacb880de2186339a524ecba1ce098dbbaceed6515 AS docker-tools
+FROM docker:29.9.2-dind@sha256:9e79b879b177fbd72c34376a3dd3d91747da5db49e1f560f76aea59561471977 AS docker-tools
 FROM ubuntu:26.04@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d AS ubuntu
 
 # Compile natively, including CGO/seccomp, even when targeting the other CPU.
-FROM --platform=$BUILDPLATFORM golang:1.26.10@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS go-toolchain
+FROM --platform=$BUILDPLATFORM golang:1.27.3@sha256:b76020929b709ddb6202afc05410a0faefae20ae05e27ad548b3870092688a69 AS go-toolchain
 # Build-only settings; the Ubuntu runtime inherits none of these.
 ENV GOTOOLCHAIN=local GOMAXPROCS=2 GOFLAGS=-p=2
-RUN test "$(go env GOVERSION)" = go1.26.10
+RUN test "$(go env GOVERSION)" = go1.27.3
 
 FROM go-toolchain AS cgo-toolchain
 ARG TARGETARCH
@@ -19,14 +19,15 @@ RUN dpkg --add-architecture "$TARGETARCH" \
     && rm -rf /var/lib/apt/lists/*
 FROM cgo-toolchain AS build
 ARG TARGETARCH
-# Parent of Moby PR #53126: pin the source, then apply both reviewable patches.
-ADD --checksum=sha256:60063d5e609c498333bad7a2c0c4be43abe417aabdaacac0137f6ef4519f357a \
-    https://codeload.github.com/moby/moby/tar.gz/0584603b8c3a7ad224a2932ccdab0d17d6202687 /tmp/moby.tar.gz
+# Docker v29.9.2: pin the source and apply the reviewed EROFS/cache patches.
+ADD --checksum=sha256:80c3d6f0cdc01d97be093563a9457c281f23f53ba4f36f5e49d9558322ea13cd \
+    https://codeload.github.com/moby/moby/tar.gz/0367cbeb49b9d98cb0b4f51e95f7b54b4803e76c /tmp/moby.tar.gz
 WORKDIR /src
 RUN tar xzf /tmp/moby.tar.gz --strip-components=1 && rm /tmp/moby.tar.gz
 COPY patches/ /patches/
 RUN git apply /patches/0001-moby-mount-manager.patch \
-    && git apply /patches/0002-buildkit-erofs.patch
+    && git apply /patches/0002-buildkit-erofs.patch \
+    && git apply /patches/0007-buildkit-erofs-cache-staging.patch
 RUN --mount=type=cache,id=patched-docker-go-${TARGETARCH},target=/root/.cache/go-build \
     /usr/local/go/bin/go test -mod=vendor \
       github.com/moby/buildkit/snapshot \
@@ -41,7 +42,7 @@ RUN --mount=type=cache,id=patched-docker-go-${TARGETARCH},target=/root/.cache/go
       PKG_CONFIG_LIBDIR="/usr/lib/${compiler}/pkgconfig" \
       /usr/local/go/bin/go build -mod=vendor -trimpath \
       -tags 'seccomp exclude_graphdriver_btrfs' \
-      -ldflags '-X github.com/moby/moby/v2/dockerversion.Version=kintsugi-erofs-1 -X github.com/moby/moby/v2/dockerversion.GitCommit=0584603+kintsugi-erofs' \
+      -ldflags '-X github.com/moby/moby/v2/dockerversion.Version=29.9.2-kintsugi-erofs -X github.com/moby/moby/v2/dockerversion.GitCommit=0367cbe+kintsugi-erofs' \
       -o /out/ ./cmd/dockerd ./cmd/docker-proxy \
     && /usr/local/go/bin/go version -m /out/dockerd > /out/build-info.txt
 
@@ -59,8 +60,8 @@ RUN --mount=type=cache,id=kintsugi-image-transfer-go,target=/root/.cache/go-buil
 # Patch ctr cache leases and the daemon's empty-mount EROFS differ dispatch.
 # Compile the daemon, clients and shims with the same Go toolchain.
 FROM go-toolchain AS containerd-patched
-ADD --checksum=sha256:110aba8239bedd0efc7d359fa211b7ed1634713c3c05da3dd43a5b33d4a40194 \
-    https://codeload.github.com/containerd/containerd/tar.gz/58e6cee9dee67ee87ee2f727d3570009050f9954 /tmp/containerd.tar.gz
+ADD --checksum=sha256:e38df0eeb40d2304f3450edb148aee838cb0a57f3976a47c78870f92c80f1796 \
+    https://codeload.github.com/containerd/containerd/tar.gz/b7a25261e029d68978bbf290df0a62fc819b3c51 /tmp/containerd.tar.gz
 WORKDIR /src
 RUN tar xzf /tmp/containerd.tar.gz --strip-components=1 && rm /tmp/containerd.tar.gz
 COPY patches/0003-containerd-erofs-cache-lease.patch /tmp/lease.patch
@@ -72,60 +73,58 @@ ARG TARGETARCH
 RUN --mount=type=cache,id=kintsugi-ctr-go,target=/root/.cache/go-build \
     go test -mod=vendor ./internal/erofsutils \
     && CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" go build -mod=vendor -trimpath \
-      -ldflags '-X github.com/containerd/containerd/v2/version.Version=v2.4.0-beta.0-kintsugi -X github.com/containerd/containerd/v2/version.Revision=58e6cee9dee67ee87ee2f727d3570009050f9954+cache-lease+mount-root+cache-reuse+loop-node' \
+      -ldflags '-X github.com/containerd/containerd/v2/version.Version=v2.4.2-kintsugi -X github.com/containerd/containerd/v2/version.Revision=b7a25261e029d68978bbf290df0a62fc819b3c51+cache-lease+mount-root+cache-reuse+loop-node' \
       -o /out/ ./cmd/ctr ./cmd/containerd ./cmd/containerd-shim-runc-v2 ./cmd/containerd-stress
 
-# Preserve CLI/plugin versions, rebuilding pinned sources with the current Go.
+# Rebuild the matching, pinned CLI/plugin sources with the same Go toolchain.
 FROM go-toolchain AS docker-cli
-ADD --checksum=sha256:41540b35a1157e76eb1a3c3e87dd196896a8e76b27c4bfcafb826dbc15b0acd9 \
-    https://codeload.github.com/docker/cli/tar.gz/8900f1d330cb39e93e16d780a26bff1d7e07ba03 /tmp/source.tar.gz
+ADD --checksum=sha256:cdc8005e1958e90c035971b838cf333dc7602868c4e3ee2ccec859cf0ddc3c78 \
+    https://codeload.github.com/docker/cli/tar.gz/a82e528901260c8df6073311379eac65f92db204 /tmp/source.tar.gz
 WORKDIR /src
 RUN tar xzf /tmp/source.tar.gz --strip-components=1 && rm /tmp/source.tar.gz && cp vendor.mod go.mod
 ARG TARGETARCH
 RUN --mount=type=cache,id=kintsugi-runtime-cli-go,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" go build -mod=vendor -trimpath -tags 'grpcnotrace osusergo netgo' \
-      -ldflags '-s -w -X github.com/docker/cli/cli/version.GitCommit=8900f1d -X github.com/docker/cli/cli/version.Version=29.6.1' \
+      -ldflags '-s -w -X github.com/docker/cli/cli/version.GitCommit=a82e528 -X github.com/docker/cli/cli/version.Version=29.9.2' \
       -o /out/docker ./cmd/docker
 
 FROM go-toolchain AS buildx
-ADD --checksum=sha256:9946be04c616cf0ca14ad0f41561f4cd6a41545b6303bc945d83e9fcada3625b \
-    https://codeload.github.com/docker/buildx/tar.gz/a319e5b15052cf6557ceb666eb8ff6e32380b782 /tmp/source.tar.gz
+ADD --checksum=sha256:c5c810b083ed3725f7d4299ba01505b5891d164cf81c3398ea4c3b27a3b71149 \
+    https://codeload.github.com/docker/buildx/tar.gz/0dbe87f36ed472fe36b6796c3f70b4210a731fc5 /tmp/source.tar.gz
 WORKDIR /src
 RUN tar xzf /tmp/source.tar.gz --strip-components=1 && rm /tmp/source.tar.gz
 ARG TARGETARCH
 RUN --mount=type=cache,id=kintsugi-runtime-buildx-go,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" go build -mod=vendor -trimpath \
-      -ldflags '-s -w -X github.com/docker/buildx/version.Version=v0.35.0 -X github.com/docker/buildx/version.Revision=a319e5b15052cf6557ceb666eb8ff6e32380b782' \
+      -ldflags '-s -w -X github.com/docker/buildx/version.Version=v0.38.1 -X github.com/docker/buildx/version.Revision=0dbe87f36ed472fe36b6796c3f70b4210a731fc5' \
       -o /out/docker-buildx ./cmd/buildx
 
 FROM go-toolchain AS compose
-ADD --checksum=sha256:0a9f43689fd7a512f50849e83036e7fb771b87afb17ee6301f4cbaacfb798a77 \
-    https://codeload.github.com/docker/compose/tar.gz/3d0dd57fbd634d78fd440c08bd4c143eb1f9d5e0 /tmp/source.tar.gz
+ADD --checksum=sha256:2293b570f258dfc6e38e0bfdd3fa0e710324a7cf0449994304b524af8fb4f06c \
+    https://codeload.github.com/docker/compose/tar.gz/6cbc19a3fd59e305fb814dca4d854a4fb67d2941 /tmp/source.tar.gz
 WORKDIR /src
 RUN tar xzf /tmp/source.tar.gz --strip-components=1 && rm /tmp/source.tar.gz && go mod download
 ARG TARGETARCH
 RUN --mount=type=cache,id=kintsugi-runtime-compose-go,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" go build -mod=readonly -trimpath -tags e2e \
-      -ldflags '-s -w -X github.com/docker/compose/v5/internal.Version=v5.2.0' -o /out/docker-compose ./cmd
+      -ldflags '-s -w -X github.com/docker/compose/v5/internal.Version=v5.6.1' -o /out/docker-compose ./cmd
 
-# Preserve Ubuntu's runc source and patch set, not its Go 1.24 build.
+# Build runc 1.5.2 with the same Go; retain Ubuntu's test-only patches and licence metadata.
 FROM cgo-toolchain AS runc
-ADD --checksum=sha256:6a05f22e6aac3a8a47690bc8acac10e53303e5605536df5efe4ebeae30783ded \
-    https://ports.ubuntu.com/ubuntu-ports/pool/main/r/runc-app/runc-app_1.4.0.orig.tar.xz /tmp/runc.tar.xz
+ADD --checksum=sha256:5386e1968f70cc1482b4b2a93dc1a88ea7fa5517fba49b9e0fafe614d5a4c97a \
+    https://codeload.github.com/opencontainers/runc/tar.gz/29dd3dc2b13b4123162e5fe132504bb4b15569f1 /tmp/runc.tar.gz
 ADD --checksum=sha256:953fb6d2f4b6284284939d7d2659b1bc0a20f748d210f9f7f8f5f47ba04c35e5 \
     https://ports.ubuntu.com/ubuntu-ports/pool/main/r/runc-app/runc-app_1.4.0-0ubuntu1.debian.tar.xz /tmp/debian.tar.xz
 WORKDIR /src
-RUN tar xf /tmp/runc.tar.xz --strip-components=1 && tar xf /tmp/debian.tar.xz \
+RUN tar xf /tmp/runc.tar.gz --strip-components=1 && tar xf /tmp/debian.tar.xz \
     && while read -r patch; do case "$patch" in ''|'#'*) continue ;; esac; git apply "debian/patches/$patch"; done < debian/patches/series
-# Upstream runc #5091: Go 1.26 forbids retrying Start on the same exec.Cmd.
-# Systemd moves init to a child cgroup, forcing CLONE_INTO_CGROUP to fall back.
-COPY patches/0007-runc-go126-exec-retry.patch /tmp/exec-retry.patch
-RUN git apply /tmp/exec-retry.patch
+# runc 1.5.2 already includes #5091: check cmd.Err and clone exec.Cmd before
+# retrying CLONE_INTO_CGROUP. The delegated-cgroup smoke gate must still pass.
 ARG TARGETARCH
 RUN --mount=type=cache,id=kintsugi-runtime-runc-go,target=/root/.cache/go-build \
     case "$TARGETARCH" in arm64) compiler=aarch64-linux-gnu ;; amd64) compiler=x86_64-linux-gnu ;; *) exit 1 ;; esac \
     && CGO_ENABLED=1 GOOS=linux GOARCH="$TARGETARCH" CC="${compiler}-gcc" PKG_CONFIG_LIBDIR="/usr/lib/${compiler}/pkgconfig" \
-      go build -mod=vendor -trimpath -tags 'apparmor seccomp selinux ambient' -ldflags '-s -w -X main.version=1.4.0-0ubuntu1+kintsugi-exec-retry' -o /out/runc .
+      go build -mod=vendor -trimpath -tags 'apparmor seccomp selinux ambient' -ldflags '-s -w -X main.version=1.5.2+kintsugi' -o /out/runc .
 
 FROM ubuntu AS runtime
 LABEL org.opencontainers.image.title="Kintsugi Docker runtime" \
@@ -160,13 +159,13 @@ COPY --from=runtime /usr/local/bin/ /verify/bin/
 COPY --from=runtime /usr/local/libexec/docker/cli-plugins/ /verify/plugins/
 COPY --from=runtime /usr/bin/runc /verify/bin/runc
 RUN set -eu; for name in dockerd docker docker-proxy containerd ctr containerd-shim-runc-v2 containerd-stress kintsugi-image-transfer runc; do \
-      file="/verify/bin/$name"; test "$(go version -m "$file" | head -1 | awk '{print $2}')" = go1.26.10; go version -m "$file" >> /verified-build-info.txt; \
+      file="/verify/bin/$name"; test "$(go version -m "$file" | head -1 | awk '{print $2}')" = go1.27.3; go version -m "$file" >> /verified-build-info.txt; \
     done; for file in /verify/plugins/*; do \
-      test "$(go version -m "$file" | head -1 | awk '{print $2}')" = go1.26.10; go version -m "$file" >> /verified-build-info.txt; \
+      test "$(go version -m "$file" | head -1 | awk '{print $2}')" = go1.27.3; go version -m "$file" >> /verified-build-info.txt; \
     done
 
 FROM runtime AS final
-LABEL org.kintsugi.go-version="go1.26.10"
+LABEL org.kintsugi.go-version="go1.27.3"
 COPY --from=verify-go /verified-build-info.txt /usr/share/kintsugi-patched-docker/go-build-info.txt
 COPY --from=docker-cli /src/LICENSE /src/NOTICE /usr/share/kintsugi-patched-docker/cli/
 COPY --from=buildx /src/LICENSE /usr/share/kintsugi-patched-docker/buildx/LICENSE

@@ -1,0 +1,133 @@
+Kintsugi downstream patch against vendored BuildKit v0.34.0 (docker-v29.9.2).
+BuildKit 0.34 (GHSA-f2v9-hprr-32q3) no longer reuses snapshots named by a raw
+ChainID, so base layers that containerd's EROFS snapshotter serves from the
+shared layer content cache were fetched and applied again, and failed offline.
+On the erofs snapshotter, extract a layer by asking for the cache first: Prepare
+with the snapshot.ref and diff-id labels containerd's unpacker uses, and commit
+under BuildKit's own versioned ID when the snapshotter reports a cache-backed
+blob. Only the snapshotter sets that label, on a snapshot BuildKit just created,
+and cache entries are keyed by a DiffID verified when the cache was built.
+On a miss the same snapshot takes the normal fetch, apply and DiffID check.
+
+diff --git a/vendor/github.com/moby/buildkit/cache/erofscache.go b/vendor/github.com/moby/buildkit/cache/erofscache.go
+new file mode 100644
+index 0000000..786db57
+--- /dev/null
++++ b/vendor/github.com/moby/buildkit/cache/erofscache.go
+@@ -0,0 +1,39 @@
++package cache
++
++import (
++	"context"
++
++	"github.com/containerd/containerd/v2/core/snapshots"
++)
++
++// Containerd's EROFS snapshotter records a layer's blob source itself. The probe
++// snapshot below is created by BuildKit with only the labels passed here, so a
++// "cache" source can only come from the snapshotter: an operator-owned blob
++// keyed by a DiffID that was verified when the cache entry was built.
++const (
++	erofsSnapshotterName = "erofs"
++	erofsBlobSourceLabel = "io.containerd.erofs.v1/blob.source"
++	erofsBlobSourceCache = "cache"
++	snapshotDiffIDLabel  = "containerd.io/snapshot/diff-id"
++	snapshotRefLabel     = "containerd.io/snapshot.ref"
++)
++
++// prepareFromErofsCache prepares the layer's extraction snapshot the way
++// containerd's unpacker does, so the EROFS snapshotter can serve it from its
++// layer content cache. It reports whether it did; the snapshot is then complete
++// and only needs committing under BuildKit's own versioned ID, on top of the
++// parent BuildKit already unlazied. Otherwise it is an ordinary writable
++// extraction snapshot for the blob to be applied to.
++func (sr *immutableRef) prepareFromErofsCache(ctx context.Context, key, parentID string) (bool, error) {
++	if err := sr.cm.Snapshotter.Prepare(ctx, key, parentID, snapshots.WithLabels(map[string]string{
++		snapshotRefLabel:    sr.getSnapshotID(),
++		snapshotDiffIDLabel: sr.getDiffID().String(),
++	})); err != nil {
++		return false, err
++	}
++	info, err := sr.cm.Snapshotter.Stat(ctx, key)
++	if err != nil {
++		return false, err
++	}
++	return info.Labels[erofsBlobSourceLabel] == erofsBlobSourceCache, nil
++}
+diff --git a/vendor/github.com/moby/buildkit/cache/refs.go b/vendor/github.com/moby/buildkit/cache/refs.go
+index 4b0005d..3408cc3 100644
+--- a/vendor/github.com/moby/buildkit/cache/refs.go
++++ b/vendor/github.com/moby/buildkit/cache/refs.go
+@@ -1369,8 +1369,37 @@ func (sr *immutableRef) unlazyLayer(ctx context.Context, dhs DescHandlers, pg pr
+ 
+ 	eg, egctx := errgroup.WithContext(ctx)
+ 
++	key := fmt.Sprintf("extract-%s %s", identity.NewID(), sr.getChainID())
+ 	parentID := ""
+-	if sr.layerParent != nil {
++	if !ensureContentStore && sr.cm.Snapshotter.Name() == erofsSnapshotterName && sr.getDiffID() != "" {
++		// A layer in the EROFS layer content cache needs neither its blob nor an
++		// apply. Its parent must be in place first, so on this snapshotter the
++		// parent's extraction no longer overlaps with this layer's fetch.
++		if sr.layerParent != nil {
++			if err := sr.layerParent.unlazy(ctx, dhs, pg, s, false, ensureContentStore); err != nil {
++				return err
++			}
++			parentID = sr.layerParent.getSnapshotID()
++		}
++		activeKey = key
++		staged, err := sr.prepareFromErofsCache(ctx, key, parentID)
++		if err != nil {
++			return err
++		}
++		removeActive = true
++		if staged {
++			if err := sr.cm.Snapshotter.Commit(ctx, sr.getSnapshotID(), key); err != nil {
++				if !errors.Is(err, cerrdefs.ErrAlreadyExists) {
++					return err
++				}
++			} else {
++				removeActive = false
++			}
++			sr.queueBlobOnly(false)
++			sr.queueSize(sizeUnknown)
++			return sr.commitMetadata()
++		}
++	} else if sr.layerParent != nil {
+ 		eg.Go(func() error {
+ 			if err := sr.layerParent.unlazy(egctx, dhs, pg, s, false, ensureContentStore); err != nil {
+ 				return err
+@@ -1415,21 +1444,20 @@ func (sr *immutableRef) unlazyLayer(ctx context.Context, dhs DescHandlers, pg pr
+ 	))
+ 	defer sp.End()
+ 
+-	key := fmt.Sprintf("extract-%s %s", identity.NewID(), sr.getChainID())
+-	activeKey = key
+-
+-	if sr.cm.Snapshotter.Name() == "overlaybd" {
+-		err = sr.cm.Snapshotter.Prepare(ctx, key, parentID,
+-			snapshots.WithLabels(map[string]string{"containerd.io/snapshot.ref": sr.getSnapshotID()}))
+-	} else {
+-		err = sr.cm.Snapshotter.Prepare(ctx, key, parentID)
+-	}
+-	if err != nil {
+-		return err
++	if activeKey == "" {
++		activeKey = key
++		if sr.cm.Snapshotter.Name() == "overlaybd" {
++			err = sr.cm.Snapshotter.Prepare(ctx, key, parentID,
++				snapshots.WithLabels(map[string]string{"containerd.io/snapshot.ref": sr.getSnapshotID()}))
++		} else {
++			err = sr.cm.Snapshotter.Prepare(ctx, key, parentID)
++		}
++		if err != nil {
++			return err
++		}
++		removeActive = true
+ 	}
+ 
+-	removeActive = true
+-
+ 	mountable, err := sr.cm.Snapshotter.Mounts(ctx, key)
+ 	if err != nil {
+ 		return err

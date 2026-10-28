@@ -18,7 +18,7 @@ const volumes = [cache, `${producer}-data`, `${consumer}-data`];
 const containers: string[] = [];
 const createdVolumes: string[] = [];
 const context = await mkdtemp(join(tmpdir(), "kintsugi-runtime-smoke-"));
-const base = "docker.io/library/golang:1.26.10@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82";
+const base = "docker.io/library/golang:1.27.3@sha256:b76020929b709ddb6202afc05410a0faefae20ae05e27ad548b3870092688a69";
 
 async function command(args: string[], check = true) {
   const child = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
@@ -33,6 +33,17 @@ async function exec(container: string, ...args: string[]) {
 }
 async function ctr(container: string, ...args: string[]) {
   return exec(container, "ctr", "--namespace", "moby", ...args);
+}
+
+// Containerd records cache-backed layers as snapshot labels rather than symlinks.
+async function cachedLayerBlobs(container: string) {
+  const keys = (await ctr(container, "snapshots", "--snapshotter", "erofs", "ls")).trim().split("\n").slice(1).map((line) => line.split(/\s+/)[0]!);
+  const blobs: string[] = [];
+  for (const key of keys) {
+    const labels: Record<string, string> = JSON.parse(await ctr(container, "snapshots", "--snapshotter", "erofs", "info", key)).Labels ?? {};
+    if (labels["io.containerd.erofs.v1/blob.source"] === "cache") blobs.push(labels["io.containerd.erofs.v1/blob.ref"]!);
+  }
+  return blobs;
 }
 async function ready(container: string) {
   for (let attempt = 0; attempt < 120; attempt++) {
@@ -166,9 +177,9 @@ exec sleep infinity
     for (const digest of baseLayers) assert(!content.has(digest), `base blob downloaded: ${digest}`);
   };
   await assertNoBaseBlobs();
-  const links = await exec(consumer, "sh", "-c", "find /data/containerd/io.containerd.snapshotter.v1.erofs/snapshots -name layer.erofs -type l -exec readlink {} +");
-  assert.equal(links.trim().split("\n").length, baseLayers.length);
-  assert(links.trim().split("\n").every((link) => link.startsWith("/data/erofs-cache/")));
+  const links = await cachedLayerBlobs(consumer);
+  assert.equal(links.length, baseLayers.length);
+  assert(links.every((link) => link.startsWith("/data/erofs-cache/")));
   await writeFile(join(context, "hello.go"), 'package main\nimport "fmt"\nfunc main(){fmt.Println("shared EROFS build works")}\n');
   await writeFile(join(context, "Dockerfile"), `FROM ${base}\nCOPY hello.go /src/hello.go\nRUN CGO_ENABLED=0 go build -o /hello /src/hello.go\nCMD ["/hello"]\n`);
   await command(["docker", "cp", context, `${consumer}:/context`]);

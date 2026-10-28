@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run with Go 1.26.10. No daemon, root privileges, or EROFS kernel support needed.
+# Run with Go 1.27.3. No daemon, root privileges, or EROFS kernel support needed.
 # Tests the production BuildKit wrapper against the pinned containerd GC/manager.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -42,11 +42,11 @@ cp "$here/"*_test.go "$work/test/"
 cat > "$work/test/go.mod" <<MOD
 module kintsugi-mount-lifetime-repro
 
-go 1.26.10
+go 1.27.3
 
 require (
-    github.com/moby/buildkit v0.31.0
-    github.com/containerd/containerd/v2 v2.4.0-beta.0
+    github.com/moby/buildkit v0.34.0
+    github.com/containerd/containerd/v2 v2.4.2
 )
 
 replace github.com/containerd/containerd/v2 => ../containerd/containerd

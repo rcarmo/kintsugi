@@ -1,12 +1,154 @@
-Kintsugi downstream patch against vendored BuildKit v0.31.0.
+Kintsugi downstream patch against vendored BuildKit v0.34.0 (docker-v29.9.2).
 Direction: https://github.com/containerd/containerd/issues/14015
 Resolve mount-manager instructions and fetch only layers that need applying.
 The opt-in image exporter flag is store-allow-incomplete=true.
 Original compressed blobs are still needed for save/push to an empty registry.
 This changes embedded BuildKit only, not docker-container builder images.
 
+diff --git a/vendor/github.com/moby/buildkit/exporter/containerimage/export.go b/vendor/github.com/moby/buildkit/exporter/containerimage/export.go
+index 3303d5b..9104630 100644
+--- a/vendor/github.com/moby/buildkit/exporter/containerimage/export.go
++++ b/vendor/github.com/moby/buildkit/exporter/containerimage/export.go
+@@ -142,7 +142,7 @@ func (e *imageExporter) Resolve(ctx context.Context, id int, opt map[string]stri
+ 				return nil, errors.Wrapf(err, "non-bool value specified for %s", k)
+ 			}
+ 			i.store = b
+-		case keyUnsafeInternalStoreAllowIncomplete:
++		case "store-allow-incomplete", keyUnsafeInternalStoreAllowIncomplete:
+ 			if v == "" {
+ 				i.storeAllowIncomplete = true
+ 				continue
+@@ -480,12 +480,7 @@ func (e *imageExporterInstance) unpackImage(ctx context.Context, img images.Imag
+ 		return err
+ 	}
+ 
+-	// ensure the content for each layer exists locally in case any are lazy
+-	if unlazier, ok := remote.Provider.(cache.Unlazier); ok {
+-		if err := unlazier.Unlazy(ctx); err != nil {
+-			return err
+-		}
+-	}
++	applier = fetchOnApply{Applier: applier, store: contentStore, provider: remote.Provider}
+ 
+ 	layers, err := getLayers(remote.Descriptors, manifest)
+ 	if err != nil {
+diff --git a/vendor/github.com/moby/buildkit/exporter/containerimage/lazyapply.go b/vendor/github.com/moby/buildkit/exporter/containerimage/lazyapply.go
+new file mode 100644
+index 0000000..9e38024
+--- /dev/null
++++ b/vendor/github.com/moby/buildkit/exporter/containerimage/lazyapply.go
+@@ -0,0 +1,33 @@
++package containerimage
++
++import (
++	"context"
++
++	"github.com/containerd/containerd/v2/core/content"
++	"github.com/containerd/containerd/v2/core/diff"
++	"github.com/containerd/containerd/v2/core/mount"
++	"github.com/containerd/errdefs"
++	"github.com/moby/buildkit/util/contentutil"
++	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
++)
++
++// fetchOnApply materializes blobs only when ApplyLayers actually needs to
++// extract a missing snapshot. Cached parents must not trigger an Unlazy of
++// the entire image simply to register its newly built layers.
++type fetchOnApply struct {
++	diff.Applier
++	store    content.Store
++	provider content.Provider
++}
++
++func (a fetchOnApply) Apply(ctx context.Context, desc ocispec.Descriptor, mounts []mount.Mount, opts ...diff.ApplyOpt) (ocispec.Descriptor, error) {
++	if _, err := a.store.Info(ctx, desc.Digest); err != nil {
++		if !errdefs.IsNotFound(err) {
++			return ocispec.Descriptor{}, err
++		}
++		if err := contentutil.Copy(ctx, a.store, a.provider, desc, "export-unpack-"+desc.Digest.String(), nil); err != nil {
++			return ocispec.Descriptor{}, err
++		}
++	}
++	return a.Applier.Apply(ctx, desc, mounts, opts...)
++}
+diff --git a/vendor/github.com/moby/buildkit/exporter/containerimage/lazyapply_test.go b/vendor/github.com/moby/buildkit/exporter/containerimage/lazyapply_test.go
+new file mode 100644
+index 0000000..06fb0fd
+--- /dev/null
++++ b/vendor/github.com/moby/buildkit/exporter/containerimage/lazyapply_test.go
+@@ -0,0 +1,69 @@
++package containerimage
++
++import (
++	"bytes"
++	"context"
++	"testing"
++
++	"github.com/containerd/containerd/v2/core/content"
++	"github.com/containerd/containerd/v2/core/diff"
++	"github.com/containerd/containerd/v2/core/mount"
++	"github.com/containerd/containerd/v2/plugins/content/local"
++	digest "github.com/opencontainers/go-digest"
++	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
++)
++
++type countingProvider struct {
++	content.Provider
++	reads int
++}
++
++func (p *countingProvider) ReaderAt(ctx context.Context, d ocispec.Descriptor) (content.ReaderAt, error) {
++	p.reads++
++	return p.Provider.ReaderAt(ctx, d)
++}
++
++type checkingApplier struct {
++	t     *testing.T
++	store content.Store
++	calls int
++}
++
++func (a *checkingApplier) Apply(ctx context.Context, d ocispec.Descriptor, _ []mount.Mount, _ ...diff.ApplyOpt) (ocispec.Descriptor, error) {
++	a.calls++
++	if _, err := a.store.Info(ctx, d.Digest); err != nil {
++		a.t.Fatal("Apply received unavailable blob", err)
++	}
++	return d, nil
++}
++func TestFetchOnlyAppliedMissingBlob(t *testing.T) {
++	ctx := context.Background()
++	src, err := local.NewStore(t.TempDir())
++	if err != nil {
++		t.Fatal(err)
++	}
++	dst, err := local.NewStore(t.TempDir())
++	if err != nil {
++		t.Fatal(err)
++	}
++	data := []byte("new layer bytes")
++	d := ocispec.Descriptor{Digest: digest.FromBytes(data), Size: int64(len(data)), MediaType: ocispec.MediaTypeImageLayer}
++	if err := content.WriteBlob(ctx, src, "source", bytes.NewReader(data), d); err != nil {
++		t.Fatal(err)
++	}
++	provider := &countingProvider{Provider: src}
++	applier := &checkingApplier{t: t, store: dst}
++	a := fetchOnApply{Applier: applier, store: dst, provider: provider}
++	if _, err := a.Apply(ctx, d, nil); err != nil {
++		t.Fatal(err)
++	}
++	if provider.reads != 1 || applier.calls != 1 {
++		t.Fatal("missing blob was not materialized exactly once")
++	}
++	if _, err := a.Apply(ctx, d, nil); err != nil {
++		t.Fatal(err)
++	}
++	if provider.reads != 1 || applier.calls != 2 {
++		t.Fatal("existing blob was fetched again")
++	}
++}
 diff --git a/vendor/github.com/moby/buildkit/snapshot/mountmanager.go b/vendor/github.com/moby/buildkit/snapshot/mountmanager.go
 new file mode 100644
+index 0000000..ee0620d
 --- /dev/null
 +++ b/vendor/github.com/moby/buildkit/snapshot/mountmanager.go
 @@ -0,0 +1,118 @@
@@ -130,6 +272,7 @@ new file mode 100644
 +}
 diff --git a/vendor/github.com/moby/buildkit/snapshot/mountmanager_test.go b/vendor/github.com/moby/buildkit/snapshot/mountmanager_test.go
 new file mode 100644
+index 0000000..b802a07
 --- /dev/null
 +++ b/vendor/github.com/moby/buildkit/snapshot/mountmanager_test.go
 @@ -0,0 +1,254 @@
@@ -388,6 +531,7 @@ new file mode 100644
 +	return err.Error()
 +}
 diff --git a/vendor/github.com/moby/buildkit/worker/containerd/containerd.go b/vendor/github.com/moby/buildkit/worker/containerd/containerd.go
+index 27bc591..1917679 100644
 --- a/vendor/github.com/moby/buildkit/worker/containerd/containerd.go
 +++ b/vendor/github.com/moby/buildkit/worker/containerd/containerd.go
 @@ -15,6 +15,7 @@
@@ -397,8 +541,8 @@ diff --git a/vendor/github.com/moby/buildkit/worker/containerd/containerd.go b/v
 +	"github.com/moby/buildkit/snapshot"
  	containerdsnapshot "github.com/moby/buildkit/snapshot/containerd"
  	"github.com/moby/buildkit/solver/llbsolver/cdidevices"
- 	"github.com/moby/buildkit/util/leaseutil"
-@@ -162,7 +163,7 @@
+ 	"github.com/moby/buildkit/util/db/compaction"
+@@ -166,7 +167,7 @@ func newContainerd(client *ctd.Client, workerOpts WorkerOptions) (base.WorkerOpt
  		NetworkProviders: np,
  		ProxyProvider:    proxyProvider,
  		Executor:         containerdexecutor.New(executorOpts),
@@ -407,141 +551,3 @@ diff --git a/vendor/github.com/moby/buildkit/worker/containerd/containerd.go b/v
  		ContentStore:     cs,
  		Applier:          winlayers.NewFileSystemApplierWithWindows(cs, df),
  		Differ:           winlayers.NewWalkingDiffWithWindows(cs, df),
-diff --git a/vendor/github.com/moby/buildkit/exporter/containerimage/export.go b/vendor/github.com/moby/buildkit/exporter/containerimage/export.go
---- a/vendor/github.com/moby/buildkit/exporter/containerimage/export.go
-+++ b/vendor/github.com/moby/buildkit/exporter/containerimage/export.go
-@@ -140,7 +140,7 @@
- 				return nil, errors.Wrapf(err, "non-bool value specified for %s", k)
- 			}
- 			i.store = b
--		case keyUnsafeInternalStoreAllowIncomplete:
-+		case "store-allow-incomplete", keyUnsafeInternalStoreAllowIncomplete:
- 			if v == "" {
- 				i.storeAllowIncomplete = true
- 				continue
-@@ -490,12 +490,7 @@
- 	}
- 	remote := remotes[0]
- 
--	// ensure the content for each layer exists locally in case any are lazy
--	if unlazier, ok := remote.Provider.(cache.Unlazier); ok {
--		if err := unlazier.Unlazy(ctx); err != nil {
--			return err
--		}
--	}
-+	applier = fetchOnApply{Applier: applier, store: contentStore, provider: remote.Provider}
- 
- 	layers, err := getLayers(remote.Descriptors, manifest)
- 	if err != nil {
-diff --git a/vendor/github.com/moby/buildkit/exporter/containerimage/lazyapply.go b/vendor/github.com/moby/buildkit/exporter/containerimage/lazyapply.go
-new file mode 100644
---- /dev/null
-+++ b/vendor/github.com/moby/buildkit/exporter/containerimage/lazyapply.go
-@@ -0,0 +1,33 @@
-+package containerimage
-+
-+import (
-+	"context"
-+
-+	"github.com/containerd/containerd/v2/core/content"
-+	"github.com/containerd/containerd/v2/core/diff"
-+	"github.com/containerd/containerd/v2/core/mount"
-+	"github.com/containerd/errdefs"
-+	"github.com/moby/buildkit/util/contentutil"
-+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-+)
-+
-+// fetchOnApply materializes blobs only when ApplyLayers actually needs to
-+// extract a missing snapshot. Cached parents must not trigger an Unlazy of
-+// the entire image simply to register its newly built layers.
-+type fetchOnApply struct {
-+	diff.Applier
-+	store    content.Store
-+	provider content.Provider
-+}
-+
-+func (a fetchOnApply) Apply(ctx context.Context, desc ocispec.Descriptor, mounts []mount.Mount, opts ...diff.ApplyOpt) (ocispec.Descriptor, error) {
-+	if _, err := a.store.Info(ctx, desc.Digest); err != nil {
-+		if !errdefs.IsNotFound(err) {
-+			return ocispec.Descriptor{}, err
-+		}
-+		if err := contentutil.Copy(ctx, a.store, a.provider, desc, "export-unpack-"+desc.Digest.String(), nil); err != nil {
-+			return ocispec.Descriptor{}, err
-+		}
-+	}
-+	return a.Applier.Apply(ctx, desc, mounts, opts...)
-+}
-diff --git a/vendor/github.com/moby/buildkit/exporter/containerimage/lazyapply_test.go b/vendor/github.com/moby/buildkit/exporter/containerimage/lazyapply_test.go
-new file mode 100644
---- /dev/null
-+++ b/vendor/github.com/moby/buildkit/exporter/containerimage/lazyapply_test.go
-@@ -0,0 +1,69 @@
-+package containerimage
-+
-+import (
-+	"bytes"
-+	"context"
-+	"testing"
-+
-+	"github.com/containerd/containerd/v2/core/content"
-+	"github.com/containerd/containerd/v2/core/diff"
-+	"github.com/containerd/containerd/v2/core/mount"
-+	"github.com/containerd/containerd/v2/plugins/content/local"
-+	digest "github.com/opencontainers/go-digest"
-+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-+)
-+
-+type countingProvider struct {
-+	content.Provider
-+	reads int
-+}
-+
-+func (p *countingProvider) ReaderAt(ctx context.Context, d ocispec.Descriptor) (content.ReaderAt, error) {
-+	p.reads++
-+	return p.Provider.ReaderAt(ctx, d)
-+}
-+
-+type checkingApplier struct {
-+	t     *testing.T
-+	store content.Store
-+	calls int
-+}
-+
-+func (a *checkingApplier) Apply(ctx context.Context, d ocispec.Descriptor, _ []mount.Mount, _ ...diff.ApplyOpt) (ocispec.Descriptor, error) {
-+	a.calls++
-+	if _, err := a.store.Info(ctx, d.Digest); err != nil {
-+		a.t.Fatal("Apply received unavailable blob", err)
-+	}
-+	return d, nil
-+}
-+func TestFetchOnlyAppliedMissingBlob(t *testing.T) {
-+	ctx := context.Background()
-+	src, err := local.NewStore(t.TempDir())
-+	if err != nil {
-+		t.Fatal(err)
-+	}
-+	dst, err := local.NewStore(t.TempDir())
-+	if err != nil {
-+		t.Fatal(err)
-+	}
-+	data := []byte("new layer bytes")
-+	d := ocispec.Descriptor{Digest: digest.FromBytes(data), Size: int64(len(data)), MediaType: ocispec.MediaTypeImageLayer}
-+	if err := content.WriteBlob(ctx, src, "source", bytes.NewReader(data), d); err != nil {
-+		t.Fatal(err)
-+	}
-+	provider := &countingProvider{Provider: src}
-+	applier := &checkingApplier{t: t, store: dst}
-+	a := fetchOnApply{Applier: applier, store: dst, provider: provider}
-+	if _, err := a.Apply(ctx, d, nil); err != nil {
-+		t.Fatal(err)
-+	}
-+	if provider.reads != 1 || applier.calls != 1 {
-+		t.Fatal("missing blob was not materialized exactly once")
-+	}
-+	if _, err := a.Apply(ctx, d, nil); err != nil {
-+		t.Fatal(err)
-+	}
-+	if provider.reads != 1 || applier.calls != 2 {
-+		t.Fatal("existing blob was fetched again")
-+	}
-+}

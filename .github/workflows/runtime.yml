@@ -91,7 +91,7 @@ jobs:
         run: |
           [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
           mkdir receipts
-          jq -n --arg ref "$REF" --arg digest "$DIGEST" --arg revision "$REVISION" --arg arch "$ARCH" '{ref:$ref,digest:$digest,revision:$revision,arch:$arch,go:"go1.26.10"}' > "receipts/$ARCH.json"
+          jq -n --arg ref "$REF" --arg digest "$DIGEST" --arg revision "$REVISION" --arg arch "$ARCH" '{ref:$ref,digest:$digest,revision:$revision,arch:$arch,go:"go1.27.3"}' > "receipts/$ARCH.json"
           container=$(docker create --network none "$REF")
           trap 'docker rm -v "$container"' EXIT
           docker cp "$container:/usr/share/kintsugi-patched-docker/go-build-info.txt" "receipts/$ARCH-go-build-info.txt"
@@ -132,7 +132,7 @@ jobs:
           repository=$(bun -e 'import {runtimeRepository} from "./packages/shared/src/publishing.ts";process.stdout.write(runtimeRepository)')
           refs=()
           for arch in amd64 arm64; do
-            jq -e --arg revision "$REVISION" --arg arch "$arch" '.revision==$revision and .arch==$arch and .go=="go1.26.10"' "receipts/$arch.json"
+            jq -e --arg revision "$REVISION" --arg arch "$arch" '.revision==$revision and .arch==$arch and .go=="go1.27.3"' "receipts/$arch.json"
             digest=$(jq -er .digest "receipts/$arch.json")
             [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
             refs+=("$repository@$digest")

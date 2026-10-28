@@ -1,6 +1,6 @@
 Source: https://github.com/moby/moby/pull/53126
 Head: a3abda2c1422a57ca09efe56b7322a2439d9ef64
-Base: 0584603b8c3a7ad224a2932ccdab0d17d6202687
+Base: 0584603b8c3a7ad224a2932ccdab0d17d6202687 (applies unchanged to docker-v29.9.2)
 
 diff --git a/daemon/containerd/image_snapshot.go b/daemon/containerd/image_snapshot.go
 index c59fa6098ba67..bb90bc72e6d48 100644
