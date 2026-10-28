@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1-labs
-ARG ATELIER_RUNTIME_IMAGE=ghcr.io/rcarmo/kintsugi-docker@sha256:927bea2d5276f87de04d7934b19124c48f9bd1c877743cace382bd5271ffbfe4
+ARG ATELIER_RUNTIME_IMAGE=ghcr.io/rcarmo/kintsugi-docker@sha256:5b3106e3e906e30b2d314ce66d53afc1bb816f8bcd91aa578879e13194c5f351
 FROM oven/bun:1.4.4 AS bun-dist
 
 FROM ubuntu:26.04 AS transcription-runtime
