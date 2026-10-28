@@ -37,6 +37,7 @@ function workspaceFileTarget(rawHref: string, sourcePath?: string): MarkdownFile
     const value = url?.searchParams.get(name);
     if (value && /^\d+$/.test(value)) target[name] = Number(value);
   }
+  target.fragment = target.suffix.match(/#(.+)/)?.[1];
   return target;
 }
 

@@ -210,55 +210,53 @@ describe("persisted run boundaries", () => {
     { kind: "assistant", id: "progress", parts: [{ type: "thinking", text: "Before steering" }], stopReason: "toolUse", timestamp: 2000 },
     { kind: "user", id: "steer", text: "Focus here", images: [], timestamp: 3000 },
   ];
-  const summary: TranscriptRecord = { kind: "timing", turnEntryId: "initial", outcome: "completed", timestamp: 6000,
-    timing: { elapsedMs: 5100, toolMs: 2000, inferenceMs: 3100, outputTokens: 50, usageComplete: true } };
 
-  test("steering is nested at consumption between earlier and later activity", () => {
+  test("steering ends the block it interrupted and starts its own", () => {
     const items = buildTranscript([...initial,
-      { kind: "assistant", id: "after", parts: [{ type: "thinking", text: "After steering" }, { type: "text", text: "Final answer" }], stopReason: "stop", timestamp: 5000 }, summary,
-    ]);
-    expect(items.map((item) => item.type)).toEqual(["user", "working", "text"]);
-    expect(items[1]).toMatchObject({ key: "initial:working", startedAt: 900, completedAt: 6000,
-      items: [{ text: "Before steering" }, { type: "user", key: "steer", text: "Focus here", steering: true, rewindEntryId: "steer", timestamp: 3000 }, { text: "After steering" }], timing: summary.timing });
-    expect(items[2]).toMatchObject({ text: "Final answer", final: true });
+      { kind: "assistant", id: "after", parts: [{ type: "thinking", text: "After steering" }, { type: "text", text: "Final answer" }], stopReason: "stop", timestamp: 5000 },
+    ], { openEnded: true });
+    expect(items.map((item) => item.type)).toEqual(["user", "working", "user", "working", "text"]);
+    expect(items[1]).toMatchObject({ key: "initial:working", startedAt: 900, completedAt: 3000, items: [{ text: "Before steering" }] });
+    expect(items[2]).toEqual({ type: "user", key: "steer", text: "Focus here", images: [], rewindEntryId: "steer", timestamp: 3000 });
+    expect(items[3]).toMatchObject({ key: "steer:working", inputEntryIds: ["steer"], startedAt: 3000, hasFinalAnswer: true, items: [{ text: "After steering" }] });
+    // Only the run's end, not an answer, finishes the block.
+    expect(items[3]).not.toHaveProperty("completedAt");
+    expect(items[4]).toMatchObject({ text: "Final answer", final: true });
   });
 
-  test("unfinished history still groups steering without needing a completion summary", () => {
+  test("unfinished history stops only the block steering started", () => {
     const items = buildTranscript(initial);
-    expect(items.map((item) => item.type)).toEqual(["user", "working"]);
-    expect(items[1]).toMatchObject({ key: "initial:working", stoppedAt: 3000 });
+    expect(items.map((item) => item.type)).toEqual(["user", "working", "user", "working"]);
+    expect(items[1]).toMatchObject({ key: "initial:working", completedAt: 3000 });
+    expect(items[3]).toMatchObject({ key: "steer:working", stoppedAt: 3000 });
   });
 
-  test("only run completion, not an assistant answer, releases the run boundary", () => {
+  test("input read together shares one block", () => {
     const items = buildTranscript([...initial,
-      { kind: "assistant", id: "answer1", parts: [{ type: "text", text: "Answer before more input" }], stopReason: "stop", timestamp: 4000 },
-      { kind: "user", id: "steer2", text: "One more thing", images: [], timestamp: 4500 },
-      { kind: "assistant", id: "answer2", parts: [{ type: "text", text: "Last answer" }], stopReason: "stop", timestamp: 5000 }, summary,
+      { kind: "user", id: "steer2", text: "One more thing", images: [], timestamp: 3000 },
+      { kind: "assistant", id: "answer", parts: [{ type: "text", text: "Last answer" }], stopReason: "stop", timestamp: 5000 },
       { kind: "user", id: "next", text: "Next run", images: [], timestamp: 7000 },
       { kind: "runStart", turnEntryId: "next", startedAt: 7000, timestamp: 7001 },
-    ]);
-    expect(items.filter((item) => item.type === "working").map((item) => item.key)).toEqual(["initial:working", "next:working"]);
-    expect(items.map((item) => item.type)).toEqual(["user", "working", "text", "text", "user", "working"]);
-    expect(items[1]).toMatchObject({ items: [
-      { type: "thinking" }, { type: "user", key: "steer", steering: true }, { type: "user", key: "steer2", steering: true },
-    ] });
-    expect(items[4]).toMatchObject({ type: "user", key: "next", steering: undefined });
+    ], { openEnded: true });
+    expect(items.map((item) => item.key)).toEqual(["initial", "initial:working", "steer", "steer2", "steer:working", "answer:text:0", "next", "next:working"]);
+    expect(items[4]).toMatchObject({ inputEntryIds: ["steer", "steer2"], stoppedAt: 7000 });
   });
 
   test("a retry followed by steering stays inside the same run", () => {
     const items = buildTranscript([initial[0]!, initial[1]!,
       { kind: "assistant", id: "retry", parts: [], stopReason: "error", errorMessage: "Retryable", timestamp: 2000 }, initial[3]!,
-      { kind: "assistant", id: "answer", parts: [{ type: "text", text: "Recovered" }], stopReason: "stop", timestamp: 5000 }, summary,
+      { kind: "assistant", id: "answer", parts: [{ type: "text", text: "Recovered" }], stopReason: "stop", timestamp: 5000 },
     ]);
-    expect(items.map((item) => item.type)).toEqual(["user", "working", "text"]);
-    expect(items[1]).toMatchObject({ items: [{ type: "error", text: "Retryable" }, { type: "user", key: "steer", steering: true }] });
+    expect(items.map((item) => item.type)).toEqual(["user", "working", "user", "working", "text"]);
+    expect(items[1]).toMatchObject({ items: [{ type: "error", text: "Retryable" }], completedAt: 3000 });
   });
 });
 
-test("a new persisted run after an interrupted run is not mistaken for steering", () => {
+test("a new persisted run after an interrupted run stops the old block rather than completing it", () => {
   const items = buildTranscript([
     { kind: "user", id: "old", text: "Interrupted request", images: [], timestamp: 1000 },
     { kind: "runStart", turnEntryId: "old", startedAt: 1000, timestamp: 1001 },
+    { kind: "assistant", id: "a", parts: [{ type: "thinking", text: "Working on it" }], stopReason: "toolUse", timestamp: 1500 },
     { kind: "user", id: "steer", text: "Steering before interruption", images: [], timestamp: 2000 },
     { kind: "user", id: "new", text: "Restart recovery", images: [], timestamp: 5000 },
     { kind: "runStart", turnEntryId: "new", startedAt: 5000, timestamp: 5001 },
@@ -266,10 +264,11 @@ test("a new persisted run after an interrupted run is not mistaken for steering"
     { kind: "timing", turnEntryId: "new", outcome: "completed", timestamp: 6001,
       timing: { elapsedMs: 1001, toolMs: 0, inferenceMs: 1001, outputTokens: 2, usageComplete: true } },
   ]);
-  expect(items.map((item) => item.type)).toEqual(["user", "working", "user", "working", "text"]);
+  expect(items.map((item) => item.type)).toEqual(["user", "working", "user", "working", "user", "working", "text"]);
   const blocks = items.filter((item) => item.type === "working");
-  expect(blocks[0]).toMatchObject({ key: "old:working", inputEntryIds: ["old", "steer"], stoppedAt: 5000 });
-  expect(blocks[1]).toMatchObject({ key: "new:working", inputEntryIds: ["new"], completedAt: 6001 });
+  expect(blocks[0]).toMatchObject({ key: "old:working", completedAt: 2000 });
+  expect(blocks[1]).toMatchObject({ key: "steer:working", inputEntryIds: ["steer"], stoppedAt: 5000 });
+  expect(blocks[2]).toMatchObject({ key: "new:working", inputEntryIds: ["new"], completedAt: 6001 });
 });
 
 test("a finished tool call's outcome reads the same for every tool row", () => {

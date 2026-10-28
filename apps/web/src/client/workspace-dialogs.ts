@@ -1,5 +1,5 @@
 import { Controller } from "@hotwired/stimulus";
-import { createHtmlAutocompleteController, PromptHistoryNavigator } from "@kintsugi/agent/client";
+import { createHtmlAutocompleteController, PromptHistoryNavigator, transcriptSelectionText } from "@kintsugi/agent/client";
 import { composerViewportHeight, focusComposerText, revealComposerCaret, sizeComposer } from "@kintsugi/prompt/client";
 import { autocompleteHtml } from "@kintsugi/design-system/autocomplete";
 import { changeLayout, composerSubmitKey, focusLikelyOpensSoftwareKeyboard, isWorkspacePaneVisible, shouldSearchRepositories, softwareKeyboardArranged } from "@kintsugi/shared";
@@ -71,6 +71,9 @@ class LaunchComposerDialogController extends Controller<HTMLDialogElement> {
     this.element.addEventListener("close", this.closed);
     this.input.addEventListener("keydown", this.inputKeydown);
     this.input.addEventListener("input", this.inputChanged);
+    // Text selected in the transcript starts the new prompt, as is: the new Agent won't know where it came from.
+    const selection = transcriptSelectionText();
+    if (selection) this.input.value = selection;
     // Exclude the editor from native dialog autofocus on touch devices: opening
     // should offer dictation and attachments without briefly raising a keyboard.
     const touch = focusLikelyOpensSoftwareKeyboard();

@@ -80,6 +80,8 @@ export function normalizeBrowserUrl(input: string): string {
   } catch {
     return "";
   }
+  // Workspace files have no host; file://host would name another machine.
+  if (parsed.protocol === "file:") return parsed.host ? "" : parsed.toString();
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
   if (!parsed.hostname) return "";
   return parsed.toString();

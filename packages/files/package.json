@@ -13,7 +13,7 @@
     "@kintsugi/shared": "workspace:*",
     "@kintsugi/syntax": "workspace:*",
     "@kintsugi/workspace": "workspace:*",
-    "@pierre/diffs": "1.6.1",
+    "@pierre/diffs": "1.6.2",
     "typebox": "^1.0.57",
     "@hotwired/stimulus": "github:hotwired/dev-builds#339df548999c34d440e04c24b59ad9dc57ce3eb1",
     "@kintsugi/agent": "workspace:*",

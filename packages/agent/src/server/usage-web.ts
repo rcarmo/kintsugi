@@ -137,13 +137,20 @@ function shownUsageWindows(windows: PacedUsageWindow[]) {
   };
 }
 
+/** A limit of its own, like one model's weekly cap, can run out while the rest of the subscription still works. */
+function limitReachedHtml(reported: NonNullable<ProviderUsageOverview["reported"]>): string {
+  if (reported.limitReached || reported.allowed === false) return '<p class="usage-error" role="status">Subscription limit reached.</p>';
+  const reached = [...new Set(reported.windows.filter((window) => window.limitReached).map((window) => window.limitName))];
+  return reached.length ? `<p class="usage-error" role="status">${escapeHtml(reached.join(" and "))} limit reached. Other models still work.</p>` : "";
+}
+
 /** A failed usage check says nothing about whether the provider's models work, so it reads as a note, not an alert. */
 function renderUsageLimits({ reported, error, windows }: ProviderUsageOverview): string {
   if (error) return `<div class="usage-unavailable" role="status"><p>Couldn’t check usage limits. This only affects the usage shown here; models may still work fine.</p><p class="usage-caption">${escapeHtml(error)}</p></div>`;
   if (!reported) return "<p>Disconnected.</p>";
   if (reported.allowances) return renderCopilotAllowances({ reported, windows });
   const { used, unused } = shownUsageWindows(windows);
-  return `${reported.limitReached || reported.allowed === false ? '<p class="usage-error" role="status">Subscription limit reached.</p>' : ""}${used.map((window) => renderUsageWindow(window)).join("")}${unused.length ? disclosureHtml({ summary: { kind: "compact", label: { kind: "text", text: `Unused limits (${unused.length})` } }, open: !used.length, bodyHtml: `<div class="usage-section">${unused.map((window) => renderUsageWindow(window)).join("")}</div>` }) : ""}${(reported.details ?? []).map(detail => `<p class="usage-caption">${escapeHtml(detail.label)}: ${escapeHtml(detail.value)}</p>`).join("")}${used.length || unused.length || reported.balance ? "" : '<p>No limits reported.</p>'}`;
+  return `${limitReachedHtml(reported)}${used.map((window) => renderUsageWindow(window)).join("")}${unused.length ? disclosureHtml({ summary: { kind: "compact", label: { kind: "text", text: `Unused limits (${unused.length})` } }, open: !used.length, bodyHtml: `<div class="usage-section">${unused.map((window) => renderUsageWindow(window)).join("")}</div>` }) : ""}${(reported.details ?? []).map(detail => `<p class="usage-caption">${escapeHtml(detail.label)}: ${escapeHtml(detail.value)}</p>`).join("")}${used.length || unused.length || reported.balance ? "" : '<p>No limits reported.</p>'}`;
 }
 
 function money(amount: number, currency: string): string {

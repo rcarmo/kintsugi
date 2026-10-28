@@ -20,19 +20,24 @@ const unrecognizedHeaders = () => new SubscriptionUsageError("Anthropic returned
 const unrecognizedAccountUsageMessage = "Anthropic returned an unrecognized usage response.";
 const unrecognizedAccountUsage = () => new SubscriptionUsageError(unrecognizedAccountUsageMessage);
 const unitSeconds = new Map([["h", 3600], ["hour", 3600], ["d", 86400], ["day", 86400]]);
+/** "oi", overage included, is Fable's weekly cap; the headers never name the model. */
+const fableFeatures = new Set(["oi", "overage_included"]);
+/** Names for the features Anthropic's window names abbreviate. */
+const featureNames = new Map([...[...fableFeatures].map((feature) => [feature, "Fable"] as const), ["opus", "Opus"], ["sonnet", "Sonnet"]]);
 const numberWords = new Map(["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].map((word, index) => [word, index + 1]));
 
 /** Anthropic names each window by its length and, for a metered feature, a suffix:
  * "5h" or "7d_opus" in headers, "five_hour" or "seven_day_opus" from the account
  * endpoint. The shortest reported window is the primary one. Windows whose names
  * don't state a length can't be paced, so they are left out. */
-function namedWindows(reported: Array<{ count: number; unit: string; feature: string | undefined; label?: string; usedPercent: number; resetsAt: string | null }>): UsageWindow[] {
-  const windows = reported.map(({ count, unit, feature, label, usedPercent, resetsAt }) => ({
-    limitName: label ?? (feature ? feature.replaceAll("_", " ").replace(/^./, (first) => first.toUpperCase()) : "Claude"),
+function namedWindows(reported: Array<{ count: number; unit: string; feature: string | undefined; label?: string; usedPercent: number; resetsAt: string | null; limitReached?: true }>): UsageWindow[] {
+  const windows = reported.map(({ count, unit, feature, label, usedPercent, resetsAt, limitReached }) => ({
+    limitName: label ?? (feature ? featureNames.get(feature) ?? feature.replaceAll("_", " ").replace(/^./, (first) => first.toUpperCase()) : "Claude"),
     meteredFeature: feature ?? null,
     usedPercent,
     durationSeconds: count * unitSeconds.get(unit)!,
     resetsAt,
+    ...(limitReached && { limitReached }),
   }));
   const shortest = Math.min(...windows.map((window) => window.durationSeconds));
   return windows.map((window) => ({ ...window, kind: window.durationSeconds === shortest ? "primary" : "secondary" }));
@@ -70,21 +75,24 @@ export async function fetchAnthropicAccountUsage(accessToken: string, fetcher: F
     if (window.utilization == null) return [];
     return [{ count, unit: name[2]!, feature: name[3], usedPercent: window.utilization, resetsAt: resetTime(window.resets_at) }];
   });
-  const features = new Set(named.map((window) => `${window.count}${window.unit} ${window.feature}`));
   // Entries of other kinds repeat the windows above, so only model-scoped ones add anything.
   const scoped = (Array.isArray(payload.limits) ? payload.limits : []).flatMap((limit) => {
     if (!Value.Check(scopedLimitSchema, limit)) return [];
     const label = limit.scope.model.display_name.trim();
     const feature = label.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "_").replace(/^_|_$/g, "");
     const modelID = (limit.scope.model.id ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
-    if (!feature || feature === "all_models" || modelID === "all_models" || modelID.endsWith("_all_models") || features.has(`7day ${feature}`)) return [];
+    if (!feature || feature === "all_models" || modelID === "all_models" || modelID.endsWith("_all_models")) return [];
     let reset: Date | null;
     try { reset = parseSubscriptionUsageDate(limit.resets_at, unrecognizedAccountUsageMessage); }
     catch (error) { if (error instanceof SubscriptionUsageError) return []; throw error; }
-    features.add(`7day ${feature}`);
     return [{ count: 7, unit: "day", feature, label, usedPercent: limit.percent, resetsAt: reset?.toISOString() ?? null }];
   });
-  return namedWindows([...named, ...scoped]);
+  const windows = namedWindows([...named, ...scoped].map(window => window.feature !== undefined && window.usedPercent >= 100 ? { ...window, limitReached: true as const } : window));
+  const reached = new Map(windows.filter(window => window.limitReached).map(window => [windowName(window), window]));
+  return uniqueWindows(windows).map(window => {
+    const exhausted = reached.get(windowName(window));
+    return exhausted ? { ...window, limitReached: true, resetsAt: window.resetsAt ?? exhausted.resetsAt } : window;
+  });
 }
 
 /** Subscription OAuth responses from /v1/messages carry the account's unified limits.
@@ -92,7 +100,7 @@ export async function fetchAnthropicAccountUsage(accessToken: string, fetcher: F
 export function anthropicUsageFromHeaders(headers: Headers, checkedAt: Date): SubscriptionUsage | null {
   const status = headers.get("anthropic-ratelimit-unified-status");
   if (status === null) return null;
-  const windows = namedWindows([...headers].flatMap(([header, utilization]) => {
+  const reported = [...headers].flatMap(([header, utilization]) => {
     const name = header.match(/^anthropic-ratelimit-unified-(\d+)([hd])(?:[-_](.+))?-utilization$/);
     if (!name) return [];
     // A fraction of the allowance; it can pass 1 once the allowance is exhausted.
@@ -102,9 +110,16 @@ export function anthropicUsageFromHeaders(headers: Headers, checkedAt: Date): Su
     const resetHeader = headers.get(header.replace(/-utilization$/, "-reset"));
     const reset = resetHeader === null ? null : Number(resetHeader);
     if (reset !== null && (resetHeader!.trim() === "" || !Number.isInteger(reset) || reset <= 0 || reset > 8640000000000)) throw unrecognizedHeaders();
-    return [{ count, unit: name[2]!, feature: name[3], usedPercent: used * 100, resetsAt: reset === null ? null : new Date(reset * 1000).toISOString() }];
-  }));
-  return { plan: null, checkedAt: checkedAt.toISOString(), allowed: status !== "rejected", limitReached: status === "rejected", windows, details: extraUsage(headers) };
+    const windowStatus = headers.get(header.replace(/-utilization$/, "-status"));
+    return [{ count, unit: name[2]!, feature: name[3], usedPercent: used * 100, resetsAt: reset === null ? null : new Date(reset * 1000).toISOString(), status: windowStatus }];
+  });
+  const reached = (window: (typeof reported)[number]) => window.status === "rejected" || (window.status === null && window.usedPercent >= 100);
+  const windows = namedWindows(reported.map(window => reached(window) ? { ...window, limitReached: true as const } : window));
+  const shared = reported.filter(window => window.feature === undefined && (window.status !== null || reached(window)));
+  const sharedAllowed = shared.length > 0 && shared.every(window => window.status === "allowed" || window.status === "allowed_warning");
+  const onlyScopedRejected = sharedAllowed && reported.some(window => window.feature !== undefined && reached(window));
+  const limitReached = status === "rejected" && !onlyScopedRejected;
+  return { plan: null, checkedAt: checkedAt.toISOString(), allowed: !limitReached, limitReached, windows, details: extraUsage(headers) };
 }
 
 /** Extra usage is billed per token once plan limits run out. Anthropic says whether it's
@@ -150,7 +165,31 @@ function singleFlight<Args extends unknown[], Result>(start: (...args: Args) => 
   };
 }
 
-const windowName = (window: UsageWindow) => `${window.durationSeconds} ${window.meteredFeature}`;
+const windowName = (window: UsageWindow) => `${window.durationSeconds} ${window.meteredFeature === null ? "" : window.limitName}`;
+
+/** The headers never name the model a cap applies to; the account endpoint does. Its
+ * model-scoped caps named like another feature's window, such as Sonnet's, are that window.
+ * When a single other one remains, it's the one behind "7d_oi", so that window takes its name. */
+function withScopedNames(windows: UsageWindow[], accountWindows: UsageWindow[]): UsageWindow[] {
+  const otherFeatures = new Set([...featureNames].filter(([feature]) => !fableFeatures.has(feature)).map(([, name]) => name));
+  for (const window of [...windows, ...accountWindows]) {
+    if (window.meteredFeature !== null && !accountWindows.includes(window) && !fableFeatures.has(window.meteredFeature)) otherFeatures.add(window.limitName);
+  }
+  const scoped = accountWindows.filter((window) => window.meteredFeature !== null && !otherFeatures.has(window.limitName));
+  if (scoped.length !== 1) return windows;
+  return windows.map((window) => window.meteredFeature !== null && fableFeatures.has(window.meteredFeature) ? { ...window, limitName: scoped[0]!.limitName } : window);
+}
+
+/** Keeps the first of each named window; earlier sources are the more current ones. */
+function uniqueWindows(windows: UsageWindow[]): UsageWindow[] {
+  const seen = new Set<string>();
+  return windows.filter((window) => {
+    const name = windowName(window);
+    if (seen.has(name)) return false;
+    seen.add(name);
+    return true;
+  });
+}
 
 /** Usage for this host's connected subscription. Usage only rises with use, and
  * Claude Code traffic through the workspace proxy keeps the snapshot current. Anthropic
@@ -208,9 +247,9 @@ export function createAnthropicUsageSource(fetcher: Fetcher = fetch, now: () => 
       let usage = observed;
       const resetPassed = usage?.windows.some((window) => window.resetsAt !== null && new Date(window.resetsAt).getTime() <= now());
       if (options.refresh || !usage || resetPassed) [usage] = await Promise.all([probe.run(token, options.model), accountUsage.run(token)]);
-      // Headers are current; the account endpoint only adds windows they lack.
-      const reported = new Set(usage.windows.map(windowName));
-      return { ...usage, windows: [...usage.windows, ...accountWindows.filter((window) => !reported.has(windowName(window)))] };
+      // Account windows supplement current headers, but expire at their reset.
+      const current = accountWindows.filter(window => window.resetsAt === null || new Date(window.resetsAt).getTime() > now());
+      return { ...usage, windows: uniqueWindows([...withScopedNames(usage.windows, current), ...current]) };
     },
   };
 }

@@ -1,1 +1,1 @@
-export { browserWorkspaceModule as kintsugiServerModule } from "./web.ts";
+export { browserWorkspaceModule as kintsugiServerModule, openFileInBrowser } from "./web.ts";

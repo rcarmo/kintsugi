@@ -32,7 +32,7 @@ export type SubscriptionUsage = {
   details?: { label: string; value: string }[];
   /** Account snapshots, distinct from per-call charges or session usage. */
   allowances?: ReportedAllowance[];
-  windows: { periodBasis?: "calendar-month-estimate"; limitName: string; meteredFeature: string | null; kind: "primary" | "secondary"; usedPercent: number; durationSeconds: number | null; resetsAt: string | null }[];
+  windows: { periodBasis?: "calendar-month-estimate"; limitName: string; meteredFeature: string | null; kind: "primary" | "secondary"; usedPercent: number; durationSeconds: number | null; resetsAt: string | null; limitReached?: boolean }[];
 };
 
 /** Expected provider/authentication failures that can be shown in the usage overview. */

@@ -91,12 +91,12 @@ describe("workspace image content identity", () => {
 });
 
 describe("workspace image layer ordering", () => {
-  test("splits base apt packages into four layers before setup", async () => {
+  test("splits base apt packages into five layers before setup", async () => {
     const { dockerfile, fixture } = await generateInCheckout();
     const manifest = JSON.parse(await readFile(join(fixture, "packages/workspace-image/workspace-image.json"), "utf8"));
     const base = dockerfile.split("# Module: base\n")[1]!.split("# Module:")[0]!;
     const installs = [...base.matchAll(/apt-get install -y --no-install-recommends \\\n([\s\S]*?)\n\n/g)];
-    expect(installs).toHaveLength(4);
+    expect(installs).toHaveLength(5);
     const packages = installs.map((match) => match[1]!.replaceAll("\\", "").trim().split(/\s+/));
     expect(packages).toEqual(manifest.aptPackageGroups.map((group: string[]) => [...group].sort()));
     expect(new Set(packages.flat()).size).toBe(packages.flat().length);
@@ -111,12 +111,12 @@ describe("workspace image layer ordering", () => {
     const before = await generateInCheckout();
     const path = join(before.fixture, "packages/workspace-image/workspace-image.json");
     const manifest = JSON.parse(await readFile(path, "utf8"));
-    manifest.aptPackageGroups[3].push("optipng");
+    manifest.aptPackageGroups.at(-1).push("valgrind");
     await writeFile(path, JSON.stringify(manifest));
     const after = await generateContext(before.fixture);
-    const prefix = (dockerfile: string) => dockerfile.split("      ffmpeg")[0];
+    const prefix = (dockerfile: string) => dockerfile.split("      gdb")[0];
     expect(prefix(after.dockerfile)).toBe(prefix(before.dockerfile));
-    expect(after.dockerfile).toContain("      optipng");
+    expect(after.dockerfile).toContain("      valgrind");
     expect(after.metadata).not.toBe(before.metadata);
   }, 30_000);
 

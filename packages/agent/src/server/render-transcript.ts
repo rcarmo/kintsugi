@@ -68,8 +68,7 @@ function renderUserMessage(ctx: AgentRenderContext, user: Extract<TranscriptItem
   const images = user.images.length ? `<div class="agent-user-attachments">${user.images.map((image) => `<img${fullscreenAttributes("attachment", "media")} src="${escapeHtml(sessionImageUrl(ctx, image))}" alt="attachment" loading="lazy">`).join("")}</div>` : "";
   const label = user.queued?.stranded ? "Not sent · the turn ended early"
     : user.queued?.mode === "followUp" ? "Follow-up · after this turn"
-    : user.queued ? "Steering · after this step"
-    : user.steering ? "Steering" : "";
+    : user.queued ? "Steering · after this step" : "";
   const actions = user.queued && !ctx.readOnly ? renderQueuedInputActions(ctx, user.key, user.queued) : "";
   return transcriptRow(`<div class="agent-user" data-agent-user-text="${escapeHtml(user.text)}"><div class="agent-user-bubble markdown">${label ? `<div class="agent-user-label"><span>${label}</span>${actions}</div>` : ""}${markdown(ctx, user.text)}${images}</div></div>`);
 }
@@ -118,10 +117,26 @@ export function renderTranscriptItem(ctx: AgentRenderContext, item: TranscriptIt
   else if (item.type === "note") {
     body = item.tone === "summary"
       ? transcriptRow(disclosureHtml({ summary: { kind: "compact", label: { kind: "text", text: "Compaction summary" } }, bodyHtml: `<div class="markdown">${markdown(ctx, item.text)}</div>` }))
-      : renderMarkdownRow(ctx, item.text, `agent-note ${escapeHtml(item.tone)}`);
+      : renderMarkdownRow(ctx, item.text, `markdown agent-note ${escapeHtml(item.tone)}`);
   }
   else body = transcriptRow(`<div class="agent-error">${escapeHtml(item.text)}</div>`);
-  return `<div class="agent-item" id="${id}" data-transcript-key="${escapeHtml(item.key)}"${item.anchor ? ` data-transcript-anchor="${escapeHtml(item.anchor)}"` : ""}${item.type === "tool" ? ` data-tool-call-id="${escapeHtml(item.tool.callId)}"` : ""}>${body}</div>`;
+  return `<div class="agent-item" id="${id}" data-transcript-key="${escapeHtml(item.key)}" data-quote-source="${escapeHtml(quoteSource(item))}"${item.anchor ? ` data-transcript-anchor="${escapeHtml(item.anchor)}"` : ""}${item.type === "tool" ? ` data-tool-call-id="${escapeHtml(item.tool.callId)}"` : ""}>${body}</div>`;
+}
+
+/** The Comment button for selected transcript text; the pane's `transcript-quote` controller places it. */
+export function renderTranscriptQuoteAction(): string {
+  return `<div class="transcript-quote-action" data-transcript-quote-target="action" hidden>${buttonHtml({ type: "button", variant: "secondary", content: { kind: "icon-only", iconHtml: Icons.Comment, label: "Comment on selection" }, attributesHtml: 'data-popular-button="touch" data-action="mousedown->transcript-quote#keepSelection pointerdown->transcript-quote#press pointerup@window->transcript-quote#release pointercancel->transcript-quote#release click->transcript-quote#quote"' })}</div>`;
+}
+
+/** Where a quoted selection came from, as the user tells the Agent. */
+function quoteSource(item: Exclude<TranscriptItem, { type: "working" }>): string {
+  switch (item.type) {
+    case "user": return "From my prompt";
+    case "text": return "From your reply";
+    case "thinking": return "From your thinking";
+    case "tool": return `From the \`${item.tool.name}\` tool call`;
+    default: return "From the transcript";
+  }
 }
 
 /** A JSON final answer, formatted once it parses. A streaming answer shows as written; one that isn't JSON, as markdown. */
@@ -177,18 +192,18 @@ export function renderWorkingSection(ctx: AgentRenderContext, section: WorkingTr
 }
 
 function workingSummary(ctx: AgentRenderContext, section: WorkingTranscriptItem): DisclosureSummary {
-  const steeringCount = section.items.filter((item) => item.type === "user" && item.steering).length;
   const endedAt = section.completedAt ?? section.stoppedAt;
   const active = endedAt === undefined;
   const duration = formatDuration(active ? Date.now() - section.startedAt : section.timing?.elapsedMs ?? (endedAt! - section.startedAt));
-  const stateLabel = active ? "Working" : section.completedAt !== undefined ? "Completed" : "Stopped";
-  const activityLabel = section.durationUnavailable ? stateLabel : `${stateLabel} · ${duration}`;
+  const completed = section.completedAt !== undefined;
+  const activityLabel = section.durationUnavailable ? (active ? "Working" : completed ? "Completed" : "Stopped")
+    : active ? `Working · ${duration}` : completed ? `Worked for ${duration}` : `Stopped · ${duration}`;
   const status = active ? `<i class="status-dot running${ctx.readOnly ? " static" : ""} content-row__status" aria-label="In progress"></i>` : "";
   return { ...transcriptRowContent({ kind: "text", text: activityLabel,
     attributesHtml: active && !ctx.readOnly && !section.durationUnavailable ? `data-controller="agent-elapsed" data-agent-elapsed-since-value="${section.startedAt}" data-agent-elapsed-prefix-value="Working · " data-agent-elapsed-format-value="duration"` : undefined,
     textAttributesHtml: active && !ctx.readOnly && !section.durationUnavailable ? 'data-agent-elapsed-target="time"' : undefined,
   }, {
-    leadingHtml: status, trailingHtml: `${steeringCount ? `<span class="agent-working-timing">${steeringCount} steering ${steeringCount === 1 ? "message" : "messages"}</span>` : ""}${active ? "" : renderWorkingTiming(section)}`,
+    leadingHtml: status, trailingHtml: active ? "" : renderWorkingTiming(section),
   }), attributesHtml: `id="${ids.itemSummaryContent(ctx, section.key)}"` };
 }
 

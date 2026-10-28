@@ -7,6 +7,7 @@ import { domId, escapeHtml, type LiveRegion, type WorkspaceAgentPane } from "@ki
 import { readInitialPromptDraft } from "./initial-prompt-draft.ts";
 import { enabledModelOptionViews, launchComposerThinkingSettings, selectAvailableEnabledModel } from "@kintsugi/agent/server/model-state";
 import { agentKey, agentPath, ids, type AgentRenderContext } from "@kintsugi/agent/server/render-context";
+import { renderTranscriptQuoteAction } from "@kintsugi/agent/server/render-transcript";
 import { renderAgentNotifications } from "./render-notification.ts";
 import { renderBackgroundControl } from "./background.ts";
 import type { WorkspaceAgentInfo } from "./agent-store.ts";
@@ -44,7 +45,7 @@ export async function renderAgentPane(ctx: AgentRenderContext, agent: Pick<Works
   const attachRowId = ids.attachRow(ctx);
   const html = `<section id="${domId("agent_pane", ctx.workspaceId, agent.agentId)}" data-turbo-permanent class="agent-pane builtin-agent-shell" data-agent-source="${escapeHtml(key)}">
     <div class="agent-pane agent-composer-pane" id="${ids.pane(ctx)}"
-      ${state.readOnly ? "" : `data-controller="agent-pane agent-attachments agent-composer composer-focus agent-background"
+      ${state.readOnly ? "" : `data-controller="agent-pane agent-attachments agent-composer composer-focus agent-background transcript-quote"
       data-agent-composer-open-on-create-value="true"
       data-agent-pane-workspace-id-value="${escapeHtml(ctx.workspaceId)}"
       data-agent-pane-agent-id-value="${escapeHtml(ctx.agentId)}"
@@ -58,7 +59,7 @@ export async function renderAgentPane(ctx: AgentRenderContext, agent: Pick<Works
         <div class="agent-transcript" tabindex="0" role="region" aria-label="Agent transcript" data-agent-pane-target="transcript">
           <div class="agent-transcript-surface"><div class="agent-transcript-content" id="${ids.transcript(ctx)}" data-agent-pane-target="transcriptContent"></div></div>
         </div>
-        ${state.readOnly ? "" : renderFloatingStack({ openComposer: renderOpenComposerButton(), followLatest: renderFollowLatestButton('data-agent-pane-target="transcriptEnd" data-action="agent-pane#scrollToTranscriptEnd"') })}
+        ${state.readOnly ? "" : `${renderFloatingStack({ openComposer: renderOpenComposerButton(), followLatest: renderFollowLatestButton('data-agent-pane-target="transcriptEnd" data-action="agent-pane#scrollToTranscriptEnd"') })}${renderTranscriptQuoteAction()}`}
       </div>
       ${state.readOnly ? '<p class="agent-noticeline">This Agent is read-only. Start a new Agent to continue.</p>' : renderAgentPaneComposer({
         ctx,

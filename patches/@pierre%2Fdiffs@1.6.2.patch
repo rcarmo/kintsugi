@@ -1,3 +1,67 @@
+Patches to @pierre/diffs, applied by bun (package.json "patchedDependencies").
+Bun ignores everything above the first "diff --git" line, so keep notes here.
+`bun patch` regenerates this file when committing, so copy this header back afterwards.
+
+When upgrading @pierre/diffs, check each part below against the new version and drop only
+the parts it fixes. Test in the Files editor with wrap long lines turned on (the default),
+using a markdown file that has many long, wrapping lines.
+
+1. CodeView.js: skip layout while the root is hidden (isRootHidden)
+   Bug: while the editor is display: none (Source/Rendered toggle, or another work-view tab
+   in front), CodeView's ResizeObserver still renders and caches every wrapped line as 0px.
+   The zeros stay after the editor shows again, so the wrong lines or a blank gap appear at
+   the top, and the caret can't get into that gap.
+   Can be dropped once both of these start at line 1, with no gap, and the caret moves up
+   to line 1:
+   - Open a .md file (it opens in Rendered), then choose Source.
+   - In Source, switch to another tab, resize the window, then switch back.
+   Without this hunk, `__INSTANCE.items[0].instance.cache.heights` in the console has lines
+   cached as 0 after either step; with a fixed upstream it has none.
+
+2. editor.js: ignore the echo of our own window selection (#windowSelectionEcho,
+   getComposedWindowRange, isSameRange)
+   Bug: a late selectionchange from the editor's own setBaseAndExtent is read as a click,
+   collapsing the selection to its anchor.
+   Can be dropped once holding Shift+Arrow (all four directions, including across wrapped
+   lines) keeps extending the selection without it collapsing.
+
+3. editor.js: mirror the whole selection natively (#focus's `selection` argument)
+   Bug: the native selection is collapsed at the anchor, so clicking the anchor after
+   Shift+Arrow is a no-op and the selection stays.
+   Can be dropped once: select with Shift+Arrow, then click exactly where the selection
+   started, and the selection clears.
+
+4. selection.js: Up on the first line goes to the line start, Down on the last line goes to
+   the line end (mapCursorMove, moveBySoftLine)
+   Can be dropped once Up on line 1 jumps the caret to the start of the document and Down
+   on the last line jumps to the end, with and without Shift and on wrapped lines too.
+
+diff --git a/dist/components/CodeView.js b/dist/components/CodeView.js
+index ee5c91c5ab44742994d900a81dbd8e9c508efb49..8a39a129e702fe66bea6c2bd240e42af1bc11bb5 100644
+--- a/dist/components/CodeView.js
++++ b/dist/components/CodeView.js
+@@ -1608,6 +1608,7 @@ var CodeView = class CodeView {
+ 	computeRenderRangeAndEmit = (timestamp = performance.now()) => {
+ 		if (CodeView.__STOP || this.container == null) return;
+ 		if (!this.isReady()) return;
++		if (this.isRootHidden()) return;
+ 		const viewportHeight = this.getHeight();
+ 		const initialScrollTop = this.getScrollTop();
+ 		let scrollTopAfterLayout = initialScrollTop;
+@@ -1813,7 +1814,13 @@ var CodeView = class CodeView {
+ 		this.pendingLayoutAnchor = void 0;
+ 		this.scrollAnimation = void 0;
+ 	};
++	// A root without boxes (display: none on it or an ancestor) measures every line as zero
++	// height, and cached heights outlive the hide. Lay out again once the root resizes into view.
++	isRootHidden() {
++		return this.root != null && this.root.getClientRects().length === 0;
++	}
+ 	handleResize = (entries) => {
++		if (this.isRootHidden()) return;
+ 		let shouldRender = false;
+ 		for (const entry of entries) if (entry.target === this.stickyContainer) {
+ 			const blockSize = entry.borderBoxSize[0].blockSize;
 diff --git a/dist/editor/editor.js b/dist/editor/editor.js
 index bf17cea32f39ee60ff7520b17f44d99a8e7e98aa..29c7c91c0e8ea47954bd2064e795dcfe3b3a6d52 100644
 --- a/dist/editor/editor.js

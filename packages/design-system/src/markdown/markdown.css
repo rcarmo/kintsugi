@@ -25,7 +25,7 @@
 /* Give short fences breathing room, then grow to their longest line within the pane. */
 .markdown pre, .agent-code-block { width: fit-content; min-width: min(400px, 100%); max-width: 100%; box-sizing: border-box; }
 .agent-code-block pre { width: auto; }
-.markdown pre { background: color-mix(in srgb, var(--bg) 45%, #000 14%); border: 1px solid var(--line); color: var(--text-bright); border-radius: var(--radius-control); padding: 12px; overflow-x: auto; margin: 6px 0 12px; }
+.markdown pre { background: var(--code-surface); border: 1px solid var(--line); color: var(--text-bright); border-radius: var(--radius-control); padding: 12px; overflow-x: auto; margin: 0 0 var(--markdown-block-spacing, 12px); }
 .markdown pre code { display: block; background: transparent; border: 0; border-radius: 0; padding: 0; color: inherit; font-size: var(--text-code); line-height: var(--leading-standard); }
 .markdown blockquote { border-left: 1px solid var(--line-strong); padding-left: 8px; color: var(--text-muted); }
 .markdown a { color: var(--accent); text-decoration: none; }

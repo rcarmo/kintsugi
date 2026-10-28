@@ -103,7 +103,7 @@ export const kintsugiClientModule: WorkspaceClientModule = {
               window.open(link.url, "_blank", "noopener,noreferrer");
               return;
             }
-            this.visitStream(`${workspaceFileOpenUrl(this.workspaceIdValue, link.path, { line: link.line, column: link.column })}&existing=1`);
+            this.visitStream(`${workspaceFileOpenUrl(this.workspaceIdValue, link.path, link)}&existing=1`);
           },
         });
       }

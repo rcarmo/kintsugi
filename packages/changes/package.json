@@ -2,7 +2,10 @@
   "name": "@kintsugi/changes",
   "private": true,
   "type": "module",
-  "exports": { "./server": "./src/server/index.ts", "./client": "./src/client/index.ts" },
+  "exports": {
+    "./server": "./src/server/index.ts",
+    "./client": "./src/client/index.ts"
+  },
   "dependencies": {
     "@kintsugi/core": "workspace:*",
     "@kintsugi/design-system": "workspace:*",
@@ -10,8 +13,8 @@
     "@kintsugi/syntax": "workspace:*",
     "@kintsugi/workspace": "workspace:*",
     "@kintsugi/workspace-templates": "workspace:*",
-    "@hotwired/turbo": "8.0.13",
-    "@pierre/diffs": "1.6.1",
+    "@hotwired/turbo": "8.0.23",
+    "@pierre/diffs": "1.6.2",
     "typebox": "^1.0.57",
     "@kintsugi/agent": "workspace:*"
   }

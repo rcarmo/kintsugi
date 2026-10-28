@@ -1,5 +1,5 @@
-import type MarkdownIt from "markdown-it";
-import type Token from "markdown-it/lib/token.mjs";
+import type { Env, MarkdownIt, Token } from "markdown-it";
+import { rendererRule } from "./renderer-rule.ts";
 import { changesCommitUrl, commitLinkPrefix, escapeHtml, isCommitHash, parseCommitLinkHref, shortCommit, type CommitLinkTarget } from "@kintsugi/shared";
 
 const liveName = (endpoint: string) => endpoint === "working" ? "Uncommitted changes" : "Staged changes";
@@ -35,7 +35,7 @@ export function installCommitLinks(markdown: MarkdownIt): void {
       const children: Token[] = [];
       for (let index = 0; index < block.children.length; index++) {
         const token = block.children[index]!;
-        const href = token.type === "link_open" ? token.attrGet("href")! : "";
+        const href = token.type === "link_open" ? String(token.attrGet("href")!) : "";
         if (!href.startsWith(commitLinkPrefix)) { children.push(token); continue; }
         let close = index + 1;
         for (let depth = 1; ; close++) {
@@ -53,5 +53,5 @@ export function installCommitLinks(markdown: MarkdownIt): void {
       block.children = children;
     }
   });
-  markdown.renderer.rules.commit_link = (tokens, index, _options, environment: { workspaceId: string }) => renderCommitLink(environment.workspaceId, parseCommitLinkHref(tokens[index]!.content)!);
+  markdown.renderer.rules.commit_link = rendererRule((tokens, index, _options, environment: Env & { workspaceId: string }) => renderCommitLink(environment.workspaceId, parseCommitLinkHref(tokens[index]!.content)!));
 }

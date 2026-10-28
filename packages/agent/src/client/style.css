@@ -1,7 +1,6 @@
 /* Agent transcript and pinned AgentPaneComposer */
 
 .fixed-shell-live-body:has(> .agent-pane) { padding: 0; overflow: hidden; }
-.agent-pane { height: 100%; min-height: 0; }
 
 .agent-pane {
   --agent-inline-gutter: clamp(.75rem, 4cqi, 2.5rem);
@@ -70,7 +69,6 @@
 /* User message: matches the Composer surface, right aligned. */
 .agent-user { display: flex; justify-content: flex-end; }
 .agent-user-bubble {
-  --markdown-block-spacing: 6px;
   max-width: 100%; width: fit-content; margin-left: auto; color: var(--text-bright); background: var(--elev); border: 1px solid var(--line); border-radius: var(--radius-surface);
   padding: 8px 12px;
 }
@@ -81,14 +79,14 @@
 
 /* assistant final message: plain typeset text, no bubble */
 .agent-final:empty { display: none; }
-.agent-final-json { margin: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-control); }
+.agent-final-json { margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-control); }
 
-.agent-error { color: var(--danger); background: var(--danger-soft); border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--line)); border-radius: var(--radius-control); padding: 6px 8px; }
+.agent-error { color: var(--danger); background: var(--danger-soft); border: 1px solid var(--danger-line); border-radius: var(--radius-control); padding: 6px 8px; }
 
 /* notes (steer / rewind summaries / system) */
 .agent-note { color: var(--text); background: var(--warning-soft); border: 1px solid var(--line); border-radius: var(--radius-control); padding: 6px 8px; }
-.agent-note.warning { color: var(--text-bright); border-color: color-mix(in srgb, var(--warning) 45%, var(--line)); }
-.agent-note.error { color: var(--danger); background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+.agent-note.warning { color: var(--text-bright); border-color: var(--warning-line); }
+.agent-note.error { color: var(--danger); background: var(--danger-soft); border-color: var(--danger-line); }
 .agent-note p { margin: 0 0 4px; }
 .agent-note p:last-child { margin-bottom: 0; }
 
@@ -96,22 +94,22 @@
  * Agent Markdown enhancements
  * ------------------------------------------------------------------------ */
 
-.agent-table-scroll { max-width: 100%; overflow-x: auto; margin: 0 0 12px; }
-.agent-code-block { position: relative; margin: 4px 0 14px; }
+.agent-table-scroll { max-width: 100%; overflow-x: auto; margin: 0 0 var(--markdown-block-spacing, 12px); }
+.agent-code-block { position: relative; margin: 0 0 var(--markdown-block-spacing, 12px); }
 .agent-code-block-header {
   min-height: 34px; display: flex; align-items: center; min-width: 0; overflow: hidden; padding: 6px 38px 6px 10px;
   border: 1px solid var(--line); border-bottom: 0; border-radius: var(--radius-control) var(--radius-control) 0 0;
   background: var(--panel); color: var(--text-muted); font-family: var(--font-mono); font-size: var(--text-code); text-overflow: ellipsis; white-space: nowrap;
 }
-.agent-code-block pre { background: color-mix(in srgb, var(--bg) 45%, #000 14%); color: var(--text-bright); border: 1px solid var(--line); border-radius: var(--radius-control); padding: 12px; overflow-x: auto; margin: 0; }
+.agent-code-block pre { background: var(--code-surface); color: var(--text-bright); border: 1px solid var(--line); border-radius: var(--radius-control); padding: 12px; overflow-x: auto; margin: 0; }
 .agent-code-block .agent-code-block-header + pre { border-radius: 0 0 var(--radius-control) var(--radius-control); }
 .agent-code-block pre code { display: block; background: transparent; border: 0; border-radius: 0; padding: 0; color: inherit; font-size: var(--text-code); line-height: var(--leading-standard); }
 
-.agent-media-frame.agent-mermaid { width: min(100%, var(--agent-mermaid-card-width, 320px)); margin: 6px 0 14px; }
+.agent-media-frame.agent-mermaid { width: min(100%, var(--agent-mermaid-card-width, 320px)); margin: 0 0 var(--markdown-block-spacing, 12px); }
 .agent-mermaid-diagram {
   --kintsugi-mermaid-bg: var(--bg); --kintsugi-mermaid-fg: var(--text-bright); --kintsugi-mermaid-line: var(--line-strong);
   --kintsugi-mermaid-accent: var(--accent); --kintsugi-mermaid-muted: var(--text-muted); --kintsugi-mermaid-surface: var(--panel); --kintsugi-mermaid-border: var(--line-strong);
-  min-height: 120px; background: color-mix(in srgb, var(--bg) 55%, #000 8%);
+  min-height: 120px; background: var(--code-surface);
 }
 [data-theme="nord"] .agent-mermaid-diagram {
   /* beautiful-mermaid's purpose-built Nord palette is quieter than the app's
@@ -138,8 +136,8 @@
 .agent-tool-code .agent-bash-and { color: var(--warning); }
 .agent-tool-code .agent-bash-or { color: var(--text); }
 
-.agent-media-img { display: block; width: auto; max-width: 100%; max-height: 360px; border-radius: var(--radius-control); border: 1px solid var(--line); margin: 8px 0; }
-.agent-media-frame { display: block; border: 1px solid var(--line-strong); border-radius: var(--radius-control); overflow: hidden; margin: 8px 0; background: var(--panel); }
+.agent-media-img { display: block; width: auto; max-width: 100%; max-height: 360px; border-radius: var(--radius-surface); border: 1px solid var(--line); margin: var(--markdown-block-spacing, 12px) 0; }
+.agent-media-frame { display: block; border: 1px solid var(--line); border-radius: var(--radius-surface); overflow: hidden; margin: var(--markdown-block-spacing, 12px) 0; background: var(--panel); }
 .agent-media-frame-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 4px 8px; color: var(--text); border-bottom: 1px solid var(--line); }
 .agent-media-frame-bar > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* notices */
@@ -148,12 +146,13 @@
 .agent-noticeline > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .agent-noticeline > button, .agent-noticeline > form { flex-shrink: 0; }
 @keyframes agent-notice-in { from { opacity: 0; transform: translateY(-3px); } }
-.agent-noticeline.error { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); background: var(--danger-soft); }
+.agent-noticeline.error { color: var(--danger); border-color: var(--danger-line); background: var(--danger-soft); }
 
 /* Agent pane layout */
 .agent-row + .agent-row { margin-top: 8px; }
 
-.agent-tool-ansi, .agent-tool-code, .agent-tool-term { background: color-mix(in srgb, var(--bg) 45%, #000 14%); color: var(--text-bright); }
+.agent-tool-ansi, .agent-tool-code { background: var(--code-surface); color: var(--text-bright); }
+.agent-tool-term { background: var(--output-surface); color: var(--text-bright); }
 
 .agent-pane-composer .composer-footer { padding-right: var(--composer-control-inset); }
 @media (max-width: 700px) {
@@ -194,7 +193,6 @@
 [data-controller~="agent-footer"] .button__caption { white-space: nowrap; overflow-wrap: normal; }
 [data-controller~="agent-footer"] :is(.agent-stat, .composer-selection-field)[hidden] { display: none; }
 
-.agent-media-img, .agent-media-frame { border-color: var(--line); border-radius: var(--radius-surface); }
 
 /* Transcript + tool-owned renderers */
 .agent-item { position: relative; width: 100%; }
@@ -233,9 +231,11 @@
 .agent-tool-summary-only > .content-row > .content-row__icon::before { content: ""; width: 16px; flex: 0 0 auto; }
 .agent-tool-status { display: inline-flex; width: 8px; flex: 0 0 auto; align-items: center; justify-content: center; }
 .agent-tool-detail-host { display: contents; }
+.agent-tool-detail { width: fit-content; max-width: 100%; }
+.agent-message .agent-detail-table { width: auto; table-layout: auto; }
 
 .agent-tool-detail { margin: 2px 0 8px; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-control); overflow: hidden; background: var(--panel); }
-.agent-region-header { min-height: 29px; padding: 4px 8px; display: flex; align-items: center; gap: 8px; color: var(--text-bright); background: color-mix(in srgb, var(--bg) 82%, #000 6%); border-bottom: 1px solid color-mix(in srgb, var(--text-bright) 15%, transparent); }
+.agent-region-header { min-height: 29px; padding: 4px 8px; display: flex; align-items: center; gap: 8px; color: var(--text-bright); background: var(--region-header-surface); border-bottom: 1px solid color-mix(in srgb, var(--text-bright) 15%, transparent); }
 .agent-region-header > .text-toggle { margin-left: auto; }
 /* In a narrow pane the toggle wraps rather than the region's name. */
 .agent-region-tabs { flex-wrap: wrap; }
@@ -243,24 +243,24 @@
 .agent-source-region, .agent-tool-region { margin: 0; padding: 0; }
 .agent-tool-region + .agent-tool-region { border-top: 1px solid color-mix(in srgb, var(--text-bright) 15%, transparent); }
 .agent-bash-detail > :is(.agent-tool-region, .agent-detail-fullscreen) + :is(.agent-tool-region, .agent-detail-fullscreen) { border-top: 1px solid color-mix(in srgb, var(--text-bright) 15%, transparent); }
-.agent-tool-detail .agent-tool-code { margin: 0; padding: 8px; max-height: 330px; overflow: auto; border: 0; border-radius: 0; color: var(--text-bright); background: color-mix(in srgb, var(--bg) 72%, #000 8%); }
-.agent-tool-detail .agent-tool-region-body { padding: 8px; color: var(--text-bright); background: color-mix(in srgb, var(--bg) 58%, #000 12%); font-family: var(--font-mono); font-size: var(--text-code); }
+.agent-tool-detail .agent-tool-code { margin: 0; padding: 8px; max-height: 330px; overflow: auto; border: 0; border-radius: 0; color: var(--text-bright); background: var(--source-surface); }
+.agent-tool-detail .agent-tool-region-body { padding: 8px; color: var(--text-bright); background: var(--output-surface); font-family: var(--font-mono); font-size: var(--text-code); }
 .agent-bash-command .agent-tool-code { max-height: none; overflow: visible; }
 .agent-codemode-detail { margin: 2px 0 8px; }
 .agent-script .agent-tool-code { max-height: none; overflow: visible; }
 .agent-codemode-call-list { padding: 2px 0 6px; }
 .agent-codemode-call-list > .agent-tool + .agent-tool { margin-top: 2px; }
-.agent-terminal-viewport { overflow: auto; background: color-mix(in srgb, var(--bg) 70%, #000 7%); }
+.agent-terminal-viewport { overflow: auto; background: var(--output-surface); }
 /* The bash visualizer is display-only: dragging it should scroll the transcript,
    not start a Gespenst text selection (or block touch panning). */
 .agent-tool-term .gespenst { pointer-events: none; }
-.agent-tool-result { margin: 0; padding: 8px 8px; max-height: 330px; overflow: auto; color: var(--text-bright); background: color-mix(in srgb, var(--bg) 58%, #000 12%); font-family: var(--font-mono); font-size: var(--text-code); }
-.agent-tail-output { max-height: 330px; overflow: auto; background: color-mix(in srgb, var(--bg) 58%, #000 12%); }
+.agent-tool-result { margin: 0; padding: 8px; max-height: 330px; overflow: auto; color: var(--text-bright); background: var(--output-surface); font-family: var(--font-mono); font-size: var(--text-code); }
+.agent-tail-output { max-height: 330px; overflow: auto; background: var(--output-surface); }
 .agent-tail-output > .agent-tool-result, .agent-tail-output > .agent-tool-code { max-height: none; overflow: visible; }
 .agent-region-pane { display: none; }
 .agent-region-tabs:has([name="agent-region-view"][value="primary"][aria-pressed="true"]) ~ .region-primary-pane { display: block; }
 .agent-region-tabs:has([name="agent-region-view"][value="model"][aria-pressed="true"]) ~ .region-model-pane { display: block; }
-.agent-more-lines { height: 23px; padding: 0 8px; display: flex; align-items: center; background: color-mix(in srgb, var(--bg) 58%, #000 12%); }
+.agent-more-lines { height: 23px; padding: 0 8px; display: flex; align-items: center; background: var(--output-surface); }
 .agent-more-lines a { color: var(--text-muted); text-decoration: underline; text-underline-offset: 2px; }
 .agent-more-lines a:hover { color: var(--text); }
 
@@ -279,8 +279,8 @@
 .agent-thinking-text:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; border-radius: var(--radius-indicator); }
 .agent-tool-images { padding: 8px; display: flex; flex-direction: column; gap: 8px; }
 .agent-tool-images .agent-tool-image { width: auto; max-width: 100%; max-height: none; margin: 0; }
-.agent-tool-note { margin: 0; padding: 8px 8px; color: var(--text); font-family: var(--font-mono); font-size: var(--text-code); }
-.agent-tool-error-output { margin: 0; padding: 8px 8px; color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--bg)); font-family: var(--font-mono); font-size: var(--text-code); }
+.agent-tool-note { margin: 0; padding: 8px; color: var(--text); font-family: var(--font-mono); font-size: var(--text-code); }
+.agent-tool-error-output { margin: 0; padding: 8px; color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--bg)); font-family: var(--font-mono); font-size: var(--text-code); }
 
 .agent-edit-details { background: var(--panel); }
 .agent-edit-pierre + .agent-edit-pierre { border-top: 7px solid var(--panel); }
@@ -329,3 +329,5 @@
 .agent-idle-separator { display: grid; grid-template-columns: minmax(12px, 1fr) minmax(0, max-content) minmax(12px, 1fr); align-items: center; gap: 12px; width: 100%; margin-top: 24px; color: var(--text-muted); font-size: var(--text-code); }
 .agent-idle-separator::before, .agent-idle-separator::after { content: ""; border-top: 1px solid var(--line); }
 .agent-idle-separator time { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-align: center; }
+/* Placed under the selection by the transcript-quote controller. */
+.transcript-quote-action { position: fixed; z-index: 30; }

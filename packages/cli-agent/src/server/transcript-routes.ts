@@ -24,7 +24,7 @@ function renderTranscriptContent(ctx: CliTranscriptContext, available: boolean, 
 
 export function renderCliTranscriptView(adapter: CliAgentAdapter, workspaceId: string, agentId: string): string {
   if (!adapter.loadTranscript) return "";
-  return `<div class="agent-transcript cli-transcript-view" data-cli-terminal-target="transcript" data-action="scroll->cli-terminal#transcriptScrolled">${renderTranscriptContent(context(workspaceId, agentId, adapter.id), false)}</div>`;
+  return `<div class="agent-transcript cli-transcript-view" tabindex="0" role="region" aria-label="Agent transcript" data-cli-terminal-target="transcript" data-action="scroll->cli-terminal#transcriptScrolled">${renderTranscriptContent(context(workspaceId, agentId, adapter.id), false)}</div>`;
 }
 
 export function cliTranscriptAttributes(adapter: CliAgentAdapter, agentId: string): string {

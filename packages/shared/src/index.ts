@@ -339,6 +339,8 @@ export interface WorkspaceServerModuleContext {
   deleteCurrentWorkspace(workspaceId: string, force: boolean): Promise<DeleteCurrentWorkspaceResult>;
   registerSocketHandler(handler: WorkspaceServerSocketHandler): void;
   publishWorkspacePort(workspaceId: string, port: number, protocol?: "http" | "https", hostname?: string): Promise<string>;
+  /** Origin serving workspace files; append an absolute path to load a file. */
+  publishWorkspaceFiles(workspaceId: string): Promise<string>;
   registerWorkspaceAppResolver(resolver: WorkspaceServerAppResolver): void;
   registerProvisioningHook(hook: WorkspaceServerProvisioningHook): void;
   onWorkspaceRemoved(handler: (workspaceId: string) => void | Promise<void>): void;
@@ -390,6 +392,15 @@ export const mobileComposerMediaQuery = "(max-width: 700px)";
 /** Asks an Agent's composer to send a prompt without touching its draft. */
 export const agentComposerSendPromptEvent = "agent-composer:send-prompt";
 export interface AgentComposerSendPromptDetail { text: string; requestId?: string; onComplete?: (error?: Error) => void }
+
+/** Adds a quote to the end of an Agent's draft, leaving the caret under it, after the comment's first typed text. */
+export const agentComposerQuoteEvent = "agent-composer:quote";
+export interface ComposerQuote { source: string; text: string; code: boolean }
+export interface AgentComposerQuoteDetail { quote: ComposerQuote; comment: string }
+
+/** Text selected inside an embedded frame, or null once it is deselected. The rectangle is in the frame's own viewport. */
+export const frameSelectionEvent = "kintsugi:frame-selection";
+export type FrameSelectionDetail = { text: string; code: boolean; rect: { left: number; top: number; right: number; bottom: number } } | null;
 
 /** Scrolling over an embedded frame, which never reaches this document. A
  * synthetic wheel event would do, but iOS Chrome scrolls for those. */

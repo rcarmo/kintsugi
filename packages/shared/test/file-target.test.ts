@@ -8,6 +8,14 @@ test("file links use the neutral endpoint and retain path and cursor information
   expect(url.searchParams.has("filesView")).toBe(false);
 });
 
+test("file links carry a page anchor", () => {
+  const url = new URL(workspaceFileOpenUrl("workspace", "/work/report.html", { fragment: "results" }), "http://localhost");
+  expect(parseWorkspaceFileTarget(url.searchParams)).toEqual({ path: "/work/report.html", fragment: "results" });
+  expect([...fileReferencesIn("See out/report.html#key-findings.")]).toEqual([
+    { path: "out/report.html", line: undefined, column: undefined, fragment: "key-findings", start: 4, end: 32 },
+  ]);
+});
+
 test("an explicit Files view uses its own endpoint", () => {
   const url = new URL(workspaceFileOpenUrl("workspace", "/work/example.ts", {}, "other-view"), "http://localhost");
   expect(url.pathname).toBe("/workspaces/workspace/files-view/open");

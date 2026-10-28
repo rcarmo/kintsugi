@@ -11,6 +11,7 @@ const reportedUsageWindowSchema = {
     periodBasis: { enum: ["calendar-month-estimate"], description: "Monthly pacing for Copilot allowances and Codex workspace credits is inferred, not a provider-reported period length." },
     limitName: { type: "string" }, meteredFeature: { type: ["string", "null"] }, kind: { enum: ["primary", "secondary"] },
     usedPercent: { type: "number" }, durationSeconds: { type: ["integer", "null"], description: "Null when a window duration cannot be established; pacing is unavailable." }, resetsAt: { type: ["string", "null"], format: "date-time", description: "Null when the provider has not reported reset timing; usage is still reported." },
+    limitReached: { type: "boolean", description: "Present when the provider says this window ran out, such as one model's weekly cap while others still work." },
   },
 };
 const providerUsageSchema = {

@@ -1,4 +1,4 @@
-import type MarkdownIt from "markdown-it";
+import type { MarkdownIt } from "markdown-it";
 import { tex } from "@mdit/plugin-tex";
 import { ParseError, renderToString } from "katex";
 import { escapeHtml } from "@kintsugi/shared";
@@ -93,7 +93,7 @@ export function installMath(markdown: MarkdownIt): void {
   markdown.renderer.rules.math_pending = (tokens, index) => renderMathSource(tokens[index]!.content);
   markdown.renderer.rules.math_block = (tokens, index) => {
     const token = tokens[index]!;
-    return renderMath(token.content, true, token.meta.raw);
+    return renderMath(token.content, true, String(token.meta!.raw));
   };
   markdown.renderer.rules.math_inline = (tokens, index) => {
     const token = tokens[index]!;

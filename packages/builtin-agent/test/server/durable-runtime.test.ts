@@ -822,7 +822,7 @@ test("a message after Stop starts its own turn instead of steering the stopped o
   const turns = items.filter(item => item.type === "working");
   expect(turns).toHaveLength(2);
   expect(turns[0]).toMatchObject({ stoppedAt: expect.any(Number), durationUnavailable: false, timing: { elapsedMs: expect.any(Number) } });
-  expect(items.some(item => item.type === "user" && item.steering)).toBe(false);
+  expect(items.filter(item => item.type === "user").map(item => item.text)).toEqual(["First", "Second"]);
 });
 
 test("execution owner publishes busy and finished turns without a presentation mount", async () => {
@@ -1097,6 +1097,15 @@ test("a follow-up promoted to steering joins the running turn after its current 
   expect((await promoted.wait(context)).status).toBe("done");
   expect(faux.state.callCount).toBe(2);
   expect(JSON.stringify((await agent.context(context)).messages)).not.toContain("Remove me");
+  // Steering ends the block it interrupted and gets its own.
+  const watch = await agent.watch(context);
+  const items = projectDurableTranscript(watch.value);
+  await watch.stop();
+  expect(items.map(item => item.type === "user" ? `user:${item.text}` : item.type)).toEqual(["user:Start", "working", "user:Promote me", "working", "text"]);
+  const [interrupted, steered] = items.filter(item => item.type === "working");
+  expect(interrupted).toMatchObject({ completedAt: expect.any(Number), items: [{ type: "tool" }] });
+  expect(interrupted!.hasFinalAnswer).toBeUndefined();
+  expect(steered).toMatchObject({ completedAt: expect.any(Number), hasFinalAnswer: true, items: [] });
 });
 
 test("cancelling one queued input leaves the active turn and other steering intact", async () => {

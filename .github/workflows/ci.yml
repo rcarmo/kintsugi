@@ -69,7 +69,7 @@ jobs:
         if: steps.changes.outputs.required == 'true'
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: "1.26.10"
+          go-version: "1.27.3"
           cache-dependency-path: |
             packages/workspace-helper/helper/go.sum
             packages/workspace-image/workspace-image/gateway/go.mod
@@ -112,17 +112,17 @@ jobs:
       - name: Match the shipped tmux runtime
         if: "steps.changes.outputs.required == 'true'"
         run: |
-          # Ubuntu 24.04 supplies 3.4; release images use Ubuntu 26.04's 3.6a.
+          # Match workspace terminals built from the pinned tmux 3.8 release.
           sudo apt-get update
           sudo apt-get install -y libevent-dev libncurses-dev bison
-          curl --fail --location --silent --show-error https://github.com/tmux/tmux/releases/download/3.6a/tmux-3.6a.tar.gz -o "$RUNNER_TEMP/tmux.tar.gz"
-          echo "b6d8d9c76585db8ef5fa00d4931902fa4b8cbe8166f528f44fc403961a3f3759  $RUNNER_TEMP/tmux.tar.gz" | sha256sum --check
+          curl --fail --location --silent --show-error https://github.com/tmux/tmux/releases/download/3.8/tmux-3.8.tar.gz -o "$RUNNER_TEMP/tmux.tar.gz"
+          echo "e79c699c7e949dccd0a4a125e17b8d1261e311b16979dbc8eb34542f3966d82e  $RUNNER_TEMP/tmux.tar.gz" | sha256sum --check
           tar -xzf "$RUNNER_TEMP/tmux.tar.gz" -C "$RUNNER_TEMP"
-          cd "$RUNNER_TEMP/tmux-3.6a"
+          cd "$RUNNER_TEMP/tmux-3.8"
           ./configure --prefix=/usr/local
           make -j2
           sudo make install
-          test "$(tmux -V)" = 'tmux 3.6a'
+          test "$(tmux -V)" = 'tmux 3.8'
       - name: Run the full test suite
         run: |
           bun run generate:workspace-modules

@@ -20,7 +20,7 @@ test("requests Claude account usage with OAuth and reads every window it names",
   expect(windows).toEqual([
     { limitName: "Claude", meteredFeature: null, kind: "secondary", usedPercent: 72, durationSeconds: 18000, resetsAt: "2026-09-03T12:00:00.000Z" },
     { limitName: "Claude", meteredFeature: null, kind: "secondary", usedPercent: 0, durationSeconds: 604800, resetsAt: "2026-09-03T12:00:00.000Z" },
-    { limitName: "Sonnet", meteredFeature: "sonnet", kind: "secondary", usedPercent: 100, durationSeconds: 604800, resetsAt: "2026-09-03T12:00:00.000Z" },
+    { limitName: "Sonnet", meteredFeature: "sonnet", kind: "secondary", limitReached: true, usedPercent: 100, durationSeconds: 604800, resetsAt: "2026-09-03T12:00:00.000Z" },
     { limitName: "Oauth apps", meteredFeature: "oauth_apps", kind: "secondary", usedPercent: 72, durationSeconds: 604800, resetsAt: "2026-09-03T12:00:00.000Z" },
     { limitName: "New model", meteredFeature: "new_model", kind: "primary", usedPercent: 72, durationSeconds: 10800, resetsAt: "2026-09-03T12:00:00.000Z" },
   ]);
@@ -187,7 +187,7 @@ test("a probe started before a credential change doesn't become the new account'
 });
 
 test("account usage only adds windows the headers lack, keeps them on failure, and honors retry-after", async () => {
-  let accountResponse = () => Response.json({ ...payload, seven_day_sonnet: { ...window, utilization: 40 } });
+  let accountResponse = () => Response.json({ ...payload, seven_day_sonnet: { utilization: 40, resets_at: "2026-10-01T12:00:00+00:00" } });
   const { read, calls, advance } = usageSource(() => accountResponse());
   const accountCalls = () => calls.filter((call) => call.startsWith("/api/oauth/usage")).length;
   const labels = async (refresh: boolean) => (await read("secret", refresh)).windows.map((window) => `${window.limitName} ${window.usedPercent}`);
@@ -238,4 +238,137 @@ test("reset dates never depend on the host timezone or silently roll impossible 
 test("scoped model labels preserve the provider's name, including non-Latin characters", async () => {
   const windows = await fetchAnthropicAccountUsage("secret", fetcher({ limits: [{ kind: "weekly_scoped", group: "weekly", percent: 13, scope: { model: { display_name: "モデル 5.6" } } }] }));
   expect(windows[0]).toMatchObject({ limitName: "モデル 5.6", usedPercent: 13, durationSeconds: 7 * 86400 });
+});
+
+// Real limits[] shape from an account that had hit the Fable cap.
+const scopedLimit = (displayName: string, percent: number) => ({
+  kind: "weekly_scoped", group: "weekly", percent, severity: "critical", resets_at: "2026-10-30T21:59:59.766338+00:00",
+  scope: { model: { id: null, display_name: displayName }, surface: null }, is_active: true,
+});
+const weekBucket = (utilization: number) => ({ utilization, resets_at: "2026-10-30T21:59:59.765981+00:00" });
+const otherLimits = [
+  { kind: "session", group: "session", percent: 7, severity: "normal", resets_at: "2026-10-26T17:59:59.765937+00:00", scope: null, is_active: false },
+  { kind: "weekly_all", group: "weekly", percent: 53, severity: "normal", resets_at: "2026-10-30T21:59:59.765981+00:00", scope: null, is_active: false },
+];
+
+test("model-scoped weekly limits are windows named by their model; other limits[] kinds repeat the buckets", async () => {
+  const windows = await fetchAnthropicAccountUsage("secret", fetcher({ ...payload, limits: [...otherLimits, scopedLimit("Fable", 100)] }));
+  expect(windows.map(({ limitName, meteredFeature, usedPercent, durationSeconds }) => `${limitName} ${meteredFeature} ${usedPercent} ${durationSeconds}`)).toEqual([
+    "Claude null 72 18000", "Claude null 0 604800", "Fable fable 100 604800",
+  ]);
+  expect(windows[2]!.resetsAt).toBe("2026-10-30T21:59:59.766Z");
+  // Only the scoped cap that's used up is limited.
+  expect(windows.map((window) => window.limitReached ?? false)).toEqual([false, false, true]);
+  // Caps scoped to something other than a model are left out, not the whole response.
+  const scopes: JsonObject["scope"][] = [null, "model", {}, { model: null, surface: "claude_code" }, { model: { id: "x" } }, { model: { id: "x", display_name: null } }, { model: { display_name: "" } }];
+  const unnamed = scopes.map((scope) => ({ ...scopedLimit("Fable", 10), scope }));
+  expect((await fetchAnthropicAccountUsage("secret", fetcher({ ...payload, limits: [...unnamed, scopedLimit("Fable", 100)] }))).map((window) => window.limitName))
+    .toEqual(["Claude", "Claude", "Fable"]);
+  // A model's name isn't what makes it a window.
+  expect(await fetchAnthropicAccountUsage("secret", fetcher({ limits: [{ ...scopedLimit("Fable", 100), kind: "weekly_fable" }] }))).toEqual([]);
+  // The fork skips malformed optional scoped entries, preserving valid account buckets.
+  for (const limits of [{}, [null], [{ ...scopedLimit("Fable", 100), percent: "100" }], [{ ...scopedLimit("Fable", 100), resets_at: "soon" }]]) {
+    expect((await fetchAnthropicAccountUsage("secret", fetcher({ ...payload, limits }))).map(window => window.limitName)).toEqual(["Claude", "Claude"]);
+  }
+});
+
+test("abbreviated features get their model's name, unknown ones are capitalised", () => {
+  const names = (features: string[]) => anthropicUsageFromHeaders(new Headers({ ...unified, ...Object.fromEntries(features.map((feature) => [`anthropic-ratelimit-unified-7d_${feature}-utilization`, "0.5"])) }), checkedAt)!
+    .windows.filter((window) => window.meteredFeature !== null).map((window) => `${window.meteredFeature} ${window.limitName}`).toSorted();
+  expect(names(["oi", "overage_included", "opus", "sonnet", "oauth_apps"])).toEqual(["oauth_apps Oauth apps", "oi Fable", "opus Opus", "overage_included Fable", "sonnet Sonnet"]);
+});
+
+const fableHeaders = {
+  ...unified,
+  "anthropic-ratelimit-unified-status": "rejected",
+  "anthropic-ratelimit-unified-7d-status": "allowed",
+  "anthropic-ratelimit-unified-7d_oi-utilization": "1",
+  "anthropic-ratelimit-unified-7d_oi-reset": "1790856000",
+  "anthropic-ratelimit-unified-7d_oi-status": "rejected",
+};
+
+test("only Fable is limited when its cap alone ran out and the shared windows still allow use", () => {
+  const usage = anthropicUsageFromHeaders(new Headers(fableHeaders), checkedAt)!;
+  expect([usage.allowed, usage.limitReached]).toEqual([true, false]);
+  expect(usage.windows.filter((window) => window.limitReached).map((window) => window.limitName)).toEqual(["Fable"]);
+  const limited = (overrides: Record<string, string>) => {
+    const headers = new Headers({ ...fableHeaders, ...overrides });
+    for (const [name, value] of Object.entries(overrides)) if (value === "") headers.delete(name);
+    return anthropicUsageFromHeaders(headers, checkedAt)!.limitReached;
+  };
+  expect(limited({ "anthropic-ratelimit-unified-5h-status": "allowed_warning" })).toBe(false);
+  // A shared window that ran out, or none saying it's allowed, limits the whole account.
+  expect(limited({ "anthropic-ratelimit-unified-7d-status": "rejected" })).toBe(true);
+  expect(limited({ "anthropic-ratelimit-unified-5h-status": "" })).toBe(false);
+  // Real responses can carry 7d usage without its status; used up, it limits the account.
+  expect(limited({ "anthropic-ratelimit-unified-7d-status": "", "anthropic-ratelimit-unified-7d-utilization": "0.99" })).toBe(false);
+  expect(limited({ "anthropic-ratelimit-unified-7d-status": "", "anthropic-ratelimit-unified-7d-utilization": "1" })).toBe(true);
+  expect(limited({ "anthropic-ratelimit-unified-5h-status": "", "anthropic-ratelimit-unified-7d-status": "" })).toBe(true);
+  expect(limited({ "anthropic-ratelimit-unified-7d-status": "unknown" })).toBe(true);
+  expect(limited({ "anthropic-ratelimit-unified-7d_oi-status": "allowed" })).toBe(true);
+  // Fable used up without saying so is still Fable's limit alone.
+  const unsaid = new Headers(fableHeaders);
+  unsaid.delete("anthropic-ratelimit-unified-7d_oi-status");
+  const quiet = anthropicUsageFromHeaders(unsaid, checkedAt)!;
+  expect([quiet.limitReached, quiet.windows.filter((window) => window.limitReached).map((window) => window.limitName)]).toEqual([false, ["Fable"]]);
+});
+
+function sourceWith(headers: Record<string, string>, account: JsonObject) {
+  return createAnthropicUsageSource(async (url) => url.endsWith("/v1/messages") ? new Response("{}", { headers }) : Response.json(account), () => checkedAt.getTime());
+}
+const shown = async (source: ReturnType<typeof createAnthropicUsageSource>) => (await source.usage("secret", { model: "cheap-model", refresh: false })).windows
+  .map((window) => `${window.limitName} ${window.usedPercent}${window.limitReached ? " reached" : ""}`);
+
+test("the Fable header window takes the account endpoint's model name and shows once", async () => {
+  expect(await shown(sourceWith(fableHeaders, { ...payload, limits: [...otherLimits, scopedLimit("Fable 5", 98)] }))).toEqual(["Claude 26", "Claude 5", "Fable 5 100 reached"]);
+  // Opus's cap is Opus's own window, which leaves one cap for "7d_oi".
+  expect(await shown(sourceWith(fableHeaders, { ...payload, limits: [scopedLimit("Fable 5", 98), scopedLimit("Opus", 40)] }))).toEqual(["Claude 26", "Claude 5", "Fable 5 100 reached", "Opus 40"]);
+  // With several unknown caps it's unclear which one "7d_oi" is, so it keeps its own name.
+  expect(await shown(sourceWith(fableHeaders, { ...payload, limits: [scopedLimit("Fable 5", 98), scopedLimit("Gizmo", 40)] }))).toEqual(["Claude 26", "Claude 5", "Fable 100 reached", "Fable 5 98", "Gizmo 40"]);
+  // A single cap that belongs to another feature isn't Fable's, and that feature's window stays.
+  expect(await shown(sourceWith(fableHeaders, { ...payload, seven_day_sonnet: weekBucket(41), limits: [scopedLimit("Sonnet", 40)] }))).toEqual(["Claude 26", "Claude 5", "Fable 100 reached", "Sonnet 41"]);
+  expect(await shown(sourceWith(fableHeaders, { ...payload, limits: [scopedLimit("Opus", 40)] }))).toEqual(["Claude 26", "Claude 5", "Fable 100 reached", "Opus 40"]);
+  // A dedicated bucket and its limits[] entry are the same window, used up when either says so.
+  expect(await shown(sourceWith(unified, { ...payload, seven_day_opus: weekBucket(99.5), limits: [scopedLimit("Opus", 100)] }))).toEqual(["Claude 26", "Claude 5", "Opus 99.5 reached"]);
+  // A header window that says it's allowed is, whatever the account endpoint rounds to.
+  const allowedFable = { ...fableHeaders, "anthropic-ratelimit-unified-status": "allowed", "anthropic-ratelimit-unified-7d_oi-utilization": "0.995", "anthropic-ratelimit-unified-7d_oi-status": "allowed" };
+  expect(await shown(sourceWith(allowedFable, { ...payload, limits: [scopedLimit("Fable", 100)] }))).toEqual(["Claude 26", "Claude 5", "Fable 99.5"]);
+  expect(await shown(sourceWith(unified, { ...payload, seven_day_opus: weekBucket(100), limits: [scopedLimit("Opus", 99)] }))).toEqual(["Claude 26", "Claude 5", "Opus 100 reached"]);
+  expect(await shown(sourceWith(unified, { ...payload, seven_day_opus: weekBucket(41), limits: [scopedLimit("Opus", 40), scopedLimit("Fable", 98)] }))).toEqual(["Claude 26", "Claude 5", "Opus 41", "Fable 98"]);
+});
+
+test("a cached account window is dropped once its reset passes while the endpoint is rate limited", async () => {
+  let at = checkedAt.getTime();
+  let account = () => Response.json({ limits: [{ ...scopedLimit("Fable", 100), resets_at: new Date(at + 60_000).toISOString() }] });
+  const source = createAnthropicUsageSource(async (url) => url.endsWith("/v1/messages") ? new Response("{}", { headers: unified }) : account(), () => at);
+  expect(await shown(source)).toEqual(["Claude 26", "Claude 5", "Fable 100 reached"]);
+  account = () => new Response(null, { status: 429, headers: { "retry-after": "3600" } });
+  at += 2 * 60_000;
+  expect(await shown(source)).toEqual(["Claude 26", "Claude 5"]);
+});
+
+test("the Fable window keeps its name while the account endpoint is rate limited", async () => {
+  const source = createAnthropicUsageSource(async (url) => url.endsWith("/v1/messages") ? new Response("{}", { headers: fableHeaders }) : new Response(null, { status: 429, headers: { "retry-after": "300" } }), () => checkedAt.getTime());
+  expect(await shown(source)).toEqual(["Claude 26", "Claude 5", "Fable 100 reached"]);
+});
+
+test("a reached account cap without reset timing doesn't pin an allowed header window", async () => {
+  const allowedFable = { ...fableHeaders, "anthropic-ratelimit-unified-status": "allowed", "anthropic-ratelimit-unified-7d_oi-utilization": "0.4", "anthropic-ratelimit-unified-7d_oi-status": "allowed" };
+  const stale = { ...scopedLimit("Fable", 100), resets_at: null };
+  expect(await shown(sourceWith(allowedFable, { ...payload, limits: [stale] }))).toEqual(["Claude 26", "Claude 5", "Fable 40"]);
+});
+
+test("a used-up Fable header window without a status stays reached over the account endpoint's cap", async () => {
+  const { "anthropic-ratelimit-unified-7d_oi-status": _status, ...unsaid } = fableHeaders;
+  expect(await shown(sourceWith(unsaid, { ...payload, limits: [scopedLimit("Fable", 100)] }))).toEqual(["Claude 26", "Claude 5", "Fable 100 reached"]);
+});
+
+test("a bucket without reset timing doesn't stay reached past its limits[] entry's reset", async () => {
+  let at = checkedAt.getTime();
+  let account = () => Response.json({ seven_day_opus: { utilization: 99.5, resets_at: null }, limits: [{ ...scopedLimit("Opus", 100), resets_at: new Date(at + 60_000).toISOString() }] });
+  const source = createAnthropicUsageSource(async (url) => url.endsWith("/v1/messages") ? new Response("{}", { headers: unified }) : account(), () => at);
+  expect(await shown(source)).toEqual(["Claude 26", "Claude 5", "Opus 99.5 reached"]);
+  account = () => new Response(null, { status: 429, headers: { "retry-after": "3600" } });
+  at += 2 * 60_000;
+  expect(await shown(source)).toEqual(["Claude 26", "Claude 5"]);
 });

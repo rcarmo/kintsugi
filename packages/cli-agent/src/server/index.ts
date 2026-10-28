@@ -1,6 +1,7 @@
 import { registerPlanAgentResolver } from "@kintsugi/agent/server/plan";
 import { registerAgentTurnSettler } from "@kintsugi/agent/server";
 import { renderWorkspaceCompletionCatalog } from "@kintsugi/agent/server/completion-catalog";
+import { renderTranscriptQuoteAction } from "@kintsugi/agent/server/render-transcript";
 import { agentAttachmentDraftId, listStagedAttachments, renderComposerBody, renderFloatingStack, renderOpenComposerButton, agentComposerActions, composerAttachmentAttributes } from "@kintsugi/prompt/server";
 import { dictationComposerController } from "@kintsugi/dictation/server";
 import { observableTerminalStaticFiles, renderTerminalKeyBar, renderTerminalConnectionStatus } from "@kintsugi/observable-terminal/server";
@@ -52,7 +53,7 @@ export function createCliAgentModule(adapter: CliAgentAdapter): WorkspaceModule 
       </div>
     </div>` : "";
     // Permanent keeps a live terminal through page renders; an ended one has none, and must be replaceable.
-    return `<section id="${domId("cli_agent", workspaceId, agentId)}"${running ? " data-turbo-permanent" : ""} class="cli-agent-body agent-composer-pane" data-controller="cli-terminal agent-composer composer-focus${composer ? " agent-attachments" : ""}" data-agent-composer-open-on-select-value="false" data-cli-terminal-url-value="${escapeHtml(url)}" data-cli-terminal-socket-value="${escapeHtml(terminalProcessSocketPath(workspaceId, agentId))}" data-cli-terminal-workspace-id-value="${escapeHtml(workspaceId)}" ${cliTranscriptAttributes(adapter, agentId)} ${composerAttachmentAttributes(draftId, rowId, `kintsugi:workspace-pane-visible@window->cli-terminal#refresh kintsugi:workspace-agent-focus->cli-terminal#focus kintsugi:theme-change@document->cli-terminal#theme ${agentComposerActions}`)}>
+    return `<section id="${domId("cli_agent", workspaceId, agentId)}"${running ? " data-turbo-permanent" : ""} class="cli-agent-body agent-composer-pane" data-controller="cli-terminal agent-composer composer-focus${composer ? " agent-attachments transcript-quote" : ""}" data-agent-composer-open-on-select-value="false" data-cli-terminal-url-value="${escapeHtml(url)}" data-cli-terminal-socket-value="${escapeHtml(terminalProcessSocketPath(workspaceId, agentId))}" data-cli-terminal-workspace-id-value="${escapeHtml(workspaceId)}" ${cliTranscriptAttributes(adapter, agentId)} ${composerAttachmentAttributes(draftId, rowId, `kintsugi:workspace-pane-visible@window->cli-terminal#refresh kintsugi:workspace-agent-focus->cli-terminal#focus kintsugi:theme-change@document->cli-terminal#theme ${agentComposerActions}`)}>
       <div class="cli-terminal-status" role="status">${session.error ? failureStatus(session.error) : terminalStatus(terminal)}</div>
       <div class="cli-agent-stage">
         ${running ? renderTerminalConnectionStatus("cli-terminal") : ""}
@@ -60,6 +61,7 @@ export function createCliAgentModule(adapter: CliAgentAdapter): WorkspaceModule 
         ${running ? '<div class="observable-terminal-host" data-cli-terminal-target="terminal" tabindex="0" data-action="pointerdown->cli-terminal#terminalPointer:capture pointermove->cli-terminal#terminalPointer:capture pointerup->cli-terminal#terminalPointer:capture terminal-text-input:input->cli-terminal#sendNativeInput keydown->cli-terminal#resumeInput:capture beforeinput->cli-terminal#resumeInput:capture touchstart->cli-terminal#startTerminalTouch:passive touchmove->cli-terminal#moveTerminalTouch:!passive touchcancel->cli-terminal#cancelTerminalTouch touchend->cli-terminal#finishTerminalTouch:!passive"></div>' : ""}
         ${renderCliTranscriptView(adapter, workspaceId, agentId)}
         ${renderFloatingStack({ openComposer: composer ? renderOpenComposerButton() : undefined, ...transcriptControls })}
+        ${composer ? renderTranscriptQuoteAction() : ""}
       </div>
       ${running ? renderTerminalKeyBar("cli-terminal") : ""}
       ${composer}

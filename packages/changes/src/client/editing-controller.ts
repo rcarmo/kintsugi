@@ -8,7 +8,7 @@ import { diskContents, editorContents, type EditModel, type EditedCommentRange }
 import { moveCommentRanges } from "../editing-ranges.ts";
 
 type Viewer = CodeView<ChangesAnnotation, undefined>;
-type Stream = { targetElements: HTMLElement[] };
+type Stream = HTMLElement & { targetElements: HTMLElement[]; templateElement: HTMLTemplateElement };
 
 /** Both fresh Pierre headers and session updates use the same file-row state. */
 export function syncFileEditButtons(header: HTMLElement, editingPath: string | undefined, pending: boolean): void {
@@ -204,6 +204,7 @@ export function createChangesEditController(Controller: WorkspaceClientControlle
       try {
         const data = new FormData();
         data.set("token", this.model.token); data.set("contents", this.text); data.set("ranges", JSON.stringify(this.ranges));
+        data.set("history", shell.dataset.changesDiffEndpointsHistoryIdValue!);
         const html = await this.request("save", data);
         this.finish(true);
         this.confirmationTarget.close();
@@ -340,12 +341,21 @@ export function createChangesEditController(Controller: WorkspaceClientControlle
       const submitter = (event as SubmitEvent).submitter;
       this.guard(() => form.requestSubmit(submitter));
     };
+    /** Whether rendering a stream into this target replaces the edit. Morphs keep permanent islands they still contain. */
+    private replacedBy(stream: Stream, target: HTMLElement): boolean {
+      if (target === this.element || this.element.contains(target)) return true;
+      if (!target.contains(this.element)) return false;
+      if (stream.getAttribute("method") !== "morph") return true;
+      let island: HTMLElement | undefined;
+      // The target contains the edit, so every ancestor up to it exists.
+      for (let element = this.element.parentElement!; element !== target; element = element.parentElement!) if (element.id && element.hasAttribute("data-turbo-permanent")) island = element;
+      return !island || !stream.templateElement.content.querySelector(`#${CSS.escape(island.id)}`);
+    }
     private readonly preserve = (event: Event): void => {
       if (!this.model && !this.starting) return;
       // SAFETY: Both stream renderers expose the incoming Turbo stream and its targets.
       const stream = (event as CustomEvent<{ newStream: Stream }>).detail.newStream;
-      const affectsEdit = stream.targetElements.some(target => target === this.element || target.contains(this.element) || this.element.contains(target));
-      if (!affectsEdit) return;
+      if (!stream.targetElements.some(target => this.replacedBy(stream, target))) return;
       event.preventDefault();
       this.staleTarget.hidden = false;
     };

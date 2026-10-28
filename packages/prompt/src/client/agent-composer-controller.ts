@@ -1,5 +1,5 @@
-import { composerViewportHeight, focusComposerText, sizeComposer } from "./composer-editor.ts";
-import { changeLayout, focusLikelyOpensSoftwareKeyboard, isWorkspacePaneVisible, mobileComposerMediaQuery, type WorkspaceClientControllerConstructor } from "@kintsugi/shared";
+import { appendComposerQuote, composerViewportHeight, focusComposerText, sizeComposer } from "./composer-editor.ts";
+import { changeLayout, focusLikelyOpensSoftwareKeyboard, isWorkspacePaneVisible, mobileComposerMediaQuery, type AgentComposerQuoteDetail, type WorkspaceClientControllerConstructor } from "@kintsugi/shared";
 
 /** The composer may grow to this share of the space above the keyboard (or of the window). */
 const composerMaxShare = 0.4;
@@ -114,6 +114,15 @@ export function createAgentComposerController(Controller: WorkspaceClientControl
 
     close(): void {
       this.setOpen(false);
+    }
+
+    /** Selected transcript text, to comment on: the composer opens with it and grows in one step. */
+    quote(event: CustomEvent<AgentComposerQuoteDetail>): void {
+      const input = this.input!;
+      changeLayout(() => {
+        this.setOpen(true);
+        appendComposerQuote(input, event.detail.quote, event.detail.comment);
+      });
     }
 
     /** A prompt was accepted for sending. On mobile the composer and keyboard go away at once. */

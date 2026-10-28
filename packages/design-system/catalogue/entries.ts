@@ -642,7 +642,7 @@ export const entries: CatalogueEntry[] = [
       },
       {
         title: "Nested disclosures · shared gutter keeps the hierarchy visible",
-        render: () => disclosureHtml({ summary: { kind: "compact", label: { kind: "text", text: "Completed · 1m23s" } }, bodyHtml: '<p>I checked the Models panel and the shared row styles.</p>' + disclosureHtml({ summary: { kind: "multiline", label: { kind: "text", text: "read · packages/design-system/src/content-row/content-row-html.ts" } }, bodyHtml: '<pre><code>contentRowHtml({ kind: "multiline", … })</code></pre>', open: true }), open: true }),
+        render: () => disclosureHtml({ summary: { kind: "compact", label: { kind: "text", text: "Worked for 1m23s" } }, bodyHtml: '<p>I checked the Models panel and the shared row styles.</p>' + disclosureHtml({ summary: { kind: "multiline", label: { kind: "text", text: "read · packages/design-system/src/content-row/content-row-html.ts" } }, bodyHtml: '<pre><code>contentRowHtml({ kind: "multiline", … })</code></pre>', open: true }), open: true }),
       },
     ],
   },

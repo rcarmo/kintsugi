@@ -1,4 +1,4 @@
-import { changeLayout } from "@kintsugi/shared";
+import { changeLayout, type ComposerQuote } from "@kintsugi/shared";
 
 /** Height available above the arranged keyboard, or the full window when it is down. */
 export function composerViewportHeight(): number {
@@ -84,4 +84,23 @@ export function focusComposerText(composer: HTMLElement, event: MouseEvent): voi
   if (target.closest("button, a, input, select, textarea, label, summary, .composer-divider, .agent-chip, .composer-footer, .agent-completion-menu-host")) return;
   input.focus({ preventScroll: true });
   input.setSelectionRange(input.value.length, input.value.length);
+}
+
+/** A selection as Markdown: a blockquote that says where it came from. Code keeps its fence. */
+export function formatComposerQuote({ source, text, code }: ComposerQuote): string {
+  // Code keeps the first line's indentation; prose loses stray surrounding whitespace.
+  const body = code ? text.replace(/^(?:[ \t]*\n)+|\s+$/g, "") : text.trim();
+  const fence = "`".repeat(Math.max(3, ...[...body.matchAll(/`+/g)].map(run => run[0].length + 1)));
+  const lines = code ? [fence, ...body.split("\n"), fence] : body.split("\n");
+  return [`${source}:`, ...lines].map(line => line.trimEnd() ? `> ${line.trimEnd()}` : ">").join("\n");
+}
+
+/** Adds the quote and the start of its comment after the draft as one undoable edit, leaving the caret after them. */
+export function appendComposerQuote(input: HTMLTextAreaElement, quote: ComposerQuote, comment: string): void {
+  const draft = input.value;
+  const separator = !draft || draft.endsWith("\n\n") ? "" : draft.endsWith("\n") ? "\n" : "\n\n";
+  input.focus({ preventScroll: true });
+  input.setSelectionRange(draft.length, draft.length);
+  // Native insertion keeps the undo stack and notifies input listeners, so drafts save as typed.
+  if (!document.execCommand("insertText", false, `${separator}${formatComposerQuote(quote)}\n\n${comment}`)) throw new Error("Could not add the quote to the composer.");
 }

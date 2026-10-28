@@ -105,7 +105,13 @@ async function stagePromptTemplateButton(workspaceId: string): Promise<void> {
 
 /** tmux window sizes inside the workspace container, by session name. Read-only: no hooks are installed. */
 export async function tmuxSizes(workspaceId: string): Promise<Record<string, string>> {
-  const output = await workspaceExec(workspaceId, ["tmux", "list-windows", "-a", "-F", "#{session_name} #{window_width}x#{window_height}"]);
+  const process = Bun.spawn(["docker", "exec", "-u", "agent", `kintsugi-${workspaceId}`, "tmux", "list-windows", "-a", "-F", "#{session_name} #{window_width}x#{window_height}"], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const [output, stderr, code] = await Promise.all([new Response(process.stdout).text(), new Response(process.stderr).text(), process.exited]);
+  if (code !== 0) {
+    // A fresh or restarted workspace has no sessions until a terminal is opened.
+    if (code === 1 && /^(?:no current target|no sessions|no server running on [^\n]+|error connecting to [^\n]+ \(No such file or directory\))$/.test(stderr.trim())) return {};
+    throw new Error(`Sampling tmux sizes failed (${code}): ${stderr}`);
+  }
   return Object.fromEntries(output.trim().split("\n").filter(Boolean).map((line) => {
     const space = line.lastIndexOf(" ");
     return [line.slice(0, space), line.slice(space + 1)];

@@ -1,3 +1,5 @@
 {
-  "aptPackages": ["glab"]
+  "run": [
+    "set -eux; glab_version=1.125.0; case \"$(dpkg --print-architecture)\" in amd64) glab_sha256=cef937bc144078826c50f8dfa32fcd899a9a3e79dbffb0c8ed6e609a07b2ea55 ;; arm64) glab_sha256=2fdfeb0080ed33631176e9dc419ac10d52f1bda57b66238497f9c1f677a3f88f ;; *) echo \"unsupported glab architecture: $(dpkg --print-architecture)\" >&2; exit 1 ;; esac; glab_deb=\"/tmp/glab_${glab_version}_linux_$(dpkg --print-architecture).deb\"; curl -fsSL \"https://gitlab.com/gitlab-org/cli/-/releases/v${glab_version}/downloads/glab_${glab_version}_linux_$(dpkg --print-architecture).deb\" -o \"$glab_deb\"; echo \"$glab_sha256  $glab_deb\" | sha256sum -c; dpkg -i \"$glab_deb\"; rm -f \"$glab_deb\"; glab --version | grep -F \"glab $glab_version\""
+  ]
 }

@@ -47,7 +47,7 @@ export function renderBrowserFrame(workspaceId: string, view: WorkspaceBrowserVi
   const target = view.targetUrl ? new URL(view.targetUrl) : undefined;
   const browserId = view.key;
   const frameControllerAttributes = previewUrl
-    ? ` src="${escapeHtml(previewUrl)}"${target && isWorkspaceLoopbackHost(target.hostname) ? ` allow="${browserFramePermissions}" allowfullscreen` : ""}`
+    ? ` src="${escapeHtml(previewUrl)}"${target && (target.protocol === "file:" || isWorkspaceLoopbackHost(target.hostname)) ? ` allow="${browserFramePermissions}" allowfullscreen` : ""}`
     : "";
   const externalLinkContent = {
     kind: "icon-only" as const,

@@ -5,7 +5,7 @@ import { escapeHtml } from "@kintsugi/shared";
 import { renderAttachmentChip, renderAttachmentPicker } from "./render-attachments.ts";
 import type { StagedAttachment } from "./attachment-drafts.ts";
 
-export const agentComposerActions = "mousedown->composer-focus#preserveInputFocus kintsugi:workspace-pane-visible@document->agent-composer#selected kintsugi:workspace-agent-created@document->agent-composer#selected kintsugi:workspace-pane-hidden@document->agent-composer#hidden agent-attachments:files->agent-composer#reveal agent-composer:sending->agent-composer#sending agent-composer:sent->agent-composer#sent agent-composer:failed->agent-composer#failed input->agent-composer#draftChanged focusin->agent-composer#focused click->agent-composer#focusText kintsugi:software-keyboard@document->agent-composer#layout resize@window->agent-composer#autosize agent-composer:resize->agent-composer#autosize";
+export const agentComposerActions = "mousedown->composer-focus#preserveInputFocus kintsugi:workspace-pane-visible@document->agent-composer#selected kintsugi:workspace-agent-created@document->agent-composer#selected kintsugi:workspace-pane-hidden@document->agent-composer#hidden agent-attachments:files->agent-composer#reveal agent-composer:sending->agent-composer#sending agent-composer:sent->agent-composer#sent agent-composer:failed->agent-composer#failed input->agent-composer#draftChanged focusin->agent-composer#focused click->agent-composer#focusText kintsugi:software-keyboard@document->agent-composer#layout resize@window->agent-composer#autosize agent-composer:resize->agent-composer#autosize agent-composer:quote->agent-composer#quote";
 
 const sendIcon = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15V5m-4 4 4-4 4 4"/></svg>';
 

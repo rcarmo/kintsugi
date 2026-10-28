@@ -157,8 +157,8 @@ test("reveal resolves nested activity to its owning turn, but not final answers"
   const { codexRoutes } = await import(${JSON.stringify(join(import.meta.dir, "../src/server/routes.ts"))});
   const route = codexRoutes(agents);
   const reveal = async key => { const url = new URL("http://localhost/workspaces/workspace/codex-agents/" + id + "/reveal/" + key); return (await route(new Request(url), url)).json(); };
-  for (const key of ["reasoning", "command", "steering"]) expect(await reveal(key)).toEqual({ turnId: "working" });
-  for (const key of ["initial", "answer", "missing"]) expect(await reveal(key)).toEqual({ turnId: null });
+  for (const key of ["reasoning", "command"]) expect(await reveal(key)).toEqual({ turnId: "working" });
+  for (const key of ["initial", "steering", "answer", "missing"]) expect(await reveal(key)).toEqual({ turnId: null });
   await agents.disposeAll();
 `));
 

@@ -52,30 +52,47 @@ function projectCodexItem(item: ThreadItem, live: boolean): TranscriptItem {
   }
 }
 
-export function projectCodexTurns(turns: readonly Turn[], completedItems: ReadonlySet<string>): TranscriptItem[] {
+/**
+ * One block per run of input Codex read: steering it took mid-turn ends the block it interrupted and starts its own.
+ * Codex's history only times whole turns, so a block steering started is timed only once `itemStarts`, from live
+ * notifications, has its first item.
+ * A sub-agent's own transcript has no `subagents`: its sub-agents aren't the Agent's background activities.
+ */
+export function projectCodexTurns(turns: readonly Turn[], completedItems: ReadonlySet<string>, itemStarts: ReadonlyMap<string, number> = new Map()): TranscriptItem[] {
   return turns.flatMap(turn => {
     const busy = turn.status === "inProgress";
-    const activity: TranscriptItem[] = [];
-    const users: TranscriptItem[] = [];
-    const finals: TranscriptItem[] = [];
     const messages = turn.items.filter(item => item.type === "agentMessage");
     const unphasedFinal = turn.status === "completed" && messages.every(message => message.phase === null) ? messages.at(-1)?.id : undefined;
+    const turnStartedAt = (turn.startedAt ?? 0) * 1000;
+    const turnEndedAt = turn.completedAt === null ? turnStartedAt + (turn.durationMs ?? 0) : turn.completedAt * 1000;
+    const segments: { key: string; users: TranscriptItem[]; activity: TranscriptItem[]; startedAt?: number }[] = [{ key: turn.id, users: [], activity: [], startedAt: turnStartedAt }];
+    const finals: TranscriptItem[] = [];
     for (const item of turn.items) {
       const projected = projectCodexItem(item, busy && !completedItems.has(item.id));
       if (projected.type === "text" && projected.key === unphasedFinal) projected.final = true;
-      if (projected.type === "user" && !users.length) users.push(projected);
+      let segment = segments.at(-1)!;
+      if (projected.type === "user" && segment.users.length && segment.activity.length) {
+        segment = { key: `${turn.id}:${item.id}`, users: [], activity: [] };
+        segments.push(segment);
+      }
+      if (projected.type === "user") segment.users.push(projected);
       else if (projected.type === "text" && projected.final) finals.push(projected);
-      else { if (projected.type === "user") projected.steering = true; activity.push(projected); }
+      else { segment.activity.push(projected); segment.startedAt ??= itemStarts.get(item.id); }
     }
-    if (turn.error) activity.push({ type: "error", key: `${turn.id}:error`, text: turn.error.message });
-    if (turn.status === "interrupted") activity.push({ type: "note", key: `${turn.id}:stopped`, text: "Stopped", tone: "system" });
-    const startedAt = (turn.startedAt ?? 0) * 1000;
-    const endedAt = turn.completedAt === null ? startedAt + (turn.durationMs ?? 0) : turn.completedAt * 1000;
-    const working: WorkingTranscriptItem = { type: "working", key: turn.id, startedAt, items: activity, live: busy, hasFinalAnswer: finals.length > 0 };
-    if (!busy) {
-      if (turn.status === "interrupted") working.stoppedAt = endedAt;
-      else working.completedAt = endedAt;
-    }
-    return [...users, working, ...finals];
+    const last = segments.at(-1)!;
+    if (turn.error) last.activity.push({ type: "error", key: `${turn.id}:error`, text: turn.error.message });
+    if (turn.status === "interrupted") last.activity.push({ type: "note", key: `${turn.id}:stopped`, text: "Stopped", tone: "system" });
+    return segments.flatMap((segment, index) => {
+      const next = segments[index + 1];
+      const endedAt = next ? next.startedAt : turnEndedAt;
+      const startedAt = segment.startedAt ?? turnStartedAt;
+      const working: WorkingTranscriptItem = { type: "working", key: segment.key, startedAt, items: segment.activity, live: busy && !next,
+        hasFinalAnswer: !next && finals.length > 0, durationUnavailable: segment.startedAt === undefined || endedAt === undefined ? true : undefined };
+      if (next || !busy) {
+        if (!next && turn.status === "interrupted") working.stoppedAt = turnEndedAt;
+        else working.completedAt = endedAt ?? startedAt;
+      }
+      return [...segment.users, working, ...next ? [] : finals];
+    });
   });
 }

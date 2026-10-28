@@ -106,7 +106,11 @@
 .changes-loading { position: absolute; inset: var(--changes-comparison-top, 49px) 0 0; z-index: 2; display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--text-muted); background: var(--bg); }
 .changes-spinner { width: 18px; height: 18px; border: 2px solid var(--line-strong); border-top-color: var(--accent); border-radius: 50%; animation: changes-spin 800ms linear infinite; }
 @keyframes changes-spin { to { transform: rotate(360deg); } }
-.changes-diff-endpoints-error { position: absolute; inset: auto 8px 8px; z-index: 4; display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--panel); border: 1px solid var(--danger); border-radius: var(--radius-control); color: var(--danger); box-shadow: var(--shadow); font-size: var(--text-code); }
+/* A commit link's notice and a comparison error can show at once; they stack instead of covering each other. */
+.changes-alerts { position: absolute; inset: auto 8px 8px; z-index: 4; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.changes-alerts > * { pointer-events: auto; }
+.changes-alerts > :empty { display: none; }
+.changes-diff-endpoints-error { display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--panel); border: 1px solid var(--danger); border-radius: var(--radius-control); color: var(--danger); box-shadow: var(--shadow); font-size: var(--text-code); }
 .changes-diff-endpoints-error > span { flex: 1; min-width: 0; }
 .changes-notice-dismiss { display: contents; }
 .changes-busy .changes-surface, .changes-busy .changes-empty, .changes-failed .changes-surface, .changes-failed .changes-empty { visibility: hidden; }

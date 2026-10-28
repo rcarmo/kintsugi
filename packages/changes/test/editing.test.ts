@@ -40,6 +40,17 @@ test("working-tree saves preserve baseline, permissions, Git index, and pinned l
   expect(saved.files.get("file.ts")!.newContents).toBe("original\nstaged\nedited\n");
 });
 
+test("saving captures a fresh history: Working tree counts and commits made while editing", async () => {
+  const { root, repo, store, snapshot } = await fixture();
+  const model = await store.begin("workspace", repo, snapshot, "file.ts");
+  await writeFile(join(root, "other.ts"), "other\n");
+  await repo.gitResult(["add", "other.ts"]); await repo.gitResult(["commit", "-m", "committed while editing"]);
+  const saved = await store.save("workspace", repo, model.token, "original\nchange\nmore\nlines\n", [], () => {});
+  expect(saved.history.id).not.toBe(snapshot.history.id);
+  expect(saved.history.commits[1]!.subject).toBe("committed while editing");
+  expect(saved.history.commits[0]!.stats).toEqual({ files: 1, additions: 3, deletions: 0 });
+});
+
 test("stale edits, mode changes, deletes, and symlink replacements never overwrite newer workspace changes", async () => {
   const { root, repo, store, snapshot } = await fixture();
   const model = await store.begin("workspace", repo, snapshot, "file.ts");

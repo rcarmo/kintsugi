@@ -83,10 +83,14 @@ export function projectDurableTranscript(view: ConversationView): TranscriptItem
   function appendMessage(message: Message, key: string, imageEntryId: string, offset: number, partial = false, aborted = false) {
     if (message.role === "system") return;
     if (message.role === "user") {
-      const startsTurn = pendingBoundary || !turn;
-      if (startsTurn) { turn = key; pendingBoundary = false; timings.set(key, new DurableTurnTiming()); }
+      const startsRun = pendingBoundary || !turn;
+      // Input read together, such as a prompt and the steering queued behind it, shares one block.
+      const readTogether = records.findLast(record => record.kind !== "runStart")?.kind === "user";
+      // Steering read mid-run ends the block it interrupted and starts its own, within the same run.
+      if (!startsRun && !readTogether) turnEnds.set(turn!, { timestamp: message.timestamp, completed: true });
+      if (startsRun || !readTogether) { turn = key; pendingBoundary = false; timings.set(key, new DurableTurnTiming()); }
       records.push({ kind: "user", id: key, text: contentText(message.content), images: images(message.content, imageEntryId, offset), timestamp: message.timestamp, rewindable: false });
-      if (startsTurn) records.push({ kind: "runStart", turnEntryId: key, timestamp: message.timestamp, startedAt: message.timestamp });
+      if (startsRun) records.push({ kind: "runStart", turnEntryId: key, timestamp: message.timestamp, startedAt: message.timestamp });
     } else if (message.role === "assistant") {
       records.push({ kind: "assistant", id: key, timestamp: message.timestamp,
         stopReason: message.stopReason, partial,

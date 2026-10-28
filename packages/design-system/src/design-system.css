@@ -134,6 +134,13 @@
   --success-soft: color-mix(in srgb, var(--success) 15%, var(--panel));
   --warning-soft: color-mix(in srgb, var(--warning) 15%, var(--panel));
   --danger-soft: color-mix(in srgb, var(--danger) 15%, var(--panel));
+  --warning-line: color-mix(in srgb, var(--warning) 35%, var(--line));
+  --danger-line: color-mix(in srgb, var(--danger) 35%, var(--line));
+  /* Code surfaces, from lightest to darkest: a region's header, source a tool was given, what it printed, and code in a message. */
+  --region-header-surface: color-mix(in srgb, var(--bg) 82%, #000 6%);
+  --source-surface: color-mix(in srgb, var(--bg) 72%, #000 8%);
+  --output-surface: color-mix(in srgb, var(--bg) 58%, #000 12%);
+  --code-surface: color-mix(in srgb, var(--bg) 45%, #000 14%);
   --button-border: color-mix(in srgb, var(--accent) 20%, var(--line));
   --button-hover-border: color-mix(in srgb, var(--accent) 65%, var(--text-bright));
 }
@@ -322,9 +329,9 @@
   --diffs-bg-deletion-override: var(--danger);
   --diffs-bg-deletion-number-override: var(--danger);
   --diffs-bg-deletion-emphasis-override: transparent;
-  --diffs-bg-context-override: color-mix(in srgb, var(--bg) 72%, #000 8%);
-  --diffs-bg-context-gutter-override: color-mix(in srgb, var(--bg) 72%, #000 8%);
-  --diffs-bg-separator-override: color-mix(in srgb, var(--bg) 82%, #000 6%);
+  --diffs-bg-context-override: var(--source-surface);
+  --diffs-bg-context-gutter-override: var(--source-surface);
+  --diffs-bg-separator-override: var(--region-header-surface);
   --diffs-fg-number-override: var(--text-muted);
   --diffs-bg-hover-override: var(--accent-soft);
   --diffs-bg-selection-override: var(--accent-soft);

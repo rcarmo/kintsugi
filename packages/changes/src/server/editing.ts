@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import type { Repository, WorkingFileRevision } from "@kintsugi/workspace/git";
 import { canEditFile, diskContents, editLineEnding, maxChangesTextBytes, maxChangesTextLines, type EditModel, type EditedCommentRange } from "../editing.ts";
-import { captureChanges, workingTree, type ChangesSnapshot } from "./snapshot.ts";
+import { refreshChanges } from "./refresh.ts";
+import { workingTree, type ChangesSnapshot } from "./snapshot.ts";
 
 export class EditError extends Error {
   constructor(message: string, readonly status = 422) { super(message); }
@@ -44,7 +45,8 @@ export function createChangesEditStore() {
       // Update the lease before recapturing: a transport/capture failure can retry without overwriting a later change.
       edit.expected.hash = fingerprint(Buffer.from(contents));
       relocate(edit.snapshot, edit.model.path, contents, ranges);
-      const next = await captureChanges(root, edit.snapshot.endpoints, edit.snapshot.history);
+      // A fresh history: the saved file changes the Working tree's counts, and commits may have changed meanwhile.
+      const next = await refreshChanges(root, edit.snapshot);
       sessions.get(workspaceId)!.delete(token);
       return next;
     } finally { edit.saving = false; }

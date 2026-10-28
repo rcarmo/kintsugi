@@ -14,6 +14,7 @@ import { createAgentMermaidController } from "./mermaid-controller.ts";
 import { createAgentThinkingController } from "./thinking-controller.ts";
 import { createAgentStreamingTextController } from "./streaming-text-controller.ts";
 import { createAgentLazyDetailController, createAgentTailFrameController } from "./transcript-detail-controllers.ts";
+import { createTranscriptQuoteController } from "./transcript-quote-controller.ts";
 
 export { agentComposerPrimaryAction, agentComposerTextStorageKey, navigatePromptHistory, PromptHistoryNavigator } from "./composer-state.ts";
 export { agentCompletionRequest, fileCompletionPrefix, insertSlashCommand, type AgentCompletionInput } from "./completion-input.ts";
@@ -38,6 +39,7 @@ export const agentClientModule: WorkspaceClientModule = {
     application.register("agent-mermaid", createAgentMermaidController(Controller));
     application.register("agent-tool-abort", createAgentToolAbortController(Controller));
     application.register("agent-notice", createAgentNoticeController(Controller));
+    application.register("transcript-quote", createTranscriptQuoteController(Controller));
     application.register("agent-completions", createAgentCompletionsController(Controller, hooks));
 
     registerLaunchComposerCommand(hooks);

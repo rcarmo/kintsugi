@@ -9,6 +9,8 @@ import type { CodexNotification } from "./protocol.ts";
 export class CodexState {
   readonly turns: Turn[] = [];
   readonly completedItems = new Set<string>();
+  /** When items started, in milliseconds. Only live notifications say; Codex's history doesn't. */
+  readonly itemStarts = new Map<string, number>();
   private reviewTurnId?: string;
   private readonly reviewWorkerTurns = new Set<string>();
   usage?: ThreadTokenUsageUpdatedNotification["tokenUsage"];
@@ -89,7 +91,8 @@ export class CodexState {
         const items = this.turn(turnId).items;
         const index = items.findIndex(value => value.id === item.id);
         if (index === -1) items.push(item); else items[index] = item;
-        if (notification.method === "item/completed") this.completedItems.add(item.id);
+        if (notification.method === "item/started") this.itemStarts.set(item.id, notification.params.startedAtMs);
+        else this.completedItems.add(item.id);
         break;
       }
       case "item/agentMessage/delta": case "item/plan/delta": {

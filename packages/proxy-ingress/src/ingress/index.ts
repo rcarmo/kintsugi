@@ -44,6 +44,8 @@ export interface IngressStatus {
 export interface WorkspaceIngress {
   initialize(): Promise<void>;
   publishPort(workspaceId: string, port: number, protocol?: "http" | "https", hostname?: string): Promise<string>;
+  /** Origin serving the workspace filesystem; a file's URL is the origin plus its absolute path. */
+  publishFiles(workspaceId: string): Promise<string>;
   openCanonical(app: WorkspaceAppRef, pathAndSearch: string): Promise<Response>;
   stopWorkspace(workspaceId: string): Promise<void>;
   stopAll(): Promise<void>;
@@ -299,6 +301,11 @@ export function createWorkspaceIngress(options: WorkspaceIngressOptions): Worksp
       if (protocol !== "http" && protocol !== "https") throw new Error("protocol must be http or https");
       await options.resolveWorkspace(workspaceId);
       return (await ensureLease({ workspaceId, appKey: workspacePortAppKey(port, hostname) }, protocol)).origin;
+    },
+
+    async publishFiles(workspaceId) {
+      await options.resolveWorkspace(workspaceId);
+      return (await ensureLease({ workspaceId, appKey: "file" })).origin;
     },
 
     async openCanonical(app, pathAndSearch) {

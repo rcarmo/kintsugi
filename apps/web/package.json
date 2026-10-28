@@ -13,7 +13,7 @@
   "dependencies": {
     "@gespenst/core": "catalog:",
     "@hotwired/stimulus": "github:hotwired/dev-builds#339df548999c34d440e04c24b59ad9dc57ce3eb1",
-    "@hotwired/turbo": "8.0.13",
+    "@hotwired/turbo": "8.0.23",
     "@kintsugi/agent": "workspace:*",
     "@kintsugi/browser": "workspace:*",
     "@kintsugi/core": "workspace:*",

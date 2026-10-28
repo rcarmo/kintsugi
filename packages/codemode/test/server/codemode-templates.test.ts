@@ -187,11 +187,12 @@ test("a template sent while the agent works joins that work, and the agent carri
   expect((await first.wait(context)).status).toBe("done");
   expect((await steer.status(context)).status).not.toBe("queued");
   expect(faux.state.callCount).toBe(2);
-  // One turn: the template shows as a steer inside it, and the answer follows.
+  // Steering starts a new display block within the same execution run.
   const items = await transcript(agent);
-  expect(items.map(item => item.type)).toEqual(["user", "working", "text"]);
-  expect(items[1]!.type === "working" && items[1]!.items.map(item => item.type)).toEqual(["tool", "user", "tool"]);
-  expect(items[2]).toMatchObject({ text: "Carried on" });
+  expect(items.map(item => item.type)).toEqual(["user", "working", "user", "working", "text"]);
+  expect(items[2]).toMatchObject({ text: "/echo steered in" });
+  expect([items[1], items[3]].map(item => item?.type === "working" && item.items.map(child => child.type))).toEqual([["tool"], ["tool"]]);
+  expect(items[4]).toMatchObject({ text: "Carried on" });
 });
 
 test("a template only takes its typed arguments, so attachments are turned away", () => {

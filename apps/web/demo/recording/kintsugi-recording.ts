@@ -214,20 +214,27 @@ export async function createKintsugiRecording(options: KintsugiRecordingOptions)
 
 	const captureDirectory = join(paths.artifactRoot, `.recording-${options.name}-${process.pid}-${Date.now()}`);
 	await mkdir(captureDirectory, { recursive: true });
-	const browser = await chromium.launch({ executablePath: CHROMIUM_PATH, headless: options.headless ?? true });
+	// Playwright selects its bundled headless shell on Linux. Forcing the full
+	// Chrome binary bypasses that selection; macOS keeps its installed Chrome.
+	const browser = await chromium.launch({
+		executablePath: process.platform === "darwin" ? CHROMIUM_PATH : undefined,
+		headless: options.headless ?? true,
+	});
 	let context: BrowserContext;
+	let page: Page;
+	let playwrightVideoPath: string;
 	try {
 		context = await browser.newContext({ viewport, recordVideo: { dir: captureDirectory, size: viewport } });
+		await context.addInitScript(installRecordingPointer);
+		page = await context.newPage();
+		// setContent also replaces the document, without running init scripts.
+		page.on("domcontentloaded", () => page.evaluate(installRecordingPointer));
+		playwrightVideoPath = await page.video()!.path();
 	} catch (error) {
 		await browser.close();
 		await rm(captureDirectory, { recursive: true, force: true });
 		throw error;
 	}
-	await context.addInitScript(installRecordingPointer);
-	const page = await context.newPage();
-	// setContent also replaces the document, without running init scripts.
-	page.on("domcontentloaded", () => page.evaluate(installRecordingPointer));
-	const playwrightVideoPath = await page.video()!.path();
 	let finalized = false;
 
 	async function finalizeRawRecording(): Promise<void> {

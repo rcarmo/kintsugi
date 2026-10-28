@@ -1,7 +1,4 @@
-import type MarkdownIt from "markdown-it";
-import type StateBlock from "markdown-it/lib/rules_block/state_block.mjs";
-import type StateCore from "markdown-it/lib/rules_core/state_core.mjs";
-import type Token from "markdown-it/lib/token.mjs";
+import type { MarkdownIt, StateBlock, StateCore, Token } from "markdown-it";
 import { disclosureClosingHtml, disclosureOpeningHtml } from "@kintsugi/design-system/disclosure";
 
 export const detailsOpeningPattern = /^<details(\s+open)?\s*>\s*(?:<summary>(.*?)<\/summary>)?\s*$/i;
@@ -57,7 +54,7 @@ export function installDetails(markdown: MarkdownIt): void {
   markdown.renderer.rules.details_open = (tokens, index) => {
     const token = tokens[index]!;
     return disclosureOpeningHtml({
-      summary: { kind: "multiline", tone: "muted", label: { kind: "text", text: plainText(markdown, token.info) } },
+      summary: { kind: "compact", tone: "muted", label: { kind: "text", text: plainText(markdown, token.info) } },
       open: token.attrGet("open") !== null,
     });
   };

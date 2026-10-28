@@ -1,3 +1,5 @@
 {
-  "aptPackages": ["gh"]
+  "run": [
+    "set -eux; gh_version=2.103.3; case \"$(dpkg --print-architecture)\" in amd64) gh_sha256=e3bafef96328d1a67de3a968bdfe1cc2ffd58cf6aba8b5e201356897ed06bb3d ;; arm64) gh_sha256=cac3ff84b60b68e64cca69f31f303210c26320361cc3286b773655d4226b7b06 ;; *) echo \"unsupported gh architecture: $(dpkg --print-architecture)\" >&2; exit 1 ;; esac; gh_deb=\"/tmp/gh_${gh_version}_linux_$(dpkg --print-architecture).deb\"; curl -fsSL \"https://github.com/cli/cli/releases/download/v${gh_version}/gh_${gh_version}_linux_$(dpkg --print-architecture).deb\" -o \"$gh_deb\"; echo \"$gh_sha256  $gh_deb\" | sha256sum -c; dpkg -i \"$gh_deb\"; rm -f \"$gh_deb\"; gh --version | grep -F \"gh version $gh_version\""
+  ]
 }

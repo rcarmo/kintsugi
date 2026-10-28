@@ -4,6 +4,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "
 import { createRegistry, defineExtension, defineTool, Harness } from "@earendil-works/pi-durable";
 import { MemoryStorage } from "@earendil-works/pi-durable/storage/memory";
 import { durableTiming, durableTimingEntry, DurableTurnTiming } from "../../src/server/durable-timing.ts";
+import { projectDurableTranscript } from "../../src/server/durable-transcript.ts";
 
 import { Type } from "typebox";
 
@@ -70,5 +71,38 @@ test("native hooks persist per-response timing without a viewer or model-context
     expect(timing.summary()).toEqual({ elapsedMs: 4000, inferenceMs: 2000, toolMs: 1000, outputTokens, usageComplete: true });
     const fork = await conversation.fork(view.entries.at(-1)!.id, { ownership: { kind: "ownerless" } }, context);
     expect((await fork.context(context)).entries.filter(entry => durableTimingEntry.is(entry))).toEqual(entries);
+  } finally { await harness.close(context); }
+});
+
+test("steering read mid-run times the block it ended and its own separately", async () => {
+  const models = createModels();
+  const faux = fauxProvider({ tokensPerSecond: 100_000 });
+  models.setProvider(faux.provider);
+  faux.setResponses([
+    fauxAssistantMessage([fauxToolCall("ping", {})], { stopReason: "toolUse" }),
+    fauxAssistantMessage("answer"),
+  ]);
+  let steer = async () => {};
+  const registry = createRegistry();
+  registry.install(defineExtension({ name: "test-tools", tools: [defineTool({
+    name: "ping", description: "Ping", parameters: Type.Object({}), replay: "safe",
+    async execute() { await steer(); return { output: [{ type: "text", text: "pong" }] }; },
+  })] }));
+  let clock = 1000;
+  registry.install(durableTiming(async (id, entry, ctx) => {
+    await harness.commit(async tx => { await tx.appendEntry(durableTimingEntry, id, entry); }, ctx);
+  }, () => clock += 1000));
+  const harness = await Harness.open(new MemoryStorage(), { models, registry }, context);
+  try {
+    const conversation = await harness.createConversation({ ownership: { kind: "ownerless" }, agent: { model: { provider: "faux", modelId: "faux-1" } } }, context);
+    steer = async () => { await conversation.submit({ type: "input", content: "instead", requestId: "steer", whenBusy: "steer" }, context); };
+    await (await conversation.submit({ type: "input", content: "question", requestId: "one" }, context)).wait(context);
+    const watch = await conversation.watch(context);
+    const items = projectDurableTranscript(watch.value);
+    await watch.stop();
+    expect(items.map(item => item.type === "user" ? `user:${item.text}` : item.type)).toEqual(["user:question", "working", "user:instead", "working", "text"]);
+    const [interrupted, steered] = items.filter(item => item.type === "working");
+    expect(interrupted).toMatchObject({ startedAt: 2000, completedAt: 4000, durationUnavailable: false, timing: { elapsedMs: 2000, inferenceMs: 1000, toolMs: 1000 } });
+    expect(steered).toMatchObject({ startedAt: 5000, completedAt: 6000, durationUnavailable: false, hasFinalAnswer: true, timing: { elapsedMs: 1000, inferenceMs: 1000, toolMs: 0 } });
   } finally { await harness.close(context); }
 });

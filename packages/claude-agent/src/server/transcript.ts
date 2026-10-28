@@ -17,12 +17,13 @@ export function projectClaudeTranscript(state: Pick<ClaudeState, "rows" | "strea
   const tools = new Map<string, ToolView>();
   const positions = new Map<string, number>();
   let turn: Turn | undefined;
-  const finish = (live = false) => {
+  /** `steered` ends a turn's block where steering came in: Claude carries on, so its last text is still commentary. */
+  const finish = (live = false, steered = false) => {
     if (!turn) return;
     const { working } = turn;
     // The last reply after its final tool call answers the prompt; earlier text was commentary.
     const index = working.items.findLastIndex(item => item.type !== "note");
-    const final = !live && !turn.error && working.items[index]?.type === "text" ? working.items.splice(index, 1)[0] : undefined;
+    const final = !live && !steered && !turn.error && working.items[index]?.type === "text" ? working.items.splice(index, 1)[0] : undefined;
     if (final?.type === "text") final.final = true;
     working.hasFinalAnswer = Boolean(final);
     working.live = live;
@@ -58,8 +59,9 @@ export function projectClaudeTranscript(state: Pick<ClaudeState, "rows" | "strea
   let controlOutput = false;
   // Claude has yet to end its turn: a background task finishing now is absorbed into it, rather than reported in a turn of its own.
   let answering = false;
-  const begin = (prompt: TranscriptItem, uuid: string, timestamp: number) => {
-    finish();
+  const begin = (prompt: TranscriptItem, uuid: string, timestamp: number, steered = false) => {
+    if (turn && steered) turn.endedAt = Math.max(turn.endedAt, timestamp);
+    finish(false, steered);
     prompt.timestamp = timestamp;
     turn = { prompt, command: prompt.type === "user" && prompt.text.startsWith("/"), working: { type: "working", key: `${uuid}:working`, startedAt: timestamp, items: compaction ? [compaction] : [] }, endedAt: timestamp, interrupted: false };
     compaction = undefined;
@@ -113,7 +115,7 @@ export function projectClaudeTranscript(state: Pick<ClaudeState, "rows" | "strea
       else activity({ type: "note", key, text: row.text, tone: "system" }, row.timestamp);
     } else if (row.kind === "steer") {
       const images = claudeImageSources(row.content).map((source, contentIndex) => ({ entryId: row.uuid, contentIndex, mimeType: source.media_type }));
-      activity({ type: "user", key: row.uuid, text: claudeText(row.content), images, steering: true }, row.timestamp);
+      begin({ type: "user", key: row.uuid, text: claudeText(row.content), images }, row.uuid, row.timestamp, true);
     } else if (row.kind === "compact") {
       const note: TranscriptItem = { type: "note", key: row.uuid, text: "Claude compacted the conversation.", tone: "summary" };
       const next = rows.slice(index + 1).find(next => next.kind === "assistant" || (next.kind === "user" && claudeUserIntent(next)?.kind === "prompt"));

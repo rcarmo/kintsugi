@@ -15,6 +15,7 @@ export const Icons = {
   Browser: iconHtml('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/>'),
   Check: iconHtml('<path d="m5 12 4 4L19 6"/>'),
   Cloud: iconHtml('<path d="M6 19a4 4 0 0 1-1-7.87A7 7 0 0 1 18.6 9.4 4.8 4.8 0 0 1 18 19Z"/>'),
+  Comment: iconHtml('<path d="M20 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"/><path d="M8 8h8M8 12h5"/>'),
   Copy: iconHtml('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/>'),
   Close: iconHtml('<path d="M6 6l12 12M18 6L6 18"/>'),
   CollapseAll: iconHtml('<path d="M7 4l5 5 5-5M7 20l5-5 5 5"/>'),

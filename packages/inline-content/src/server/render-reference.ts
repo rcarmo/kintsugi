@@ -13,5 +13,6 @@ export function renderInlineContentReference({ workspaceId, target, title, provi
 
   const url = `/workspaces/${encodeURIComponent(workspaceId)}/inline-content?path=${encodeURIComponent(path)}`;
   const label = title || "Visual explanation";
-  return `<span role="group" aria-label="${escapeHtml(label)}" class="inline-content" data-controller="inline-content" data-inline-content-url-value="${escapeHtml(url)}"><span data-inline-content-target="status" role="status">Loading visual explanation…</span><iframe title="${escapeHtml(label)}" sandbox="allow-scripts" referrerpolicy="no-referrer" data-inline-content-target="frame" data-action="load->inline-content#loaded" hidden></iframe></span>`;
+  const source = `From the visual ${title ? `“${title}” ` : ""}(${path})`;
+  return `<span role="group" aria-label="${escapeHtml(label)}" class="inline-content" data-controller="inline-content" data-inline-content-url-value="${escapeHtml(url)}" data-quote-source="${escapeHtml(source)}"><span data-inline-content-target="status" role="status">Loading visual explanation…</span><iframe title="${escapeHtml(label)}" sandbox="allow-scripts" referrerpolicy="no-referrer" data-inline-content-target="frame" data-action="load->inline-content#loaded" hidden></iframe></span>`;
 }

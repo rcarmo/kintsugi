@@ -1,6 +1,6 @@
 /* Public authoring vocabulary. Paint and native controls come from Kintsugi's design system. */
 :root {
-  --ic-text: var(--text-bright); --ic-text-muted: var(--text); --ic-surface: var(--panel);
+  --ic-text: var(--text); --ic-text-muted: var(--text-muted); --ic-surface: var(--panel);
   --ic-border: var(--line-strong); --ic-accent: var(--accent); --ic-on-accent: var(--accent-contrast);
   --ic-danger: var(--danger); --ic-series-1: var(--accent); --ic-series-2: var(--success);
   --ic-series-3: var(--warning); --ic-series-4: var(--decorative); --ic-series-5: var(--danger);
@@ -16,7 +16,7 @@ html { overflow: hidden; }
 #ic-content > :first-child { margin-top: 0; }
 #ic-content > :last-child { margin-bottom: 0; }
 .ic-stack { display: flex; flex-direction: column; gap: 12px; }
-.ic-stack > * { margin-block: 0; }
+.markdown .ic-stack > * { margin-block: 0; }
 .ic-row, .ic-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .ic-controls > label { flex: 1 1 200px; }
 .ic-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 16px; }
@@ -25,23 +25,26 @@ html { overflow: hidden; }
 .ic-table-scroll { overflow-x: auto; max-width: 100%; }
 .ic-muted { color: var(--ic-text-muted); }
 .ic-small { font-size: var(--text-code); }
-.ic-number { font-variant-numeric: tabulic-nums; }
+.ic-number { font-variant-numeric: tabular-nums; }
 .ic-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .ic-quiet.button { background: transparent; border-color: transparent; }
 label { display: block; }
 input, select, textarea, button { font: inherit; max-width: 100%; }
 input[type=range] { width: 100%; accent-color: var(--accent); }
 input[type=checkbox], input[type=radio] { accent-color: var(--accent); }
-summary { cursor: pointer; color: var(--ic-text); }
-details[open] > summary { margin-bottom: 8px; }
+/* Authored details become the transcript's disclosure; ic-quiet also mutes what it reveals. */
+details.ic-quiet > .disclosure-content { color: var(--ic-text-muted); }
 :focus-visible { outline: 2px solid var(--accent) !important; outline-offset: 3px; }
 svg, canvas, img { max-width: 100%; }
 [role=tablist] { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 [role=tab][aria-selected=true] { background: var(--accent-soft); border-color: var(--accent); }
 .ic-tooltip-content { position: fixed; z-index: 10; max-width: min(260px, calc(100vw - 16px)); padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--panel); color: var(--text-bright); font-size: var(--text-code); pointer-events: none; }
 @media (pointer: coarse), (max-width: 700px) {
-  summary { min-height: 44px; padding-block: 8px; }
   input[type=range] { min-height: 44px; }
   input[type=checkbox], input[type=radio] { min-width: 24px; min-height: 24px; vertical-align: middle; margin: 10px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+/* The frame is narrower than the window, so width alone doesn't mean a phone: keep desktop row heights for fine pointers. */
+@media (max-width: 700px) and (pointer: fine) {
+  .content-row, .content-row__primary { min-height: 28px; }
+}

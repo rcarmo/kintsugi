@@ -22,6 +22,13 @@ test("decodes filenames and preserves explicit file positions", () => {
   expect(target("kintsugi://file/work/main.ts?line=no")?.searchParams.has("line")).toBe(false);
 });
 
+test("keeps page anchors on file links", () => {
+  for (const href of ["docs/report.html#key%20results", "kintsugi://file/work/docs/report.html#key%20results", "file:///work/docs/report.html?v=2#key%20results"]) {
+    expect(target(href)?.searchParams.get("fragment")).toBe("key%20results");
+  }
+  expect(target("/work/report.html")?.searchParams.has("fragment")).toBe(false);
+});
+
 test("does not treat external URLs, anchors, or invalid paths as local files", () => {
   for (const href of ["https://example.com/image.png", "javascript:alert(1)", "data:text/html,test", "file://remote/work/image.png", "//example.com/image.png", "#section", "?query=1", "/work/%ZZ.png", "/work/%00.png", "kintsugi://file/work/%00.png"]) {
     expect(target(href)).toBeUndefined();

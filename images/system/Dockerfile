@@ -1,4 +1,4 @@
-ARG RUNTIME_IMAGE=ghcr.io/rcarmo/kintsugi-docker@sha256:7ccb0ce9fb643060ef1eb54162f7e42db000f8c7b0a7f716d8ce684369899018
+ARG RUNTIME_IMAGE=ghcr.io/rcarmo/kintsugi-docker@sha256:5b3106e3e906e30b2d314ce66d53afc1bb816f8bcd91aa578879e13194c5f351
 FROM oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d AS bun
 FROM ghcr.io/tailscale/tailscale:v1.102.3@sha256:8c42c4574ab066384fcb72f69e086a2ff1dd3652eb6f56856cee34bcf0d2f680 AS tailscale
 FROM ${RUNTIME_IMAGE}

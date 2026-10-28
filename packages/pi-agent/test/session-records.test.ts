@@ -134,12 +134,13 @@ test("persisted run starts survive reconstruction before and after the summary",
   ];
   const restored = recordsFromSessionEntries(JSON.parse(JSON.stringify(entries)));
   expect(restored[1]).toEqual({ kind: "runStart", turnEntryId: "start", startedAt: 900, timestamp: 1001 });
-  expect(buildTranscript(restored).map((item) => item.type)).toEqual(["user", "working"]);
-  expect(buildTranscript(restored)[1]).toMatchObject({ items: [{ type: "user", key: "steer", steering: true }] });
+  expect(buildTranscript(restored).map((item) => item.type)).toEqual(["user", "user", "working"]);
+  expect(buildTranscript(restored)[1]).toMatchObject({ type: "user", key: "steer" });
+  expect(buildTranscript(restored)[2]).toMatchObject({ key: "start:working", inputEntryIds: ["start", "steer"] });
   const completed = recordsFromSessionEntries([...entries,
     { type: "custom", customType: "kintsugi.turn-timing", timestamp: new Date(3000).toISOString(), data: { turnEntryId: "start", outcome: "completed", elapsedMs: 2100, toolMs: 0, inferenceMs: 2100, outputTokens: 4, usageComplete: true } },
   ]);
-  expect(buildTranscript(completed)[1]).toMatchObject({ key: "start:working", completedAt: 3000, timing: { outputTokens: 4 } });
+  expect(buildTranscript(completed)[2]).toMatchObject({ key: "start:working", completedAt: 3000, timing: { outputTokens: 4 } });
 });
 
 test("validates persisted entry fields and assistant parts before projection", () => {

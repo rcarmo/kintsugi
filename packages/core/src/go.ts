@@ -1,6 +1,6 @@
 /** Runs the local Go toolchain. Imports nothing, so scripts can load it from a bare checkout. */
 async function go(args: string[], directory: string, env: Record<string, string> = {}): Promise<void> {
-  const run = Bun.spawn(["go", ...args], { cwd: directory, env: { ...process.env, ...env, GOTOOLCHAIN: "go1.26.10" }, stdout: "pipe", stderr: "pipe" });
+  const run = Bun.spawn(["go", ...args], { cwd: directory, env: { ...process.env, ...env, GOTOOLCHAIN: "go1.27.3" }, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([new Response(run.stdout).text(), new Response(run.stderr).text(), run.exited]);
   if (exitCode !== 0) throw new Error(`go ${args[0]} failed in ${directory}:\n${stdout}${stderr}`);
 }

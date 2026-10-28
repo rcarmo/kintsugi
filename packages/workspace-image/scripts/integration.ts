@@ -57,6 +57,17 @@ async function start(image: string, name: string, writableCache: boolean) {
   assert.equal(await state(name, "docker.socket"), "active");
 }
 async function ctr(container: string, ...args: string[]) { return exec(container, "ctr", "--namespace", "moby", ...args); }
+
+// Containerd records cache-backed layers as snapshot labels rather than symlinks.
+async function cachedLayerBlobs(container: string) {
+  const keys = (await ctr(container, "snapshots", "--snapshotter", "erofs", "ls")).trim().split("\n").slice(1).map((line) => line.split(/\s+/)[0]!);
+  const blobs: string[] = [];
+  for (const key of keys) {
+    const labels: Record<string, string> = JSON.parse(await ctr(container, "snapshots", "--snapshotter", "erofs", "info", key)).Labels ?? {};
+    if (labels["io.containerd.erofs.v1/blob.source"] === "cache") blobs.push(labels["io.containerd.erofs.v1/blob.ref"]!);
+  }
+  return blobs;
+}
 async function hashes() { return exec(producer, "sh", "-c", "find /data/erofs-cache -name '*.erofs' -type f -exec sha256sum {} + | sort"); }
 
 try {
@@ -110,7 +121,7 @@ try {
     for (const layer of manifest.layers) assert(!blobs.has(layer.digest), `base layer was downloaded: ${layer.digest}`);
   }
   await noBaseBlobs();
-  const links = (await exec(workspace, "sh", "-c", "find /data/containerd/io.containerd.snapshotter.v1.erofs/snapshots -name layer.erofs -type l -exec readlink {} +")).trim().split("\n");
+  const links = await cachedLayerBlobs(workspace);
   assert.equal(links.length, manifest.layers.length);
   assert(links.every(link => link.startsWith("/data/erofs-cache/")));
   console.log("Preloaded Postgres using containerd only, backed by readonly shared EROFS files");

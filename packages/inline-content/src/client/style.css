@@ -1,4 +1,5 @@
 /* Rich explanations are conversation content, not file-preview cards. */
-.inline-content { display: block; margin-block: 12px; min-width: 0; }
-.inline-content iframe { display: block; width: 100%; border: 0; background: transparent; }
+.inline-content { display: block; margin-block: var(--markdown-block-spacing, 12px); min-width: 0; }
+/* The frame's content keeps a small inset for focus rings; the frame reclaims it so text lines up with the transcript. */
+.inline-content iframe { display: block; width: calc(100% + 8px); margin-inline: -4px; border: 0; background: transparent; }
 .inline-content iframe[hidden] { display: none; }

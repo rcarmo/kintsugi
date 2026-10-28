@@ -34,3 +34,32 @@ export function disclosureOpeningHtml(options: Omit<DisclosureOptions, "bodyHtml
 
 /** Everything after the contents opened by `disclosureOpeningHtml`. */
 export const disclosureClosingHtml = "</div></details>";
+
+/** Disclosure anatomy around authored `<details>`, whose summary label is already HTML. */
+export interface AuthoredDisclosureParts {
+  detailsClass: string;
+  summaryClass: string;
+  /** Inserted at the start and end of the authored summary's contents. */
+  labelOpeningHtml: string;
+  labelClosingHtml: string;
+  /** Inserted after the summary and before `</details>`, around the remaining contents. */
+  contentOpeningHtml: string;
+  contentClosingHtml: string;
+}
+
+const labelSlot = "\uE000";
+
+/** The muted single-line disclosure Markdown uses, split where an authored summary label and contents go. */
+export function authoredDisclosureParts(): AuthoredDisclosureParts {
+  const content: ContentRowContent = { kind: "compact", tone: "muted", label: { kind: "text", text: labelSlot }, leadingHtml: Icons.Disclosure };
+  const summaryHtml = contentRowContentHtml(content);
+  const label = summaryHtml.indexOf(labelSlot);
+  return {
+    detailsClass: "disclosure",
+    summaryClass: contentRowClasses(content, true, true),
+    labelOpeningHtml: summaryHtml.slice(0, label),
+    labelClosingHtml: summaryHtml.slice(label + labelSlot.length),
+    contentOpeningHtml: '<div class="disclosure-content">',
+    contentClosingHtml: "</div>",
+  };
+}

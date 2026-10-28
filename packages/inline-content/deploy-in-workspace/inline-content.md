@@ -43,6 +43,7 @@ Semantic HTML gets default styling: `p`, `h2`, `h3`, lists, `dl`, links, code, t
 | `ic-controls` | Wrapping group of related labeled controls |
 | `ic-table-scroll` | Local horizontal scrolling for a genuinely wide table |
 | `ic-muted` | Secondary text |
+| `ic-quiet` | On `details`: supporting detail, muted when opened. On `button`: a low-emphasis action |
 | `ic-small` | Host-scaled secondary annotations, not essential labels |
 | `ic-number` | Tabular numerals |
 | `ic-sr-only` | Visually hidden accessible text |
@@ -63,7 +64,7 @@ Use visible labels, keyboard-accessible controls, semantic headings, and accessi
 
 ## Built-in interaction
 
-`details`/`summary` needs no JavaScript.
+`details`/`summary` needs no JavaScript and uses the surrounding transcript’s disclosure styling. Put `summary` first.
 
 For tabs, place a tablist and its panels inside `data-ic-tabs`. Use buttons with `role="tab"`, unique IDs, `aria-controls`, and `aria-selected`. Panels have matching IDs, `role="tabpanel"`, `aria-labelledby`, and `hidden` when inactive. Kintsugi implements clicks and arrow/Home/End keyboard navigation. Don't hide comparison data behind tabs when users need to compare it simultaneously.
 

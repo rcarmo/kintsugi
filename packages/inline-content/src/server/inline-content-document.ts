@@ -1,4 +1,7 @@
+import { authoredDisclosureParts } from "@kintsugi/design-system/disclosure";
 import { inlineDesignSystemCss } from "@kintsugi/design-system/styles/server";
+
+const disclosure = authoredDisclosureParts();
 
 let runtime: Promise<string> | undefined;
 async function runtimeModule(): Promise<string> {
@@ -18,7 +21,28 @@ export async function inlineContentDocument(fragment: string): Promise<string> {
     runtimeModule(),
   ]);
   // Public semantic controls are implemented using the actual design-system classes.
+  // A details element only gets a content gutter once its summary has closed, so one without
+  // a summary never receives an unmatched closing tag.
+  const openDetails: { summarized: boolean }[] = [];
   const enhanced = await new HTMLRewriter()
+    .on("details", { element(element) {
+      element.setAttribute("class", `${element.getAttribute("class") ?? ""} ${disclosure.detailsClass}`);
+      const details = { summarized: false };
+      openDetails.push(details);
+      element.onEndTag((end) => {
+        openDetails.pop();
+        if (details.summarized) end.before(disclosure.contentClosingHtml, { html: true });
+      });
+    } })
+    .on("details > summary", { element(element) {
+      const details = openDetails.at(-1)!;
+      if (details.summarized) return;
+      details.summarized = true;
+      element.setAttribute("class", `${element.getAttribute("class") ?? ""} ${disclosure.summaryClass}`);
+      element.prepend(disclosure.labelOpeningHtml, { html: true });
+      element.append(disclosure.labelClosingHtml, { html: true });
+      element.onEndTag((end) => { end.after(disclosure.contentOpeningHtml, { html: true }); });
+    } })
     .on("button", { element(element) {
       const classes = element.getAttribute("class") ?? "";
       element.setAttribute("class", `${classes} button${classes.split(/\s+/).includes("ic-primary") ? " primary" : ""}`);

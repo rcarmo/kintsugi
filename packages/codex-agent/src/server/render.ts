@@ -6,7 +6,7 @@ import type { CodexRuntime } from "./runtime.ts";
 export const rendering = createNativeAgentRendering<CodexRuntime>({
   channelName: "codex-agent",
   routeSegment: "codex-agents",
-  transcript: runtime => projectCodexTurns(runtime.state.turns, runtime.state.completedItems),
+  transcript: runtime => projectCodexTurns(runtime.state.turns, runtime.state.completedItems, runtime.state.itemStarts),
   stats(runtime) {
     const usage = runtime.state.usage;
     const selection = runtime.selection;

@@ -108,7 +108,7 @@ interface TranscriptItemBase {
 
 export type WorkingTranscriptItem = TranscriptItemBase & {
   type: "working";
-  /** Initiating and steering entries whose activity belongs to this run. */
+  /** The user entries, read together, whose activity this block shows. */
   inputEntryIds?: string[];
   startedAt: number;
   completedAt?: number;
@@ -126,7 +126,7 @@ export type QueuedInput = { submissionId: string; mode: "steer" | "followUp"; st
 
 export type TranscriptItem =
   | (TranscriptItemBase & { type: "extension"; render(ctx: AgentRenderContext): string })
-  | (TranscriptItemBase & { type: "user"; text: string; images: SessionImageRef[]; steering?: boolean; queued?: QueuedInput })
+  | (TranscriptItemBase & { type: "user"; text: string; images: SessionImageRef[]; queued?: QueuedInput })
   | (TranscriptItemBase & { type: "inherited-context"; source: string; messageCount: number; items: TranscriptItem[] })
   | WorkingTranscriptItem
   | (TranscriptItemBase & { type: "thinking"; text: string; live?: boolean })
@@ -174,7 +174,10 @@ export function unfencedJson(text: string): string {
   return /^\s*```(?:json)?\s*\n([\s\S]*?)\n?```\s*$/.exec(text)?.[1] ?? text;
 }
 
-/** Run markers keep steering in one block; older unmarked history retains its user boundaries. */
+/**
+ * Every user input the Agent reads starts a new block, including steering mid-run; inputs read
+ * together share one. Run markers make only the run's end, not an answer, finish the block.
+ */
 export function buildTranscript(records: TranscriptRecord[], options: { openEnded?: boolean } = {}): TranscriptItem[] {
   const items: TranscriptItem[] = [];
   const tools = new Map<string, ToolView>();
@@ -182,6 +185,7 @@ export function buildTranscript(records: TranscriptRecord[], options: { openEnde
   let working: WorkingTranscriptItem | undefined;
   let runScoped = false;
   let lastTimestamp = 0;
+  let previousKind: TranscriptRecord["kind"] | undefined;
 
   const appendActivity = (item: TranscriptItem, timestamp: number): void => {
     item.timestamp = timestamp;
@@ -195,6 +199,8 @@ export function buildTranscript(records: TranscriptRecord[], options: { openEnde
 
   for (const [recordIndex, record] of records.entries()) {
     lastTimestamp = record.timestamp ?? lastTimestamp;
+    const follows = previousKind;
+    if (record.kind !== "runStart") previousKind = record.kind;
     if (record.kind === "runStart") {
       if (working?.key === `${record.turnEntryId}:working`) {
         working.startedAt = record.startedAt;
@@ -220,25 +226,27 @@ export function buildTranscript(records: TranscriptRecord[], options: { openEnde
       continue;
     }
     if (record.kind === "user" || record.kind === "taskStart") {
-      const steeringRun = working && runScoped && !runStarts.has(record.id) ? working : undefined;
-      if (record.kind === "user") (steeringRun?.items ?? items).push({
+      const user: TranscriptItem | undefined = record.kind === "user" ? {
         type: "user",
         timestamp: record.timestamp,
         key: record.id,
         rewindEntryId: record.rewindable === false ? undefined : record.id,
         text: record.text,
         images: record.images,
-        steering: steeringRun ? true : undefined,
-      });
-      if (steeringRun) {
-        steeringRun.inputEntryIds!.push(record.id);
+      } : undefined;
+      // Input read together with the previous one, before any activity, joins its block.
+      if (user && working && follows === "user" && !runStarts.has(record.id)) {
+        items.splice(items.length - 1, 0, user);
+        working.inputEntryIds!.push(record.id);
         continue;
       }
+      if (user) items.push(user);
+      // A new run cuts the old one short. Steering continues the run in a new block; the block it interrupted has done its work.
       if (working) {
-        if (runScoped) working.stoppedAt = Math.max(working.startedAt, record.timestamp);
+        if (runScoped && runStarts.has(record.id)) working.stoppedAt = Math.max(working.startedAt, record.timestamp);
         else working.completedAt = Math.max(working.startedAt, record.timestamp);
       }
-      runScoped = false;
+      runScoped &&= !runStarts.has(record.id);
       working = { type: "working", timestamp: record.timestamp, key: `${record.id}:working`, inputEntryIds: [record.id], startedAt: record.timestamp, items: [] };
       items.push(working);
       continue;

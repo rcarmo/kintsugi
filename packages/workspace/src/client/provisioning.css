@@ -7,7 +7,7 @@
 .provision-step-label { display: block; line-height: 20px; }
 .provision-step-detail { display: block; margin-top: 2px; }
 /* Like a bash call's Result: finished output in the theme's terminal colors. */
-.provision-output-log { max-height: min(52vh, 520px); overflow: auto; background: color-mix(in srgb, var(--bg) 58%, #000 12%); color: var(--text-bright); border-radius: var(--radius-surface); padding: 12px; font: var(--text-code)/var(--leading-standard) var(--font-mono); }
+.provision-output-log { max-height: min(52vh, 520px); overflow: auto; background: var(--output-surface); color: var(--text-bright); border-radius: var(--radius-surface); padding: 12px; font: var(--text-code)/var(--leading-standard) var(--font-mono); }
 .provision-terminal.observable-terminal-host { height: 300px; flex: none; margin-top: 12px; border-radius: var(--radius-surface); overflow: hidden; border: 1px solid var(--line); }
 .provision-terminal-progress { height: 300px; max-height: none; margin: 12px 0 0; }
 .provision-output { margin: 4px 0 0; }

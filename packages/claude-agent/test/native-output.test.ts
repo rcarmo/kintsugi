@@ -17,7 +17,10 @@ test("steering retains image blocks and their session references", () => {
   const state = new ClaudeState();
   state.hydrate(claudeRows(JSON.stringify({ type: "attachment", uuid: "image-delivery", timestamp, attachment: { type: "queued_command", prompt: content, source_uuid: "steering" } })));
   expect(state.rows[0]).toMatchObject({ kind: "steer", content });
-  expect(projectClaudeTranscript(state, true)).toMatchObject([{ type: "user", text: "Review this image", steering: true, images: [{ entryId: "steering", contentIndex: 0, mimeType: "image/png" }] }]);
+  expect(projectClaudeTranscript(state, true)).toMatchObject([
+    { type: "user", text: "Review this image", images: [{ entryId: "steering", contentIndex: 0, mimeType: "image/png" }] },
+    { type: "working", key: "steering:working", live: true },
+  ]);
 });
 
 test("canonical local command output replaces its streamed synthetic reply and cannot answer the next turn", () => {

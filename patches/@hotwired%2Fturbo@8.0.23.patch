@@ -1,0 +1,18 @@
+diff --git a/dist/turbo.es2017-esm.js b/dist/turbo.es2017-esm.js
+index 086945c48bda30a076be07b1de22ac76d9e1c633..3d3c7c3ca552a67fbf99a7a6c9d1a826564372d3 100644
+--- a/dist/turbo.es2017-esm.js
++++ b/dist/turbo.es2017-esm.js
+@@ -2404,8 +2404,13 @@ var Idiomorph = (function () {
+         let nextSibling = node.nextSibling;
+         let siblingSoftMatchCount = 0;
+ 
++        // Without persistent ids, node can never id-set match: once the soft-match
++        // fallback is decided the result cannot change, so stop scanning there.
++        const canIdSetMatch = ctx.idMap.has(node);
++
+         let cursor = startPoint;
+         while (cursor && cursor != endPoint) {
++          if (!canIdSetMatch && softMatch !== null) break;
+           // soft matching is a prerequisite for id set matching
+           if (isSoftMatch(cursor, node)) {
+             if (isIdSetMatch(ctx, cursor, node)) {

@@ -13,26 +13,28 @@ const jsonl = (...rows: JsonObject[]) => rows.map(row => JSON.stringify(row)).jo
 const sdk = (message: JsonObject): SDKMessage => JSON.parse(JSON.stringify(message));
 const state = (rows: string) => { const value = new ClaudeState(); value.hydrate(claudeRows(rows)); return value; };
 
-test("groups a prompt's thinking, tool calls and steering into one turn with its final answer", () => {
+test("groups a prompt's thinking and tool calls into a turn, and steering starts its own with the final answer", () => {
   const items = projectClaudeTranscript(state(jsonl(
     { type: "queue-operation", operation: "enqueue" },
     user("prompt", 0, [{ type: "text", text: "Run date" }]),
     { type: "attachment", uuid: "meta", timestamp: time(0), attachment: { type: "total_tokens_reminder" } },
     assistant("a1", 1, "msg_1", [{ type: "thinking", thinking: "Checking the clock." }]),
-    assistant("a2", 1, "msg_1", [{ type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "date" } }], "tool_use"),
-    user("result", 3, [{ type: "tool_result", tool_use_id: "toolu_1", content: "Mon Oct 12", is_error: false }]),
+    assistant("a2", 1, "msg_1", [{ type: "text", text: "Running date." }, { type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "date" } }], "tool_use"),
+    user("result", 2, [{ type: "tool_result", tool_use_id: "toolu_1", content: "Mon Oct 12", is_error: false }]),
     { type: "attachment", uuid: "steer-row", timestamp: time(3), attachment: { type: "queued_command", prompt: [{ type: "text", text: "Also be brief." }], source_uuid: "steer" } },
     assistant("a3", 4, "msg_2", [{ type: "text", text: "It is Monday." }], "end_turn"),
   )), false);
-  expect(items.map(item => item.type)).toEqual(["user", "working", "text"]);
-  const [prompt, working, final] = items;
-  expect(prompt).toMatchObject({ key: "prompt", text: "Run date", timestamp: Date.parse(time(0)) });
-  expect(final).toMatchObject({ key: "msg_2:0", text: "It is Monday.", final: true, timestamp: Date.parse(time(4)) });
-  if (working?.type !== "working") throw new Error("Expected a working section");
-  expect(working).toMatchObject({ startedAt: Date.parse(time(0)), completedAt: Date.parse(time(4)), hasFinalAnswer: true, live: false });
-  expect(working.items.map(item => [item.type, item.key])).toEqual([["thinking", "msg_1:0"], ["tool", "tool:toolu_1"], ["user", "steer"]]);
-  expect(working.items[1]).toMatchObject({ tool: { name: "bash", args: { command: "date" }, status: "ok", resultText: "Mon Oct 12", durationMs: 2000 } });
-  expect(working.items[2]).toMatchObject({ text: "Also be brief.", steering: true });
+  expect(items.map(item => item.type)).toEqual(["user", "working", "user", "working", "text"]);
+  const [prompt, interrupted, steering, steered, final] = items;
+  expect(prompt).toMatchObject({ key: "prompt", text: "Run date" });
+  expect(steering).toMatchObject({ type: "user", key: "steer", text: "Also be brief.", images: [], timestamp: Date.parse(time(3)) });
+  expect(final).toMatchObject({ key: "msg_2:0", text: "It is Monday.", final: true });
+  if (interrupted?.type !== "working" || steered?.type !== "working") throw new Error("Expected working sections");
+  // Text before steering stays commentary: Claude carried on.
+  expect(interrupted).toMatchObject({ startedAt: Date.parse(time(0)), completedAt: Date.parse(time(3)), hasFinalAnswer: false, live: false });
+  expect(interrupted.items.map(item => [item.type, item.key])).toEqual([["thinking", "msg_1:0"], ["text", "msg_1:1"], ["tool", "tool:toolu_1"]]);
+  expect(interrupted.items[2]).toMatchObject({ tool: { name: "bash", args: { command: "date" }, status: "ok", resultText: "Mon Oct 12", durationMs: 1000 } });
+  expect(steered).toMatchObject({ key: "steer:working", startedAt: Date.parse(time(3)), completedAt: Date.parse(time(4)), hasFinalAnswer: true, items: [] });
 });
 
 test("shows interruptions as stopped turns, and slash commands as the prompts they were", () => {
@@ -115,4 +117,15 @@ test("a turn that ends in an error shows as stopped, with the error after it", (
 test("references prompt images by their row and position", () => {
   const items = projectClaudeTranscript(state(jsonl(user("with-image", 0, [{ type: "text", text: "Look" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" } }]))), false);
   expect(items[0]).toMatchObject({ type: "user", images: [{ entryId: "with-image", contentIndex: 0, mimeType: "image/png" }] });
+});
+
+test("shows the images a steering message carried", () => {
+  const items = projectClaudeTranscript(state(jsonl(
+    user("prompt", 0, [{ type: "text", text: "Run date" }]),
+    assistant("a1", 1, "msg_1", [{ type: "thinking", thinking: "Checking the clock." }]),
+    { type: "attachment", uuid: "steer-row", timestamp: time(2), attachment: { type: "queued_command", prompt: [{ type: "text", text: "Like this" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" } }], source_uuid: "steer" } },
+  )), true);
+  expect(items.map(item => item.type)).toEqual(["user", "working", "user", "working"]);
+  expect(items[2]).toMatchObject({ type: "user", text: "Like this", images: [{ entryId: "steer", contentIndex: 0, mimeType: "image/png" }] });
+  expect(items[3]).toMatchObject({ live: true });
 });
