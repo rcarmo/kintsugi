@@ -1,4 +1,4 @@
-import { CableTopics, type CableSubscription, type WorkspaceClientControllerConstructor } from "@kintsugi/shared";
+import { CableTopics, isWorkspacePaneVisible, type CableSubscription, type WorkspaceClientControllerConstructor } from "@kintsugi/shared";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 
@@ -14,7 +14,8 @@ export function createBackgroundController(Controller: WorkspaceClientController
     connect(): void { this.sync(); }
     disconnect(): void { this.stop(); }
     sync(): void {
-      if (document.hidden || !this.element.parentElement!.checkVisibility()) { this.stop(); return; }
+      // The presentation's state, not checkVisibility: that would force a layout as panes connect and show.
+      if (document.hidden || !isWorkspacePaneVisible(this.element)) { this.stop(); return; }
       this.subscription ??= window.KintsugiCable!.subscribe(CableTopics.module("agent-background", this.workspaceIdValue, { agentId: this.agentIdValue }), {});
     }
     private stop(): void {

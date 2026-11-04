@@ -26,6 +26,7 @@ const (
 	WorkspaceHelper_ReadFile_FullMethodName  = "/kintsugi.workspace_helper.v1.WorkspaceHelper/ReadFile"
 	WorkspaceHelper_WriteFile_FullMethodName = "/kintsugi.workspace_helper.v1.WorkspaceHelper/WriteFile"
 	WorkspaceHelper_StatFiles_FullMethodName = "/kintsugi.workspace_helper.v1.WorkspaceHelper/StatFiles"
+	WorkspaceHelper_OpenFile_FullMethodName  = "/kintsugi.workspace_helper.v1.WorkspaceHelper/OpenFile"
 )
 
 // WorkspaceHelperClient is the client API for WorkspaceHelper service.
@@ -74,6 +75,13 @@ type WorkspaceHelperClient interface {
 	// for regular files and folders, to tell whether `user` may read them.
 	// Fails with INVALID_ARGUMENT for a relative path.
 	StatFiles(ctx context.Context, in *StatFilesRequest, opts ...grpc.CallOption) (*StatFilesResponse, error)
+	// Opens a regular file as `user`, following symlinks, and reads parts of it
+	// on request, all from the one open file, even when its path is renamed or
+	// replaced meanwhile. The first request must be `open`; its response is the
+	// `stat` of the opened file. Each later request gets one response, in order:
+	// `read` its `data`, `stat` a fresh `stat`. Closing the request stream closes
+	// the file. Fails like ReadFile.
+	OpenFile(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[OpenFileRequest, OpenFileResponse], error)
 }
 
 type workspaceHelperClient struct {
@@ -152,6 +160,19 @@ func (c *workspaceHelperClient) StatFiles(ctx context.Context, in *StatFilesRequ
 	return out, nil
 }
 
+func (c *workspaceHelperClient) OpenFile(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[OpenFileRequest, OpenFileResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &WorkspaceHelper_ServiceDesc.Streams[4], WorkspaceHelper_OpenFile_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[OpenFileRequest, OpenFileResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type WorkspaceHelper_OpenFileClient = grpc.BidiStreamingClient[OpenFileRequest, OpenFileResponse]
+
 // WorkspaceHelperServer is the server API for WorkspaceHelper service.
 // All implementations must embed UnimplementedWorkspaceHelperServer
 // for forward compatibility.
@@ -198,6 +219,13 @@ type WorkspaceHelperServer interface {
 	// for regular files and folders, to tell whether `user` may read them.
 	// Fails with INVALID_ARGUMENT for a relative path.
 	StatFiles(context.Context, *StatFilesRequest) (*StatFilesResponse, error)
+	// Opens a regular file as `user`, following symlinks, and reads parts of it
+	// on request, all from the one open file, even when its path is renamed or
+	// replaced meanwhile. The first request must be `open`; its response is the
+	// `stat` of the opened file. Each later request gets one response, in order:
+	// `read` its `data`, `stat` a fresh `stat`. Closing the request stream closes
+	// the file. Fails like ReadFile.
+	OpenFile(grpc.BidiStreamingServer[OpenFileRequest, OpenFileResponse]) error
 	mustEmbedUnimplementedWorkspaceHelperServer()
 }
 
@@ -222,6 +250,9 @@ func (UnimplementedWorkspaceHelperServer) WriteFile(grpc.ClientStreamingServer[W
 }
 func (UnimplementedWorkspaceHelperServer) StatFiles(context.Context, *StatFilesRequest) (*StatFilesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method StatFiles not implemented")
+}
+func (UnimplementedWorkspaceHelperServer) OpenFile(grpc.BidiStreamingServer[OpenFileRequest, OpenFileResponse]) error {
+	return status.Error(codes.Unimplemented, "method OpenFile not implemented")
 }
 func (UnimplementedWorkspaceHelperServer) mustEmbedUnimplementedWorkspaceHelperServer() {}
 func (UnimplementedWorkspaceHelperServer) testEmbeddedByValue()                         {}
@@ -294,6 +325,13 @@ func _WorkspaceHelper_StatFiles_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _WorkspaceHelper_OpenFile_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(WorkspaceHelperServer).OpenFile(&grpc.GenericServerStream[OpenFileRequest, OpenFileResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type WorkspaceHelper_OpenFileServer = grpc.BidiStreamingServer[OpenFileRequest, OpenFileResponse]
+
 // WorkspaceHelper_ServiceDesc is the grpc.ServiceDesc for WorkspaceHelper service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -327,6 +365,12 @@ var WorkspaceHelper_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "WriteFile",
 			Handler:       _WorkspaceHelper_WriteFile_Handler,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "OpenFile",
+			Handler:       _WorkspaceHelper_OpenFile_Handler,
+			ServerStreams: true,
 			ClientStreams: true,
 		},
 	},

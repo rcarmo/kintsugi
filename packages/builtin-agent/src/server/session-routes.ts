@@ -68,13 +68,6 @@ export const handleSessionRequest: AgentRouteHandler = async (request, url, opti
     await invalidateAgentView(options, params[0], params[1]);
     return requestAcceptsJson(request) ? Response.json({ agent: { agentId: params[1], state: "idle", aborted: true } }) : turboStreamResponse("");
   }
-  if ((params = matchRoute(url, /^\/workspaces\/([^/]+)\/agents\/([^/]+)\/retry$/)) && request.method === "POST") {
-    const [workspaceId, agentId] = params;
-    const controller = await requireAgentController(workspaceId, agentId, options);
-    const retried = await controller.retryParkedWork();
-    await invalidateAgentView(options, workspaceId, agentId);
-    return requestAcceptsJson(request) ? Response.json({ agent: { agentId, retried } }) : turboStreamResponse("");
-  }
   if ((params = matchRoute(url, /^\/workspaces\/([^/]+)\/agents\/([^/]+)\/rewind$/)) && request.method === "POST") {
     const form = await request.formData();
     const entry = String(form.get("entry") ?? "");

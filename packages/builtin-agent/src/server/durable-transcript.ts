@@ -5,7 +5,7 @@ import { durableTimingEntry, DurableTurnTiming } from "./durable-timing.ts";
 import { durableStopEntry } from "./durable-lifecycle.ts";
 import { historyNote } from "@kintsugi/legacy-converter/entries";
 import { contentText, type Message } from "@earendil-works/pi-ai";
-import { AgentDoc, CompactionEntry, InboxDoc, LiveDoc, ResetEntry, ToolResultEntry, UsageDoc, type AgentState, type ConversationView, type InboxState, type LiveState, type ToolSlot, type UsageState } from "@earendil-works/pi-durable";
+import { AgentDoc, CompactionEntry, InboxDoc, LiveDoc, ResetEntry, ToolResultEntry, UsageDoc, type AgentState, type ConversationView, type InboxState, type LiveState, type ToolDiagnostic, type ToolSlot, type UsageState, type EntryId, type EntryRecord } from "@earendil-works/pi-durable";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { isJsonObject } from "@kintsugi/core";
@@ -27,6 +27,16 @@ export function durableViewState(view: ConversationView) {
   };
 }
 
+/**
+ * The active context of a view over the transcript, as the model sees it: the newest head marker (a compaction or
+ * reset), then the entries from its head on. The view shows the history, with head markers where they were written.
+ */
+export function activeConversationView(view: ConversationView): ConversationView {
+  const marker = view.entries.findLast((entry): entry is EntryRecord & { head: EntryId } => entry.head !== undefined);
+  if (!marker) return view;
+  return { ...view, entries: [marker, ...view.entries.filter(entry => entry.head === undefined && entry.id >= marker.head)] };
+}
+
 const textBlockSchema = Type.Object({ type: Type.Literal("text"), text: Type.String() });
 
 /** What a running tool published: its output and details, shown until its result replaces them. */
@@ -44,6 +54,15 @@ function applySlotProgress(tool: ToolView, slot: Pick<ToolSlot, "output" | "deta
     if (toolDetailsIndicateError(details)) tool.status = "error";
     tool.terminalProcessId = details.terminalProcessId;
   }
+}
+
+/**
+ * A tool result's text as people read it: the Harness's remarks, such as where to continue reading, as plain
+ * paragraphs instead of the block the model gets them in, which the Harness puts last in the content.
+ */
+function toolResultText(content: Message["content"], diagnostics: readonly ToolDiagnostic[]): string {
+  if (!diagnostics.length || !Array.isArray(content)) return contentText(content);
+  return [contentText(content.slice(0, -1)), ...diagnostics.map(diagnostic => diagnostic.message)].filter(Boolean).join("\n\n");
 }
 
 function images(content: Message["content"], entryId: string, offset = 0): SessionImageRef[] {
@@ -80,7 +99,7 @@ export function projectDurableTranscript(view: ConversationView): TranscriptItem
   // Code mode template calls that ended their run, as recorded when they finished.
   const runEndingCalls = new Set<string>();
 
-  function appendMessage(message: Message, key: string, imageEntryId: string, offset: number, partial = false, aborted = false) {
+  function appendMessage(message: Message, key: string, imageEntryId: string, offset: number, partial = false, diagnostics: readonly ToolDiagnostic[] = []) {
     if (message.role === "system") return;
     if (message.role === "user") {
       const startsRun = pendingBoundary || !turn;
@@ -107,9 +126,10 @@ export function projectDurableTranscript(view: ConversationView): TranscriptItem
       }
     } else {
       completedTools.add(message.toolCallId);
+      const aborted = diagnostics.some(diagnostic => diagnostic.code === "aborted");
       let details = isToolViewDetails(message.details) ? message.details : undefined;
       if (aborted) details = isJsonObject(details) ? { ...details, aborted: true } : { aborted: true };
-      records.push({ kind: "toolResult", callId: message.toolCallId, text: contentText(message.content), images: images(message.content, imageEntryId, offset), timestamp: message.timestamp, isError: message.isError, details });
+      records.push({ kind: "toolResult", callId: message.toolCallId, text: toolResultText(message.content, diagnostics), images: images(message.content, imageEntryId, offset), timestamp: message.timestamp, isError: message.isError, details });
       if (turn && runEndingCalls.has(message.toolCallId) && !aborted) {
         turnEnds.set(turn, { timestamp: message.timestamp, completed: true });
         pendingBoundary = true;
@@ -117,8 +137,8 @@ export function projectDurableTranscript(view: ConversationView): TranscriptItem
     }
   }
 
-  // ConversationView is already in context order: head marker first, then
-  // oldest-to-newest entries. Sorting by ID would misplace compaction summaries.
+  // Entries are shown in the order given: an active context (activeConversationView)
+  // starts with its head marker, which sorting by ID would move after the entries it keeps.
   for (const entry of view.entries) {
     if (codemodeTemplateRunEndEntry.is(entry)) {
       runEndingCalls.add(entry.data.callId);
@@ -161,9 +181,9 @@ export function projectDurableTranscript(view: ConversationView): TranscriptItem
     }
     let offset = 0;
     // Imported legacy tool results can contain only model messages, without native diagnostics.
-    const aborted = ToolResultEntry.is(entry) && entry.data?.diagnostics?.some(diagnostic => diagnostic.code === "aborted") === true;
+    const diagnostics = ToolResultEntry.is(entry) ? entry.data?.diagnostics ?? [] : [];
     for (const [index, message] of (entry.model ?? []).entries()) {
-      appendMessage(message, index === 0 ? String(entry.id) : `${entry.id}:message:${index}`, String(entry.id), offset, false, aborted);
+      appendMessage(message, index === 0 ? String(entry.id) : `${entry.id}:message:${index}`, String(entry.id), offset, false, diagnostics);
       offset += Array.isArray(message.content) ? message.content.length : 1;
     }
   }

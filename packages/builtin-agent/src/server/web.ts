@@ -150,11 +150,6 @@ export const builtinAgentWorkspaceModule: WorkspaceModule = {
       parameters: ["id", "agentId", "submissionId"].map(name => ({ name, in: "path", required: true, schema: { type: "string" } })),
       responses: { "200": { description: "steered is false if the input is no longer queued, or is already steering a running turn. HTML clients receive a Turbo Stream.", content: { "application/json": { schema: { type: "object", properties: { input: { type: "object", required: ["submissionId", "steered"], properties: { submissionId: { type: "string" }, steered: { type: "boolean" } } } } } } } } },
     } },
-    "/workspaces/{id}/agents/{agentId}/retry": { post: {
-      summary: "Run this agent's work again after repeated app crashes paused it",
-      parameters: ["id", "agentId"].map(name => ({ name, in: "path", required: true, schema: { type: "string" } })),
-      responses: { "200": { description: "retried is false if nothing was paused. HTML clients receive a Turbo Stream.", content: { "application/json": { schema: { type: "object", properties: { agent: { type: "object", required: ["agentId", "retried"], properties: { agentId: { type: "string" }, retried: { type: "boolean" } } } } } } } } },
-    } },
     "/workspaces/{id}/agents/{agentId}/tools/{callId}/abort": { post: {
       summary: "Abort one live tool call and its owned work without stopping the agent turn",
       requestBody: { required: false, content: {

@@ -22,9 +22,9 @@ import { launchComposerThinkingSettings, resolveNewWorkspaceAgentModel } from "@
 import type { WorkspaceAgentToolOptions } from "@kintsugi/agent/server/tools";
 
 /** Workspace-scoped tools and bash recovery; integrations install their own task definitions. */
-export function createDurableWorkspaceRegistry(workspaceId: string, models: Pick<Models, "getModel">, options: WorkspaceAgentToolOptions = {}, resolveAgentId?: (conversationId: ConversationId) => Promise<string>) {
+export function createDurableWorkspaceRegistry(workspaceId: string, options: WorkspaceAgentToolOptions = {}, resolveAgentId?: (conversationId: ConversationId) => Promise<string>) {
   const registry = createRegistry();
-  registry.install(defineExtension({ name: "kintsugi.workspace-tools", tools: createDurableWorkspaceTools(workspaceId, models, options, resolveAgentId) }));
+  registry.install(defineExtension({ name: "kintsugi.workspace-tools", tools: createDurableWorkspaceTools(workspaceId, options, resolveAgentId) }));
   registry.install(createDurableBashExtension(workspaceId));
   return registry;
 }
@@ -35,7 +35,7 @@ export type DurableHarnessOptions = HarnessOptions & { models: Models };
 
 export async function createDurableHarnessOptions(workspaceId: string, options: WorkspaceAgentToolOptions, writeTiming: WriteDurableTiming, harness: () => Harness): Promise<DurableHarnessOptions> {
   const models = await createPiModelRuntime();
-  const registry = createDurableWorkspaceRegistry(workspaceId, models, options, createNativeAgentIdentityResolver(workspaceId, harness));
+  const registry = createDurableWorkspaceRegistry(workspaceId, options, createNativeAgentIdentityResolver(workspaceId, harness));
   registry.install(defineExtension({ name: "kintsugi.history-search", tools: [createHistorySearchTool(workspaceId, harness)] }));
   registry.install(createNativePlanExtension(workspaceId, harness));
   const delegation = agentDelegation?.create(models, harness);
@@ -49,10 +49,9 @@ export async function createDurableHarnessOptions(workspaceId: string, options: 
   return {
     models: templates.models(delegation?.models ?? models),
     registry,
-    // Evict unobserved document caches after a minute; storage and provider caches are unchanged.
     settings: { documentRetentionMs: 60_000, compaction: { enabled: true, keepRecentTokens: 6000 } },
-    // Faulted, parked and unmigratable tasks, and failing extension code, are otherwise invisible.
-    onReport: (error, info) => console.error(`Agent work report (${info.type})`, error),
+    // Faulted, interrupted and unmigratable tasks, and failing extension code, are otherwise invisible.
+    onReport: ({ error, ...info }) => console.error(`Agent work report (${info.kind})`, error, info),
   };
 }
 

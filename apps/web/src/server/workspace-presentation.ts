@@ -12,12 +12,12 @@ import { popupHtml } from "@kintsugi/design-system/popup";
 import { tabHtml, tabStripHtml } from "@kintsugi/design-system/tab-strip";
 import { domId, escapeHtml, turboStream, workspaceWorkViewLabelDomId } from "@kintsugi/shared";
 import { formatShortcutBinding } from "../shortcut-binding.ts";
-import { renderAgentPane, renderMobileAgentAttention, type AgentPaneContribution } from "./agent-pane.ts";
+import { agentPaneSlotDomId, renderAgentPane, renderMobileAgentAttention, type AgentPaneContribution } from "./agent-pane.ts";
 import { renderPwaReminder } from "./pwa-reminder.ts";
 import type { WorkspaceDeletionState } from "./workspace-registry.ts";
 import { outdatedImageMessage } from "./workspace-warnings.ts";
 import type { WorkspaceWorkViewState } from "@kintsugi/workspace";
-import { barButton, behaviorTurboStream, busyAttentionIndicator, fullscreenViewAttributes, selectorCloseForm, type ViewCloseAction } from "./workspace-view-markup.ts";
+import { barButton, behaviorTurboStream, busyAttentionIndicator, fullscreenViewAttributes, LiveIslands, paneContentHtml, selectorCloseForm, type ViewCloseAction } from "./workspace-view-markup.ts";
 
 export type WorkViewAvailability =
   | { phase: "opening"; detail?: string }
@@ -56,7 +56,6 @@ export interface WorkPaneContribution {
   requestingAttention?: boolean;
   attentionSequence?: number;
   availability: WorkViewAvailability;
-  bodyHtml?: string;
   sourceKey?: string;
   actionsHtml?: string;
   close?: ViewCloseAction;
@@ -69,7 +68,6 @@ export interface WorkspacePanePresentation {
 }
 
 export interface WorkspacePresentation {
-  initialSelection?: { agent?: string; workView?: string };
   workspace: Pick<WorkspacePaneEntry, "id" | "title">;
   agents: readonly AgentPaneContribution[];
   agentTypes: readonly { id: string; label: string; iconHtml: string }[];
@@ -268,13 +266,10 @@ function renderWorkViewSelectors(workspaceId: string, views: readonly WorkPaneCo
   return views.map((view) => renderWorkViewSelector(workspaceId, view)).join("");
 }
 
-export function workContentId(workspaceId: string, key: string): string {
-  return domId("work_content", workspaceId, key);
-}
 
-function renderWorkViewPane(workspaceId: string, view: WorkPaneContribution, active: boolean): string {
+function renderWorkViewPane(islands: LiveIslands, workspaceId: string, view: WorkPaneContribution): string {
   const source = view.sourceKey ? ` data-source-work-view-key="${escapeHtml(view.sourceKey)}"` : "";
-  return `<section id="${workViewPaneDomId(workspaceId, view.key)}" class="fixed-shell-surface${active ? " is-active" : ""}" data-workspace-pane-role="work" data-workspace-pane-id="${escapeHtml(view.key)}" data-kintsugi-fullscreen-view-key="${escapeHtml(view.sourceKey ?? view.key)}" data-workspace-logically-visible="false"${source} tabindex="-1"><div id="${workViewAvailabilityDomId(workspaceId, view.key)}">${renderAvailability(view)}</div><div id="${workViewActionsDomId(workspaceId, view.key)}" class="fixed-shell-work-actions">${view.actionsHtml ?? ""}</div><div class="fixed-shell-live-body" id="${workContentId(workspaceId, view.key)}" data-turbo-permanent></div></section>`;
+  return `<section id="${workViewPaneDomId(workspaceId, view.key)}" class="fixed-shell-surface" data-workspace-pane-role="work" data-workspace-pane-id="${escapeHtml(view.key)}" data-work-view-kind="${view.kind}" data-kintsugi-fullscreen-view-key="${escapeHtml(view.sourceKey ?? view.key)}" data-workspace-logically-visible="false"${source} tabindex="-1">${islands.island(workViewAvailabilityDomId(workspaceId, view.key), renderAvailability(view), "div")}${islands.island(workViewActionsDomId(workspaceId, view.key), view.actionsHtml ?? "", "div", "fixed-shell-work-actions")}${paneContentHtml(workspaceId, "work-view-body", view.key)}</section>`;
 }
 
 
@@ -329,9 +324,9 @@ function renderEmptyWorkPane(workspaceId: string, commands: NonNullable<Workspac
   return `<div id="${workViewDomId(workspaceId, "empty")}" class="fixed-shell-empty-work empty-state"><div class="fixed-shell-empty-work-content"><div class="fixed-shell-empty-work-launchers action-list">${launchers}</div></div></div>`;
 }
 
-function renderWorkPane(presentation: WorkspacePresentation): string {
+function renderWorkPane(islands: LiveIslands, presentation: WorkspacePresentation): string {
   const selectors = renderWorkViewSelectors(presentation.workspace.id, presentation.workViews);
-  const panes = presentation.workViews.map((view) => renderWorkViewPane(presentation.workspace.id, view, view.key === presentation.initialSelection?.workView)).join("");
+  const panes = presentation.workViews.map((view) => renderWorkViewPane(islands, presentation.workspace.id, view)).join("");
   const workCommands = (presentation.commands ?? []).filter((command) => command.placement === "work-launcher");
   const addMenuId = workViewDomId(presentation.workspace.id, "add_menu");
   const addMenu = workCommands.length ? popupHtml({
@@ -342,7 +337,7 @@ function renderWorkPane(presentation: WorkspacePresentation): string {
   }) : "";
   return `<div class="fixed-shell-work-pane">${panelHtml({
     element: { tag: "section",  attributesHtml: 'data-workspace-role-region="work" data-workspace-presentation-target="workPane" aria-label="Work"' },
-    headerHtml: `${presentation.workViews.length ? "" : '<span class="panel__title">Work views</span>'}${tabStripHtml({ id: workViewDomId(presentation.workspace.id, "selectors"), label: "Work views", tabsHtml: selectors })}<span id="${workViewDomId(presentation.workspace.id, "launchers")}">${addMenu}</span>${barButton("Collapse Work pane", "click->workspace-presentation#toggleWorkPane", Icons.Panel, "data-collapse-work-pane")}`,
+    headerHtml: `${presentation.workViews.length ? "" : '<span class="panel__title">Work views</span>'}${islands.island(workViewDomId(presentation.workspace.id, "selector_tabs"), tabStripHtml({ id: workViewDomId(presentation.workspace.id, "selectors"), label: "Work views", tabsHtml: selectors }), "span", "contents")}<span id="${workViewDomId(presentation.workspace.id, "launchers")}">${addMenu}</span>${barButton("Collapse Work pane", "click->workspace-presentation#toggleWorkPane", Icons.Panel, "data-collapse-work-pane")}`,
     bodyHtml: `<div id="${workViewDomId(presentation.workspace.id, "bodies")}" class="fixed-shell-work-bodies">${panes || renderEmptyWorkPane(presentation.workspace.id, presentation.commands ?? [])}</div><div class="fixed-shell-work-resizer" role="separator" aria-label="Resize Work pane" aria-orientation="vertical" tabindex="0" data-action="pointerdown->workspace-presentation#beginWorkResize keydown->workspace-presentation#resizeWorkWithKeyboard"></div>`,
   })}</div>`;
 }
@@ -401,8 +396,8 @@ export function renderMobileWorkspaceBar(destinationsHtml = "", moreMenuHtml = "
   </nav>`;
 }
 
-function renderWorkspaceBar(presentation: WorkspacePresentation, inert = false): string {
-  const agentsDestination = renderMobileDestination("Agents", "agents", `${Icons.Agent}${renderMobileAgentAttention(presentation.workspace.id, presentation.agents)}`);
+function renderWorkspaceBar(islands: LiveIslands, presentation: WorkspacePresentation, inert = false): string {
+  const agentsDestination = renderMobileDestination("Agents", "agents", `${Icons.Agent}${renderMobileAgentAttention(islands, presentation.workspace.id, presentation.agents)}`);
   const workViews = renderMobileWorkViews(presentation.workViews);
   const launchers = (presentation.commands ?? []).filter((command) => command.placement === "work-launcher").map((command) => renderWorkLauncherCommand(command, presentation.workspace.id, "submit->workspace-presentation#closeMore")).join("");
   const closers = presentation.workViews.map(renderMobileWorkViewCloser).join("");
@@ -411,11 +406,11 @@ function renderWorkspaceBar(presentation: WorkspacePresentation, inert = false):
     id: moreMenuId, label: "More", placement: "above",
     trigger: { variant: "secondary", content: { kind: "icon-only", iconHtml: `${Icons.More}<span id="${workViewDomId(presentation.workspace.id, "mobile_more_attention")}">${mobileMoreAttentionHtml}</span>`, label: "More" }, attributesHtml: "data-mobile-more" },
     menuAttributesHtml: 'data-workspace-presentation-target="moreMenu" data-action="toggle->workspace-presentation#syncMore"',
-    contentHtml: `<span id="${workViewDomId(presentation.workspace.id, "mobile_overflow")}" class="contents action-list">${workViews.overflowItems}</span>
+    contentHtml: `${islands.island(workViewDomId(presentation.workspace.id, "mobile_overflow"), workViews.overflowItems, "span", "contents action-list")}
       ${launchers ? `<hr class="popup-menu__separator" data-mobile-overflow-separator hidden>${launchers}` : ""}
-      <div id="${workViewDomId(presentation.workspace.id, "mobile_closers")}" class="fixed-shell-more-close-section">${closers}</div>`,
+      ${islands.island(workViewDomId(presentation.workspace.id, "mobile_closers"), closers, "div", "fixed-shell-more-close-section")}`,
   });
-  return renderMobileWorkspaceBar(`${agentsDestination}<span id="${workViewDomId(presentation.workspace.id, "mobile_destinations")}" class="contents">${workViews.destinations}</span>`, moreMenu, inert);
+  return renderMobileWorkspaceBar(`${agentsDestination}${islands.island(workViewDomId(presentation.workspace.id, "mobile_destinations"), workViews.destinations, "span", "contents")}`, moreMenu, inert);
 }
 
 export function renderWorkspaceDeletionPresentation(workspaceId: string, deletion: WorkspaceDeletionState, evidenceHtml = ""): string {
@@ -442,14 +437,33 @@ export function renderWorkspaceDeletionPresentation(workspaceId: string, deletio
   return `<div id="${domId("fixed_workspace", workspaceId)}" class="fixed-workspace-presentation workspace-deletion-presentation" data-workspace-id="${escapeHtml(workspaceId)}" data-workspace-commands="[]"><main class="workspace-deletion-state" data-deletion-status="${deletion.status}"${role}>${content}</main>${renderMobileWorkspaceBar()}</div>`;
 }
 
-export function renderWorkspacePresentation(presentation: WorkspacePresentation): string {
+/** The workspace chrome, and the islands within it that are published as their own regions. */
+export function renderWorkspacePresentation(presentation: WorkspacePresentation) {
+  const islands = new LiveIslands();
   const id = workspacePresentationDomId(presentation.workspace.id);
   const trustPending = presentation.overlayHtml?.some(html => html.includes('class="workspace-ssh-trust-overlay"')) ?? false;
-  return `<div id="${id}" class="fixed-workspace-presentation${presentation.initialSelection?.workView ? " is-work-pane-open" : ""}" data-controller="workspace-presentation" data-phone-destination="${presentation.initialSelection?.workView ? `work:${escapeHtml(presentation.initialSelection.workView)}` : "agents"}" data-workspace-initial-agent="${escapeHtml(presentation.initialSelection?.agent ?? "")}" data-workspace-initial-work="${escapeHtml(presentation.initialSelection?.workView ?? "")}" data-workspace-presentation-work-intent-value="${escapeHtml(JSON.stringify(presentation.workPresentationIntent ?? {}))}" data-workspace-presentation-workspace-id-value="${escapeHtml(presentation.workspace.id)}" data-workspace-id="${escapeHtml(presentation.workspace.id)}" data-workspace-commands="${escapeHtml(JSON.stringify(presentation.commands ?? []))}">
-    <div class="fixed-shell-main"${trustPending ? " inert" : ""}>${renderAgentPane(presentation)}${renderWorkPane(presentation)}</div>
-    ${renderWorkspaceBar(presentation, trustPending)}
-    ${(presentation.overlayHtml ?? []).join("")}
+  const html = `<div id="${id}" class="fixed-workspace-presentation" data-controller="workspace-presentation" data-phone-destination="agents" data-workspace-presentation-work-intent-value="${escapeHtml(JSON.stringify(presentation.workPresentationIntent ?? {}))}" data-workspace-presentation-workspace-id-value="${escapeHtml(presentation.workspace.id)}" data-workspace-id="${escapeHtml(presentation.workspace.id)}" data-workspace-commands="${escapeHtml(JSON.stringify(presentation.commands ?? []))}">
+    <div class="fixed-shell-main"${trustPending ? " inert" : ""}>${renderAgentPane(islands, presentation)}${renderWorkPane(islands, presentation)}</div>
+    ${renderWorkspaceBar(islands, presentation, trustPending)}
+    ${islands.island(workspaceRegionDomId(presentation.workspace.id, "overlays"), (presentation.overlayHtml ?? []).join(""), "div", "contents")}
   </div>`;
+  return { html, islands: islands.regions };
+}
+
+export interface InitialWorkspaceSelection { agent?: string; workView?: string }
+
+/** Marks a server-rendered page's selected panes for its first paint. The presentation owns
+ * these marks, so the published chrome leaves them out. */
+export function presentInitialWorkspaceSelection(html: string, workspaceId: string, { agent, workView }: InitialWorkspaceSelection): string {
+  const active = new Set([...agent ? [agentPaneSlotDomId(workspaceId, agent)] : [], ...workView ? [workViewPaneDomId(workspaceId, workView)] : []]);
+  return new HTMLRewriter().on("[id]", { element(element) {
+    const id = element.getAttribute("id")!;
+    if (active.has(id)) element.setAttribute("class", `${element.getAttribute("class")} is-active`);
+    if (id === workspacePresentationDomId(workspaceId) && workView) {
+      element.setAttribute("class", `${element.getAttribute("class")} is-work-pane-open`);
+      element.setAttribute("data-phone-destination", `work:${workView}`);
+    }
+  } }).transform(html);
 }
 
 export function presentWorkViewTurboStream(workspaceId: string, key: string): string {

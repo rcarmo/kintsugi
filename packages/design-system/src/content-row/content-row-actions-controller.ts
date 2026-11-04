@@ -8,11 +8,10 @@ export class ContentRowActionsController extends Controller<HTMLElement> {
 
   connect(): void {
     const item = this.element.parentElement!;
-    const update = (): void => {
-      item.style.setProperty("--content-row-actions-width", `${this.element.getBoundingClientRect().width}px`);
-    };
-    update();
-    this.observer = new ResizeObserver(update);
+    // The first observation arrives before the first paint, without forcing a layout while controllers connect.
+    this.observer = new ResizeObserver(([entry]) => {
+      item.style.setProperty("--content-row-actions-width", `${entry!.borderBoxSize[0]!.inlineSize}px`);
+    });
     this.observer.observe(this.element);
   }
 

@@ -25,8 +25,8 @@ export type { WorkspaceCreationContext, WorkspaceDockerMount, WorkspaceDockerPla
 
 import { prepareWorkspaceNetwork, configureWorkspaceDns, revokeWorkspaceNetwork } from "./network.ts";
 export { getNetworkConfiguration, setNetworkConfiguration, getWorkspaceNetworkMode, setWorkspaceNetworkMode, getAppliedWorkspaceNetwork, workspaceNetworkRestartRequired } from "./network.ts";
-export { checkFileInWorkspace, existingFilesInWorkspace, readFileInWorkspace, runInWorkspace, startInWorkspace, statFilesInWorkspace, writeFileInWorkspace } from "./helper.ts";
-export { WorkspaceHelperError, WorkspaceHelperStatus } from "@kintsugi/workspace-helper";
+export { closeWorkspaceHelperConnection, workspaceHelperSocketPath, checkFileInWorkspace, existingFilesInWorkspace, openFileInWorkspace, readFileInWorkspace, runInWorkspace, startInWorkspace, statFilesInWorkspace, writeFileInWorkspace } from "./helper.ts";
+export { WorkspaceHelperError, WorkspaceHelperStatus, type WorkspaceFileStat } from "@kintsugi/workspace-helper";
 export { exitStatus as workspaceExitStatus } from "@kintsugi/workspace-helper";
 export { workspaceTerminalProcesses } from "./terminal-processes.ts";
 export { createWorkspaceMetadataState, type WorkspaceMetadataState } from "./metadata-state.ts";

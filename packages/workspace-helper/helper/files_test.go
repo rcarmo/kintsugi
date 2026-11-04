@@ -8,6 +8,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -318,9 +319,147 @@ func TestStatsFilesWithoutReadingThem(t *testing.T) {
 			t.Errorf("%s: got %+v, want %+v", c.path, got, c.want)
 		}
 	}
+	canonical, err := filepath.EvalSymlinks(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := response.Stats[1].CanonicalPath; got != canonical {
+		t.Errorf("canonical path of the link %q, want %q", got, canonical)
+	}
+	if got := response.Stats[4].CanonicalPath; got != "" {
+		t.Errorf("canonical path of a missing file %q, want none", got)
+	}
 	if got := response.Stats[0].ModifiedUnixMs; got != modified.UnixMilli() {
 		t.Errorf("modified %d, want %d", got, modified.UnixMilli())
 	}
 	_, err = helper.StatFiles(context.Background(), &pb.StatFilesRequest{User: pb.User_USER_AGENT, Paths: []string{file, "relative"}})
 	expectCode(t, err, codes.InvalidArgument)
+}
+
+func openFile(t *testing.T, helper pb.WorkspaceHelperClient, path string) (pb.WorkspaceHelper_OpenFileClient, *pb.FileStat, error) {
+	t.Helper()
+	stream, err := helper.OpenFile(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&pb.OpenFileRequest{Request: &pb.OpenFileRequest_Open{Open: &pb.ReadFileRequest{User: pb.User_USER_AGENT, Path: path}}}); err != nil {
+		t.Fatal(err)
+	}
+	response, err := stream.Recv()
+	if err != nil {
+		return nil, nil, err
+	}
+	return stream, response.GetStat(), nil
+}
+
+func readRange(t *testing.T, stream pb.WorkspaceHelper_OpenFileClient, offset uint64, length uint32) ([]byte, error) {
+	t.Helper()
+	if err := stream.Send(&pb.OpenFileRequest{Request: &pb.OpenFileRequest_Read{Read: &pb.FileRange{Offset: offset, Length: length}}}); err != nil {
+		t.Fatal(err)
+	}
+	response, err := stream.Recv()
+	if err != nil {
+		return nil, err
+	}
+	return response.GetData(), nil
+}
+
+func TestOpenFileReadsRangesOfTheOpenedFile(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "file")
+	if err := os.WriteFile(path, []byte("0123456789"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stream, stat, err := openFile(t, client(t), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stat.Kind != pb.FileKind_FILE_KIND_REGULAR || stat.Size != 10 {
+		t.Fatalf("opened %+v", stat)
+	}
+	for _, c := range []struct {
+		offset uint64
+		length uint32
+		want   string
+	}{{2, 3, "234"}, {8, 5, "89"}, {10, 4, ""}, {20, 4, ""}} {
+		got, err := readRange(t, stream, c.offset, c.length)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != c.want {
+			t.Errorf("read %d+%d: got %q, want %q", c.offset, c.length, got, c.want)
+		}
+	}
+	// Replacing the path leaves the open file as it was.
+	if err := os.WriteFile(path+".new", []byte("replaced, and longer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path+".new", path); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readRange(t, stream, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "0123456789" {
+		t.Errorf("after replacing the path: got %q", got)
+	}
+	if err := stream.Send(&pb.OpenFileRequest{Request: &pb.OpenFileRequest_Stat{Stat: &pb.StatOpenFile{}}}); err != nil {
+		t.Fatal(err)
+	}
+	response, err := stream.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.GetStat().Size != 10 {
+		t.Errorf("stat after replacing the path: %+v", response.GetStat())
+	}
+	_, err = readRange(t, stream, 0, maxFileRangeBytes+1)
+	expectCode(t, err, codes.InvalidArgument)
+}
+
+func TestOpenFileFailsLikeReadFile(t *testing.T) {
+	directory := t.TempDir()
+	helper := client(t)
+	_, _, err := openFile(t, helper, filepath.Join(directory, "missing"))
+	expectCode(t, err, codes.NotFound)
+	_, _, err = openFile(t, helper, directory)
+	expectCode(t, err, codes.FailedPrecondition)
+	_, _, err = openFile(t, helper, "relative")
+	expectCode(t, err, codes.InvalidArgument)
+}
+
+// A file reachable through short symlinks whose real path is longer than
+// PATH_MAX: the kernel stats and opens it, but EvalSymlinks, which lstats the
+// growing real path, fails with ENAMETOOLONG. That must not fail the batch.
+func TestStatsAFileWhoseRealPathIsTooLong(t *testing.T) {
+	directory := t.TempDir()
+	name := strings.Repeat("n", 250)
+	previous := directory
+	for level := 0; level < 20; level++ {
+		real := filepath.Join(previous, name)
+		if err := os.Mkdir(real, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(directory, "l"+strconv.Itoa(level))
+		// Through the previous link, so each target stays short.
+		if err := os.Symlink(real, link); err != nil {
+			t.Fatal(err)
+		}
+		previous = link
+	}
+	file := filepath.Join(previous, "file")
+	if err := os.WriteFile(file, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(file); err != nil {
+		t.Fatalf("the kernel can't reach the file either: %v", err)
+	}
+	stat, err := statFile(file)
+	if err != nil {
+		t.Fatalf("statFile failed, failing the whole StatFiles batch: %v", err)
+	}
+	if !stat.Readable {
+		t.Fatalf("got %v, want a readable regular file", stat)
+	}
 }

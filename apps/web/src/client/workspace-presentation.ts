@@ -3,7 +3,7 @@
 import { focusLikelyOpensSoftwareKeyboard, phoneLayoutMediaQuery, workspaceAgentSelectionEvent, type WorkspaceClientApplication, type WorkspaceClientControllerConstructor, type WorkspaceClientSurfaceVisibilityContext } from "@kintsugi/shared";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
-import { prepareLiveSurface, selectLiveSurface } from "./live-surface.ts";
+import { liveSurfaceReady, prepareLiveSurface, stopLiveSurface } from "./live-surface.ts";
 import { workspaceSelectionController } from "./workspace-controller-registry.ts";
 
 type PresentationPane = HTMLElement & { dataset: DOMStringMap & { workspacePaneRole?: string; workspacePaneId?: string; workspaceLogicallyVisible?: string } };
@@ -49,6 +49,8 @@ interface TurboLike {
 const navigationIntents = new Map<string, { agent?: string; work?: string; createdAgent?: string }>();
 
 const visiblePresentationPanes = new WeakSet<HTMLElement>();
+/** A pane's content element, which is its own live surface. */
+const paneSurfaceSelector = "[data-controller~='live-surface']";
 const agentPaneWidthStorageKey = "kintsugi:agent-pane-width";
 
 function storedNavigation(storage: Storage, key: string): StoredPersonalNavigation | undefined {
@@ -162,8 +164,7 @@ export function createWorkspacePresentationController(
     presentWorkView(key: string): void {
       navigationIntents.set(this.workspaceIdValue, { ...navigationIntents.get(this.workspaceIdValue), work: key });
       if (!this.element.closest(".workspace-detail-mount.visible")) return;
-      const selector = this.element.querySelector<HTMLElement>(`[data-work-view-key="${CSS.escape(key)}"]`);
-      this.selectWorkViewState(key, selector?.dataset.workViewKind === "contextual");
+      this.selectWorkViewState(key, this.workViewPane(key)?.dataset.workViewKind === "contextual");
       this.persistAndApply({ focus: true });
     }
 
@@ -182,7 +183,8 @@ export function createWorkspacePresentationController(
     }
 
     intendedSurfacesReady(): boolean {
-      const pane = this.element.querySelector<HTMLElement>(`[data-workspace-pane-role="agent"][data-workspace-pane-id="${CSS.escape(this.state.activeAgentId ?? "")}"]`);
+      if (!this.selectedPaneSurfaces().every(liveSurfaceReady)) return false;
+      const pane = this.agentPaneSlot(this.state.activeAgentId ?? "");
       // Hidden panes already have server-rendered content; only visible agents
       // need an active transcript subscription to finish preparation.
       return !pane || !visiblePresentationPanes.has(pane) || document.hidden
@@ -198,6 +200,7 @@ export function createWorkspacePresentationController(
       this.normalizeState();
       this.applyState({ emit: false });
       await prepareLiveSurface(this.element.closest<HTMLElement>(".workspace-detail-mount")!);
+      await Promise.all(this.selectedPaneSurfaces().map(prepareLiveSurface));
       await this.initializeEmbeddedWorkSurface();
     }
 
@@ -353,8 +356,10 @@ export function createWorkspacePresentationController(
     }
 
     private normalizeState(): void {
-      const agents = [...this.element.querySelectorAll<HTMLElement>("[data-agent-id], [data-workspace-pane-role='agent']")].map((item) => item.dataset.agentId ?? item.dataset.workspacePaneId!).filter(Boolean);
-      const workViews = [...this.element.querySelectorAll<HTMLElement>("[data-work-view-key]")].map((item) => item.dataset.workViewKey!);
+      // Panes are in the presentation from the start; their selectors arrive separately.
+      const paneIds = (role: string) => [...this.element.querySelectorAll<HTMLElement>(`[data-workspace-pane-role="${role}"]`)].map((pane) => pane.dataset.workspacePaneId!);
+      const agents = paneIds("agent");
+      const workViews = paneIds("work");
       const intent = navigationIntents.get(this.workspaceIdValue);
       if (intent?.agent) {
         this.state.activeAgentId = intent.agent;
@@ -362,12 +367,35 @@ export function createWorkspacePresentationController(
         if (agents.includes(intent.agent)) delete intent.agent;
       } else if (!this.state.activeAgentId || !agents.includes(this.state.activeAgentId)) this.state.activeAgentId = agents[0];
       if (intent?.work) {
-        const selector = this.element.querySelector<HTMLElement>(`[data-work-view-key="${CSS.escape(intent.work)}"]`);
-        this.selectWorkViewState(intent.work, selector?.dataset.workViewKind === "contextual");
+        this.selectWorkViewState(intent.work, this.workViewPane(intent.work)?.dataset.workViewKind === "contextual");
         if (workViews.includes(intent.work)) delete intent.work;
       } else if (!this.state.activeWorkViewKey || !workViews.includes(this.state.activeWorkViewKey)) this.state.activeWorkViewKey = workViews[0];
       if (!intent?.work && this.state.phoneDestination.startsWith("work:") && !workViews.includes(this.state.phoneDestination.slice(5))) this.state.phoneDestination = "agents";
       this.persist();
+    }
+
+    private agentPaneSlot(agentId: string): HTMLElement | null {
+      return this.element.querySelector<HTMLElement>(`[data-workspace-pane-role="agent"][data-workspace-pane-id="${CSS.escape(agentId)}"]`);
+    }
+
+    private workViewPane(key: string): HTMLElement | null {
+      return this.element.querySelector<HTMLElement>(`[data-workspace-pane-role="work"][data-workspace-pane-id="${CSS.escape(key)}"]`);
+    }
+
+    /** The content surfaces of the selected Agent pane and, while the Work pane is open, the selected Work view. */
+    private selectedPaneSurfaces(): HTMLElement[] {
+      const agent = this.state.activeAgentId ? this.agentPaneSlot(this.state.activeAgentId) : null;
+      const work = this.state.workPaneVisible && this.state.activeWorkViewKey ? this.workViewPane(this.state.activeWorkViewKey) : null;
+      return [agent, work].flatMap(pane => pane?.querySelector<HTMLElement>(`:scope > ${paneSurfaceSelector}`) ?? []);
+    }
+
+    /** Selected panes publish their content; the others keep what they last showed. */
+    private followSelectedPanes(): void {
+      const selected = this.selectedPaneSurfaces();
+      this.element.querySelectorAll<HTMLElement>(`[data-workspace-pane-role] > ${paneSurfaceSelector}`).forEach(surface => {
+        if (!selected.includes(surface)) stopLiveSurface(surface);
+      });
+      for (const surface of selected) void prepareLiveSurface(surface);
     }
 
     private selectDestinationOnWorkspaceEntry(): void {
@@ -389,13 +417,12 @@ export function createWorkspacePresentationController(
       const agentId = url.searchParams.get("agent");
       const workViewKey = url.searchParams.get("workView");
       if (agentId) {
-        const agent = this.element.querySelector<HTMLElement>(`[data-workspace-pane-role="agent"][data-workspace-pane-id="${CSS.escape(agentId)}"]`);
-        if (!agent) return;
+        if (!this.agentPaneSlot(agentId)) return;
         this.state.activeAgentId = agentId;
         this.state.phoneDestination = "agents";
       }
       if (workViewKey) {
-        const workView = this.element.querySelector<HTMLElement>(`[data-work-view-key="${CSS.escape(workViewKey)}"]`);
+        const workView = this.workViewPane(workViewKey);
         if (!workView) return;
         const intent = navigationIntents.get(this.workspaceIdValue);
         if (intent) delete intent.work;
@@ -425,7 +452,7 @@ export function createWorkspacePresentationController(
       this.element.classList.toggle("is-work-pane-open", this.state.workPaneVisible);
       this.element.dataset.phoneDestination = this.state.phoneDestination;
       this.element.dataset.navigationReady = "true";
-      selectLiveSurface(this.element.closest<HTMLElement>(".workspace-detail-mount")!, this.state.activeAgentId ?? "", this.state.workPaneVisible ? this.state.activeWorkViewKey ?? "" : "");
+      this.followSelectedPanes();
       const selectedAgentChanged = this.element.dataset.workspaceSelectedAgent !== this.state.activeAgentId;
       this.element.dataset.workspaceSelectedAgent = this.state.activeAgentId ?? "";
 
@@ -570,7 +597,7 @@ export function createWorkspacePresentationController(
 
     private async initializeEmbeddedWorkSurface(): Promise<void> {
       if (!this.state.activeWorkViewKey) return;
-      const pane = this.element.querySelector<HTMLElement>(`[data-workspace-pane-role="work"][data-workspace-pane-id="${CSS.escape(this.state.activeWorkViewKey)}"]`);
+      const pane = this.workViewPane(this.state.activeWorkViewKey);
       const frames = pane?.querySelectorAll<HTMLIFrameElement>('[data-controller~="workspace-app-frame"]') ?? [];
       await Promise.all([...frames].map(async (frame) => {
         // SAFETY: The registered workspace-app-frame controller exposes the preparation method below.

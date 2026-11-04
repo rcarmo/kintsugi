@@ -31,7 +31,7 @@ async function setup(script: string, child: FauxResponseFactory, options: { wait
   const path = await mkdtemp(join(tmpdir(), "one-shot-agent-")); paths.push(path);
   const models = createModels(); const faux = fauxProvider({ tokensPerSecond: 100000 }); models.setProvider(faux.provider);
   // The workspace's own tools and code mode, as the builtin agent assembles them; the agents never call them.
-  const registry = createDurableWorkspaceRegistry("one-shot", models);
+  const registry = createDurableWorkspaceRegistry("one-shot");
   registry.install(codemodeIntegration.extension!("one-shot", models));
   registry.install(oneShotLimits);
   let owner: DurableAgentRuntime;

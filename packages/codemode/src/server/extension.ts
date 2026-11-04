@@ -2,13 +2,12 @@ import { attributeModelToolUsage } from "@kintsugi/builtin-agent/server/model-to
 import type { JsonValue } from "@earendil-works/chord";
 import { defineEntry, type Extension, type JsonObject, type NestedToolExecutionResult, type ToolExecutionApi } from "@earendil-works/pi-durable";
 import { CODEMODE_TOOL_NAME, createCodemodeExtension, type CodemodeToolInput } from "@earendil-works/pi-durable/codemode";
-import { err, FileError, ok, type ExecutionEnv } from "@earendil-works/pi-durable/env";
 import type { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { isJsonObject } from "@kintsugi/core";
 import { isToolViewDetails, toolOutcomeLabel, type ToolViewDetails } from "@kintsugi/agent/server/transcript";
-import { execWorkspaceCommand } from "@kintsugi/workspace";
+import { WorkspaceFileSystem } from "@kintsugi/builtin-agent/server/durable-workspace-files";
 import { resolveScript, scriptFileDescription, type ReadScriptFile } from "./script-file.ts";
 
 const textSchema = Type.String();
@@ -64,24 +63,6 @@ function endSummary(end: CallEnd): string {
   return outcome === "failed" ? `failed: ${(end.error ?? end.output ?? "").split("\n")[0]!.slice(0, 200)}` : outcome || "ok";
 }
 
-/**
- * Code mode saves the images a script shows to files, so the agent can use them later. It writes them
- * through the conversation's environment, which the builtin agent has none of: its tools reach the
- * workspace themselves. Give code mode alone one that writes the files into the workspace.
- */
-function workspaceOutputFiles(workspaceId: string): Pick<ExecutionEnv, "createTempDir" | "writeFile"> {
-  return {
-    async createTempDir(prefix = "") {
-      const result = await execWorkspaceCommand(workspaceId, ["mktemp", "-d", `/tmp/${prefix}XXXXXX`]);
-      return result.exitCode === 0 ? ok(result.stdout.trim()) : err(new FileError("unknown", result.stderr.trim()));
-    },
-    async writeFile(path, content) {
-      const result = await execWorkspaceCommand(workspaceId, ["sh", "-c", 'cat > "$1"', "sh", path], { stdin: content });
-      return result.exitCode === 0 ? ok(undefined) : err(new FileError("unknown", result.stderr.trim(), path));
-    },
-  };
-}
-
 /** A code mode call's API, recording each call its script makes, with a line of running output as it starts and ends. */
 function recordingCalls(api: ToolExecutionApi): ToolExecutionApi {
   return {
@@ -112,8 +93,8 @@ function recordingCalls(api: ToolExecutionApi): ToolExecutionApi {
  */
 export function createWorkspaceCodemodeExtension(workspaceId: string, sandbox: CodemodeSandbox, readScriptFile: ReadScriptFile): Extension {
   const extension = createCodemodeExtension({ sandbox });
-  // SAFETY: code mode uses only createTempDir and writeFile of its environment.
-  const env = workspaceOutputFiles(workspaceId) as ExecutionEnv;
+  // Code mode saves the images a script shows to files in the workspace, so the agent can use them later.
+  const env = new WorkspaceFileSystem(workspaceId);
   return { ...extension, tools: extension.tools?.map(attributeModelToolUsage).map(tool => tool.name !== CODEMODE_TOOL_NAME ? tool : {
     ...tool,
     description: `${tool.description}\n\n${scriptFileDescription}`,

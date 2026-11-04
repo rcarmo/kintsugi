@@ -30,7 +30,7 @@ function fakePi() {
     getAllTools(): ToolInfo[] { return [...tools.values()].map((tool) => ({ ...tool, exposure: tool.exposure ?? "direct", sourceInfo: { source: "extension", path: "pi-kintsugi", scope: "temporary", origin: "top-level" } })); },
     getActiveTools() { return active; },
     setActiveTools(names: string[]) { active = names; },
-    async exec(...args: unknown[]) { executions.push(args); return { code: 0, stdout: "", stderr: "", killed: false }; },
+    async exec(...args: unknown[]) { executions.push(args); return { code: 0, stdout: "", stderr: "", killed: false, truncated: false }; },
   };
   // SAFETY: The protocol integrations under test use only the API members implemented here.
   const pi = partial as ExtensionAPI;

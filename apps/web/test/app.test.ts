@@ -219,11 +219,15 @@ test("a failed work-view loader does not reject the workspace channel or its age
   await withTestApp([{id:"agent-one",title:"Agent one"}],async({app,workspaceId,agent})=>{
     await app.createWorkView(workspaceId,{type:"faulting-preview"});
     let messages=0;const subscription=await app.subscribeSurface({channel:"module",name:"surface",workspaceId,params:{kind:"workspace",agent:"agent-one",work:"faulting-preview:one"}},()=>{messages++;});
-    expect(attempts).toBe(1);expect(agent.rendered).toContainEqual({workspaceId,agentId:"agent-one"});
-    expect(messages).toBeGreaterThan(0);subscription.unsubscribe();
+    expect(attempts).toBe(0);
+    const agentSubscription = await app.subscribeSurface({channel:"module",name:"surface",workspaceId,params:{kind:"agent-pane",key:"agent-one"}},()=>{});
+    expect(agent.rendered).toContainEqual({workspaceId,agentId:"agent-one"});
+    await expect(app.subscribeSurface({channel:"module",name:"surface",workspaceId,params:{kind:"work-view-body",key:"faulting-preview:one"}},()=>{})).rejects.toThrow("Workspace ingress origin capacity exhausted");
+    expect(attempts).toBe(1);
+    expect(messages).toBeGreaterThan(0);subscription.unsubscribe();agentSubscription.unsubscribe();
     fail=false;
     expect((await app.fetch(new Request(`http://test.local/workspaces/${workspaceId}?retryPane=1`,{headers:{Accept:"application/json"}}))).status).toBe(200);
-    const recovered=await app.subscribeSurface({channel:"module",name:"surface",workspaceId,params:{kind:"workspace",agent:"agent-one",work:"faulting-preview:one"}},()=>{});expect(attempts).toBe(2);recovered.unsubscribe();
+    const recovered=await app.subscribeSurface({channel:"module",name:"surface",workspaceId,params:{kind:"work-view-body",key:"faulting-preview:one"}},()=>{});expect(attempts).toBe(2);recovered.unsubscribe();
     const workspace=await app.fetch(new Request(`http://test.local/workspaces/${workspaceId}`,{headers:{Accept:"application/json"}}));expect(workspace.status).toBe(200);
   },undefined,[module]);
 });

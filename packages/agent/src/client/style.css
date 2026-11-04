@@ -144,7 +144,7 @@
 .agent-notices:empty { display: none; }
 .agent-noticeline { display: flex; align-items: flex-start; gap: 8px; font-size: var(--text-body); color: var(--text); padding: 4px 8px; border: 1px solid var(--line); background: var(--panel); border-radius: var(--radius-control); margin-bottom: 6px; animation: agent-notice-in .15s ease-out; }
 .agent-noticeline > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.agent-noticeline > button, .agent-noticeline > form { flex-shrink: 0; }
+.agent-noticeline > button { flex-shrink: 0; }
 @keyframes agent-notice-in { from { opacity: 0; transform: translateY(-3px); } }
 .agent-noticeline.error { color: var(--danger); border-color: var(--danger-line); background: var(--danger-soft); }
 

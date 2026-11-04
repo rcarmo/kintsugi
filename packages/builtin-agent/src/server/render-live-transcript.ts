@@ -27,7 +27,7 @@ export class LiveTranscriptRenderer {
       if (fingerprint !== undefined) this.cache.set(key, { fingerprint, html });
       if (rendering) children.push(
         { target: ids.itemTextStable(ctx, item.key), html: rendering.stableHtml, appendOnly: true },
-        { target: ids.itemTextTail(ctx, item.key), html: rendering.tailHtml },
+        { target: ids.itemTextTail(ctx, item.key), html: rendering.tailHtml, blocks: rendering.tailBlocks },
       );
       return { id: `${ids.item(ctx, item.key)}_region`, html, children };
     });

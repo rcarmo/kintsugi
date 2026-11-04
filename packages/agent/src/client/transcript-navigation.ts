@@ -49,6 +49,10 @@ export class TranscriptNavigation {
   // anchoring for content growing above scrolls down without nearing the end.
   private lastScrollTop = 0;
   private lastDistanceToEnd = Infinity;
+  // Showing or selecting the pane leaves the position to the next frame's
+  // reconcile, so connecting controllers don't force a layout to measure it.
+  private positionStale = false;
+  private reconciled = false;
   private readonly resizeObserver: ResizeObserver;
   private readonly composerOpener: HTMLElement | null;
   private layoutBottom?: number;
@@ -79,8 +83,11 @@ export class TranscriptNavigation {
 
   // Composer and keyboard changes push the transcript up in the same frame:
   // the content at its bottom edge stays put, so the scroll offset changes once.
+  // Before the first reconcile nothing is on screen to keep: that reconcile,
+  // already scheduled, places the transcript without forcing a layout here.
+  // Later shows measure, since the reader's position is on screen.
   private readonly layoutBefore = (): void => {
-    this.layoutBottom = this.visible && this.transcript.checkVisibility() ? this.transcript.scrollTop + this.transcript.clientHeight : undefined;
+    this.layoutBottom = this.visible && this.reconciled && this.transcript.checkVisibility() ? this.transcript.scrollTop + this.transcript.clientHeight : undefined;
   };
 
   private readonly layoutAfter = (): void => {
@@ -98,7 +105,7 @@ export class TranscriptNavigation {
   setVisible(visible: boolean): void {
     this.visible = visible;
     // Hidden panes get no scroll events, so the last position may be stale.
-    if (visible) { this.rememberPosition(); this.layoutChanged(); }
+    if (visible) { this.positionStale = true; this.layoutChanged(); }
     else { this.touch = undefined; this.stopMotion(); }
   }
 
@@ -107,7 +114,7 @@ export class TranscriptNavigation {
     this.stopMotion();
     this.floor = 0;
     this.readingAnchor = undefined;
-    this.rememberPosition();
+    this.positionStale = true;
     this.transcript.style.removeProperty("--agent-follow-floor");
     this.pendingPosition = busy ? "instant" : "prompt";
     this.selectionAwaitingSnapshot = true;
@@ -156,9 +163,10 @@ export class TranscriptNavigation {
     this.layoutChanged();
   }
 
-  private rememberPosition(): void {
+  private rememberPosition(latestTop = this.visible ? this.geometry().latestTop : Infinity): void {
+    this.positionStale = false;
     this.lastScrollTop = this.transcript.scrollTop;
-    this.lastDistanceToEnd = this.visible ? this.geometry().latestTop - this.lastScrollTop : Infinity;
+    this.lastDistanceToEnd = latestTop - this.lastScrollTop;
   }
 
   private renderMode(): void {
@@ -234,10 +242,12 @@ export class TranscriptNavigation {
     if (!this.visible) return;
     const width = this.transcript.clientWidth;
     const geometry = this.geometry();
+    if (this.positionStale) this.rememberPosition(geometry.latestTop);
     const widthChanged = this.width !== 0 && width !== this.width;
     const resized = widthChanged || (this.height !== 0 && geometry.viewport !== this.height);
     this.width = width;
     this.height = geometry.viewport;
+    this.reconciled = true;
     if (resized && this.following) {
       // Composer/keyboard changes resize the viewport immediately. Match that
       // layout change with a snap, even if a follow glide is already running.
@@ -324,7 +334,9 @@ export class TranscriptNavigation {
   private readonly scrolled = (): void => {
     const top = this.transcript.scrollTop;
     const distanceToEnd = this.following ? Infinity : this.geometry().latestTop - top;
-    const towardEnd = top > this.lastScrollTop && distanceToEnd < this.lastDistanceToEnd;
+    // Without a position from before, this scroll is where the reader starts.
+    const towardEnd = !this.positionStale && top > this.lastScrollTop && distanceToEnd < this.lastDistanceToEnd;
+    this.positionStale = false;
     this.lastScrollTop = top;
     this.lastDistanceToEnd = distanceToEnd;
     // Reaching the end by going there resumes following; scroll-to-bottom shows only away from it.

@@ -3,7 +3,7 @@ import { domId } from "@kintsugi/shared";
 import type { SessionImageRef } from "./transcript.ts";
 
 export interface AgentRenderContext {
-  streamingText?: (key: string, source: string) => { stableHtml: string; tailHtml: string };
+  streamingText?: (key: string, source: string) => { stableHtml: string; tailHtml: string; tailBlocks?: readonly string[] };
   workspaceId: string;
   agentId: string;
   model?: ModelRef;

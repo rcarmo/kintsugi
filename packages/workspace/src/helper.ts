@@ -3,7 +3,7 @@ import { assertWorkspaceHelperIdentityScope, ensureWorkspaceHelperIdentity, work
 import { mkdir, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { KintsugiCoreError, kintsugiDataPath, commandSignal, getKintsugiRuntimeContext, requireDocker, runCommand, type CommandInput } from "@kintsugi/core";
-import { configureWorkspaceHelperIdentity, closeWorkspaceHelper, readWorkspaceFile, readWorkspaceFileStream, runWorkspaceProcess, startWorkspaceProcess, statWorkspaceFiles, WorkspaceHelperError, WorkspaceHelperStatus, writeWorkspaceFile, type WorkspaceExecStart, type WorkspaceFile, type WorkspaceFileStat, type WorkspaceProcess } from "@kintsugi/workspace-helper";
+import { configureWorkspaceHelperIdentity, closeWorkspaceHelper, openWorkspaceFile, readWorkspaceFile, readWorkspaceFileStream, runWorkspaceProcess, startWorkspaceProcess, statWorkspaceFiles, WorkspaceHelperError, WorkspaceHelperStatus, writeWorkspaceFile, type WorkspaceExecStart, type WorkspaceFile, type WorkspaceFileStat, type WorkspaceOpenFile, type WorkspaceProcess } from "@kintsugi/workspace-helper";
 
 /** Ingress/egress retain their read-only mount; the helper has a separate socket directory. */
 export const workspaceParentSocketDirectory = "/run/kintsugi-parent";
@@ -108,9 +108,9 @@ async function describingFailure<T>(id: string, operation: Promise<T>): Promise<
   }
 }
 
-/** Reads a whole regular file; the ambient command signal cancels it. */
-export function readFileInWorkspace(id: string, file: WorkspaceFile, options: { maxBytes: number }): Promise<Buffer> {
-  return describingFailure(id, readWorkspaceFile(authenticatedSocket(id), file, { ...options, signal: commandSignal() }));
+/** Reads a whole regular file; the signal, or else the ambient command signal, cancels it. */
+export function readFileInWorkspace(id: string, file: WorkspaceFile, options: { maxBytes: number; signal?: AbortSignal }): Promise<Buffer> {
+  return describingFailure(id, readWorkspaceFile(authenticatedSocket(id), file, { maxBytes: options.maxBytes, signal: options.signal ?? commandSignal() }));
 }
 
 /** Opens a file as reading it would, and stops: fails the same way, e.g. with NOT_FOUND. */
@@ -123,10 +123,10 @@ export async function checkFileInWorkspace(id: string, file: WorkspaceFile): Pro
   }
 }
 
-/** Describes each of these absolute paths without reading them; in request order. */
-export async function statFilesInWorkspace(id: string, user: WorkspaceFile["user"], paths: string[]): Promise<WorkspaceFileStat[]> {
+/** Describes each of these absolute paths without reading them; in request order. The signal, or else the ambient command signal, cancels it. */
+export async function statFilesInWorkspace(id: string, user: WorkspaceFile["user"], paths: string[], options: { signal?: AbortSignal } = {}): Promise<WorkspaceFileStat[]> {
   if (paths.length === 0) return [];
-  return await describingFailure(id, statWorkspaceFiles(authenticatedSocket(id), user, paths, { signal: commandSignal() }));
+  return await describingFailure(id, statWorkspaceFiles(authenticatedSocket(id), user, paths, { signal: options.signal ?? commandSignal() }));
 }
 
 /** Which of these absolute paths are regular files `user` can read, following symlinks; in request order. */
@@ -134,7 +134,18 @@ export async function existingFilesInWorkspace(id: string, user: WorkspaceFile["
   return (await statFilesInWorkspace(id, user, paths)).filter((stat) => stat.kind === "regular" && stat.readable).map((stat) => stat.path);
 }
 
-/** Replaces or creates a file atomically, along with any missing folders. */
-export function writeFileInWorkspace(id: string, file: WorkspaceFile, content: string | Uint8Array): Promise<void> {
-  return describingFailure(id, writeWorkspaceFile(authenticatedSocket(id), file, content, { signal: commandSignal() }));
+/** Replaces or creates a file atomically, along with any missing folders. The signal, or else the ambient command signal, cancels it; one cancelled before the helper replaced the file leaves it as it was. */
+export function writeFileInWorkspace(id: string, file: WorkspaceFile, content: string | Uint8Array, options: { signal?: AbortSignal } = {}): Promise<void> {
+  return describingFailure(id, writeWorkspaceFile(authenticatedSocket(id), file, content, { signal: options.signal ?? commandSignal() }));
+}
+
+/** Opens a regular file for reads of parts of it, all from the one open file; the signal, or else the ambient command signal, closes it. */
+export async function openFileInWorkspace(id: string, file: WorkspaceFile, options: { signal?: AbortSignal } = {}): Promise<WorkspaceOpenFile> {
+  const opened = await describingFailure(id, openWorkspaceFile(authenticatedSocket(id), file, { signal: options.signal ?? commandSignal() }));
+  // A workspace that stops while the file is open fails its reads the way it fails the open.
+  return {
+    stat: () => describingFailure(id, opened.stat()),
+    read: (offset, length) => describingFailure(id, opened.read(offset, length)),
+    close: () => opened.close(),
+  };
 }

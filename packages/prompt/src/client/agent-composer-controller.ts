@@ -27,8 +27,9 @@ export function createAgentComposerController(Controller: WorkspaceClientControl
     connect(): void {
       this.pane = this.element.closest<HTMLElement>('[data-workspace-pane-role="agent"]')!;
       this.updateDraftIndicator();
-      this.selected();
+      // Sizes a composer that is already open; opening it here sizes it as it opens.
       this.autosize();
+      this.selected();
     }
 
     disconnect(): void {

@@ -9,6 +9,7 @@
     "./server/durable-runtime": "./src/server/durable-runtime.ts",
     "./server/durable-assembly": "./src/server/durable-assembly.ts",
     "./server/durable-codemode-templates": "./src/server/durable-codemode-templates.ts",
+    "./server/durable-workspace-files": "./src/server/durable-workspace-files.ts",
     "./client": "./src/client/index.ts",
     "./server/render-composer": "./src/server/render-composer.ts",
     "./server/model-tool-usage": "./src/server/durable-model-tool-usage.ts",

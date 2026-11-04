@@ -189,6 +189,277 @@ func (Signal) EnumDescriptor() ([]byte, []int) {
 	return file_workspace_helper_proto_rawDescGZIP(), []int{2}
 }
 
+type OpenFileRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Request:
+	//
+	//	*OpenFileRequest_Open
+	//	*OpenFileRequest_Read
+	//	*OpenFileRequest_Stat
+	Request       isOpenFileRequest_Request `protobuf_oneof:"request"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OpenFileRequest) Reset() {
+	*x = OpenFileRequest{}
+	mi := &file_workspace_helper_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OpenFileRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OpenFileRequest) ProtoMessage() {}
+
+func (x *OpenFileRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_workspace_helper_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OpenFileRequest.ProtoReflect.Descriptor instead.
+func (*OpenFileRequest) Descriptor() ([]byte, []int) {
+	return file_workspace_helper_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *OpenFileRequest) GetRequest() isOpenFileRequest_Request {
+	if x != nil {
+		return x.Request
+	}
+	return nil
+}
+
+func (x *OpenFileRequest) GetOpen() *ReadFileRequest {
+	if x != nil {
+		if x, ok := x.Request.(*OpenFileRequest_Open); ok {
+			return x.Open
+		}
+	}
+	return nil
+}
+
+func (x *OpenFileRequest) GetRead() *FileRange {
+	if x != nil {
+		if x, ok := x.Request.(*OpenFileRequest_Read); ok {
+			return x.Read
+		}
+	}
+	return nil
+}
+
+func (x *OpenFileRequest) GetStat() *StatOpenFile {
+	if x != nil {
+		if x, ok := x.Request.(*OpenFileRequest_Stat); ok {
+			return x.Stat
+		}
+	}
+	return nil
+}
+
+type isOpenFileRequest_Request interface {
+	isOpenFileRequest_Request()
+}
+
+type OpenFileRequest_Open struct {
+	Open *ReadFileRequest `protobuf:"bytes,1,opt,name=open,proto3,oneof"`
+}
+
+type OpenFileRequest_Read struct {
+	Read *FileRange `protobuf:"bytes,2,opt,name=read,proto3,oneof"`
+}
+
+type OpenFileRequest_Stat struct {
+	Stat *StatOpenFile `protobuf:"bytes,3,opt,name=stat,proto3,oneof"`
+}
+
+func (*OpenFileRequest_Open) isOpenFileRequest_Request() {}
+
+func (*OpenFileRequest_Read) isOpenFileRequest_Request() {}
+
+func (*OpenFileRequest_Stat) isOpenFileRequest_Request() {}
+
+// Bytes [offset, offset + length). Fewer arrive only at the end of the file.
+type FileRange struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Offset uint64                 `protobuf:"varint,1,opt,name=offset,proto3" json:"offset,omitempty"`
+	// At most 1 MiB.
+	Length        uint32 `protobuf:"varint,2,opt,name=length,proto3" json:"length,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FileRange) Reset() {
+	*x = FileRange{}
+	mi := &file_workspace_helper_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FileRange) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FileRange) ProtoMessage() {}
+
+func (x *FileRange) ProtoReflect() protoreflect.Message {
+	mi := &file_workspace_helper_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FileRange.ProtoReflect.Descriptor instead.
+func (*FileRange) Descriptor() ([]byte, []int) {
+	return file_workspace_helper_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *FileRange) GetOffset() uint64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *FileRange) GetLength() uint32 {
+	if x != nil {
+		return x.Length
+	}
+	return 0
+}
+
+type StatOpenFile struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StatOpenFile) Reset() {
+	*x = StatOpenFile{}
+	mi := &file_workspace_helper_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StatOpenFile) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StatOpenFile) ProtoMessage() {}
+
+func (x *StatOpenFile) ProtoReflect() protoreflect.Message {
+	mi := &file_workspace_helper_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StatOpenFile.ProtoReflect.Descriptor instead.
+func (*StatOpenFile) Descriptor() ([]byte, []int) {
+	return file_workspace_helper_proto_rawDescGZIP(), []int{2}
+}
+
+type OpenFileResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Response:
+	//
+	//	*OpenFileResponse_Stat
+	//	*OpenFileResponse_Data
+	Response      isOpenFileResponse_Response `protobuf_oneof:"response"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OpenFileResponse) Reset() {
+	*x = OpenFileResponse{}
+	mi := &file_workspace_helper_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OpenFileResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OpenFileResponse) ProtoMessage() {}
+
+func (x *OpenFileResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_workspace_helper_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OpenFileResponse.ProtoReflect.Descriptor instead.
+func (*OpenFileResponse) Descriptor() ([]byte, []int) {
+	return file_workspace_helper_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *OpenFileResponse) GetResponse() isOpenFileResponse_Response {
+	if x != nil {
+		return x.Response
+	}
+	return nil
+}
+
+func (x *OpenFileResponse) GetStat() *FileStat {
+	if x != nil {
+		if x, ok := x.Response.(*OpenFileResponse_Stat); ok {
+			return x.Stat
+		}
+	}
+	return nil
+}
+
+func (x *OpenFileResponse) GetData() []byte {
+	if x != nil {
+		if x, ok := x.Response.(*OpenFileResponse_Data); ok {
+			return x.Data
+		}
+	}
+	return nil
+}
+
+type isOpenFileResponse_Response interface {
+	isOpenFileResponse_Response()
+}
+
+type OpenFileResponse_Stat struct {
+	// Of the open file: always REGULAR, never a symlink, and readable.
+	Stat *FileStat `protobuf:"bytes,1,opt,name=stat,proto3,oneof"`
+}
+
+type OpenFileResponse_Data struct {
+	Data []byte `protobuf:"bytes,2,opt,name=data,proto3,oneof"`
+}
+
+func (*OpenFileResponse_Stat) isOpenFileResponse_Response() {}
+
+func (*OpenFileResponse_Data) isOpenFileResponse_Response() {}
+
 type StatFilesRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	User  User                   `protobuf:"varint,1,opt,name=user,proto3,enum=kintsugi.workspace_helper.v1.User" json:"user,omitempty"`
@@ -200,7 +471,7 @@ type StatFilesRequest struct {
 
 func (x *StatFilesRequest) Reset() {
 	*x = StatFilesRequest{}
-	mi := &file_workspace_helper_proto_msgTypes[0]
+	mi := &file_workspace_helper_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -212,7 +483,7 @@ func (x *StatFilesRequest) String() string {
 func (*StatFilesRequest) ProtoMessage() {}
 
 func (x *StatFilesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_helper_proto_msgTypes[0]
+	mi := &file_workspace_helper_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -225,7 +496,7 @@ func (x *StatFilesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatFilesRequest.ProtoReflect.Descriptor instead.
 func (*StatFilesRequest) Descriptor() ([]byte, []int) {
-	return file_workspace_helper_proto_rawDescGZIP(), []int{0}
+	return file_workspace_helper_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *StatFilesRequest) GetUser() User {
@@ -252,7 +523,7 @@ type StatFilesResponse struct {
 
 func (x *StatFilesResponse) Reset() {
 	*x = StatFilesResponse{}
-	mi := &file_workspace_helper_proto_msgTypes[1]
+	mi := &file_workspace_helper_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -264,7 +535,7 @@ func (x *StatFilesResponse) String() string {
 func (*StatFilesResponse) ProtoMessage() {}
 
 func (x *StatFilesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_helper_proto_msgTypes[1]
+	mi := &file_workspace_helper_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -277,7 +548,7 @@ func (x *StatFilesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatFilesResponse.ProtoReflect.Descriptor instead.
 func (*StatFilesResponse) Descriptor() ([]byte, []int) {
-	return file_workspace_helper_proto_rawDescGZIP(), []int{1}
+	return file_workspace_helper_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *StatFilesResponse) GetStats() []*FileStat {
@@ -298,14 +569,16 @@ type FileStat struct {
 	ModifiedUnixMs int64  `protobuf:"varint,4,opt,name=modified_unix_ms,json=modifiedUnixMs,proto3" json:"modified_unix_ms,omitempty"`
 	// Opening it for reading as `user` succeeds. Always false for OTHER, which
 	// is never opened: opening a device or FIFO can have side effects.
-	Readable      bool `protobuf:"varint,5,opt,name=readable,proto3" json:"readable,omitempty"`
+	Readable bool `protobuf:"varint,5,opt,name=readable,proto3" json:"readable,omitempty"`
+	// The absolute path without symlinks, `.` or `..`, as realpath(3) gives it.
+	CanonicalPath string `protobuf:"bytes,6,opt,name=canonical_path,json=canonicalPath,proto3" json:"canonical_path,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *FileStat) Reset() {
 	*x = FileStat{}
-	mi := &file_workspace_helper_proto_msgTypes[2]
+	mi := &file_workspace_helper_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -317,7 +590,7 @@ func (x *FileStat) String() string {
 func (*FileStat) ProtoMessage() {}
 
 func (x *FileStat) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_helper_proto_msgTypes[2]
+	mi := &file_workspace_helper_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -330,7 +603,7 @@ func (x *FileStat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileStat.ProtoReflect.Descriptor instead.
 func (*FileStat) Descriptor() ([]byte, []int) {
-	return file_workspace_helper_proto_rawDescGZIP(), []int{2}
+	return file_workspace_helper_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *FileStat) GetKind() FileKind {
@@ -368,6 +641,13 @@ func (x *FileStat) GetReadable() bool {
 	return false
 }
 
+func (x *FileStat) GetCanonicalPath() string {
+	if x != nil {
+		return x.CanonicalPath
+	}
+	return ""
+}
+
 type ReadFileRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	User  User                   `protobuf:"varint,1,opt,name=user,proto3,enum=kintsugi.workspace_helper.v1.User" json:"user,omitempty"`
@@ -379,7 +659,7 @@ type ReadFileRequest struct {
 
 func (x *ReadFileRequest) Reset() {
 	*x = ReadFileRequest{}
-	mi := &file_workspace_helper_proto_msgTypes[3]
+	mi := &file_workspace_helper_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -391,7 +671,7 @@ func (x *ReadFileRequest) String() string {
 func (*ReadFileRequest) ProtoMessage() {}
 
 func (x *ReadFileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_helper_proto_msgTypes[3]
+	mi := &file_workspace_helper_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -404,7 +684,7 @@ func (x *ReadFileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadFileRequest.ProtoReflect.Descriptor instead.
 func (*ReadFileRequest) Descriptor() ([]byte, []int) {
-	return file_workspace_helper_proto_rawDescGZIP(), []int{3}
+	return file_workspace_helper_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ReadFileRequest) GetUser() User {
@@ -430,7 +710,7 @@ type FileData struct {
 
 func (x *FileData) Reset() {
 	*x = FileData{}
-	mi := &file_workspace_helper_proto_msgTypes[4]
+	mi := &file_workspace_helper_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -442,7 +722,7 @@ func (x *FileData) String() string {
 func (*FileData) ProtoMessage() {}
 
 func (x *FileData) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_helper_proto_msgTypes[4]
+	mi := &file_workspace_helper_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -455,7 +735,7 @@ func (x *FileData) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileData.ProtoReflect.Descriptor instead.
 func (*FileData) Descriptor() ([]byte, []int) {
-	return file_workspace_helper_proto_rawDescGZIP(), []int{4}
+	return file_workspace_helper_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *FileData) GetData() []byte {
@@ -478,7 +758,7 @@ type WriteFileRequest struct {
 
 func (x *WriteFileRequest) Reset() {
 	*x = WriteFileRequest{}
-	mi := &file_workspace_helper_proto_msgTypes[5]
+	mi := &file_workspace_helper_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -490,7 +770,7 @@ func (x *WriteFileRequest) String() string {
 func (*WriteFileRequest) ProtoMessage() {}
 
 func (x *WriteFileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_helper_proto_msgTypes[5]
+	mi := &file_workspace_helper_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -503,7 +783,7 @@ func (x *WriteFileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteFileRequest.ProtoReflect.Descriptor instead.
 func (*WriteFileRequest) Descriptor() ([]byte, []int) {
-	return file_workspace_helper_proto_rawDescGZIP(), []int{5}
+	return file_workspace_helper_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *WriteFileRequest) GetRequest() isWriteFileRequest_Request {
@@ -558,7 +838,7 @@ type WriteFileStart struct {
 
 func (x *WriteFileStart) Reset() {
 	*x = WriteFileStart{}
-	mi := &file_workspace_helper_proto_msgTypes[6]
+	mi := &file_workspace_helper_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -570,7 +850,7 @@ func (x *WriteFileStart) String() string {
 func (*WriteFileStart) ProtoMessage() {}
 
 func (x *WriteFileStart) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_helper_proto_msgTypes[6]
+	mi := &file_workspace_helper_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -583,7 +863,7 @@ func (x *WriteFileStart) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteFileStart.ProtoReflect.Descriptor instead.
 func (*WriteFileStart) Descriptor() ([]byte, []int) {
-	return file_workspace_helper_proto_rawDescGZIP(), []int{6}
+	return file_workspace_helper_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *WriteFileStart) GetUser() User {
@@ -608,7 +888,7 @@ type WriteFileResponse struct {
 
 func (x *WriteFileResponse) Reset() {
 	*x = WriteFileResponse{}
-	mi := &file_workspace_helper_proto_msgTypes[7]
+	mi := &file_workspace_helper_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -620,7 +900,7 @@ func (x *WriteFileResponse) String() string {
 func (*WriteFileResponse) ProtoMessage() {}
 
 func (x *WriteFileResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_helper_proto_msgTypes[7]
+	mi := &file_workspace_helper_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -633,7 +913,7 @@ func (x *WriteFileResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteFileResponse.ProtoReflect.Descriptor instead.
 func (*WriteFileResponse) Descriptor() ([]byte, []int) {
-	return file_workspace_helper_proto_rawDescGZIP(), []int{7}
+	return file_workspace_helper_proto_rawDescGZIP(), []int{11}
 }
 
 type ExecRequest struct {
@@ -653,7 +933,7 @@ type ExecRequest struct {
 
 func (x *ExecRequest) Reset() {
 	*x = ExecRequest{}
-	mi := &file_workspace_helper_proto_msgTypes[8]
+	mi := &file_workspace_helper_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -665,7 +945,7 @@ func (x *ExecRequest) String() string {
 func (*ExecRequest) ProtoMessage() {}
 
 func (x *ExecRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_helper_proto_msgTypes[8]
+	mi := &file_workspace_helper_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -678,7 +958,7 @@ func (x *ExecRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecRequest.ProtoReflect.Descriptor instead.
 func (*ExecRequest) Descriptor() ([]byte, []int) {
-	return file_workspace_helper_proto_rawDescGZIP(), []int{8}
+	return file_workspace_helper_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ExecRequest) GetRequest() isExecRequest_Request {
@@ -812,7 +1092,7 @@ type ExecStart struct {
 
 func (x *ExecStart) Reset() {
 	*x = ExecStart{}
-	mi := &file_workspace_helper_proto_msgTypes[9]
+	mi := &file_workspace_helper_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -824,7 +1104,7 @@ func (x *ExecStart) String() string {
 func (*ExecStart) ProtoMessage() {}
 
 func (x *ExecStart) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_helper_proto_msgTypes[9]
+	mi := &file_workspace_helper_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -837,7 +1117,7 @@ func (x *ExecStart) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecStart.ProtoReflect.Descriptor instead.
 func (*ExecStart) Descriptor() ([]byte, []int) {
-	return file_workspace_helper_proto_rawDescGZIP(), []int{9}
+	return file_workspace_helper_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ExecStart) GetArgv() []string {
@@ -937,7 +1217,7 @@ type Pipes struct {
 
 func (x *Pipes) Reset() {
 	*x = Pipes{}
-	mi := &file_workspace_helper_proto_msgTypes[10]
+	mi := &file_workspace_helper_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -949,7 +1229,7 @@ func (x *Pipes) String() string {
 func (*Pipes) ProtoMessage() {}
 
 func (x *Pipes) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_helper_proto_msgTypes[10]
+	mi := &file_workspace_helper_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -962,7 +1242,7 @@ func (x *Pipes) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Pipes.ProtoReflect.Descriptor instead.
 func (*Pipes) Descriptor() ([]byte, []int) {
-	return file_workspace_helper_proto_rawDescGZIP(), []int{10}
+	return file_workspace_helper_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *Pipes) GetStdin() bool {
@@ -992,7 +1272,7 @@ type Detached struct {
 
 func (x *Detached) Reset() {
 	*x = Detached{}
-	mi := &file_workspace_helper_proto_msgTypes[11]
+	mi := &file_workspace_helper_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1004,7 +1284,7 @@ func (x *Detached) String() string {
 func (*Detached) ProtoMessage() {}
 
 func (x *Detached) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_helper_proto_msgTypes[11]
+	mi := &file_workspace_helper_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1017,7 +1297,7 @@ func (x *Detached) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Detached.ProtoReflect.Descriptor instead.
 func (*Detached) Descriptor() ([]byte, []int) {
-	return file_workspace_helper_proto_rawDescGZIP(), []int{11}
+	return file_workspace_helper_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *Detached) GetName() string {
@@ -1049,7 +1329,7 @@ type AttachRequest struct {
 
 func (x *AttachRequest) Reset() {
 	*x = AttachRequest{}
-	mi := &file_workspace_helper_proto_msgTypes[12]
+	mi := &file_workspace_helper_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1061,7 +1341,7 @@ func (x *AttachRequest) String() string {
 func (*AttachRequest) ProtoMessage() {}
 
 func (x *AttachRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_helper_proto_msgTypes[12]
+	mi := &file_workspace_helper_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1074,7 +1354,7 @@ func (x *AttachRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttachRequest.ProtoReflect.Descriptor instead.
 func (*AttachRequest) Descriptor() ([]byte, []int) {
-	return file_workspace_helper_proto_rawDescGZIP(), []int{12}
+	return file_workspace_helper_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *AttachRequest) GetRequest() isAttachRequest_Request {
@@ -1166,7 +1446,7 @@ type Attach struct {
 
 func (x *Attach) Reset() {
 	*x = Attach{}
-	mi := &file_workspace_helper_proto_msgTypes[13]
+	mi := &file_workspace_helper_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1178,7 +1458,7 @@ func (x *Attach) String() string {
 func (*Attach) ProtoMessage() {}
 
 func (x *Attach) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_helper_proto_msgTypes[13]
+	mi := &file_workspace_helper_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1191,7 +1471,7 @@ func (x *Attach) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Attach.ProtoReflect.Descriptor instead.
 func (*Attach) Descriptor() ([]byte, []int) {
-	return file_workspace_helper_proto_rawDescGZIP(), []int{13}
+	return file_workspace_helper_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *Attach) GetName() string {
@@ -1228,7 +1508,7 @@ type Acknowledge struct {
 
 func (x *Acknowledge) Reset() {
 	*x = Acknowledge{}
-	mi := &file_workspace_helper_proto_msgTypes[14]
+	mi := &file_workspace_helper_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1240,7 +1520,7 @@ func (x *Acknowledge) String() string {
 func (*Acknowledge) ProtoMessage() {}
 
 func (x *Acknowledge) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_helper_proto_msgTypes[14]
+	mi := &file_workspace_helper_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1253,7 +1533,7 @@ func (x *Acknowledge) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Acknowledge.ProtoReflect.Descriptor instead.
 func (*Acknowledge) Descriptor() ([]byte, []int) {
-	return file_workspace_helper_proto_rawDescGZIP(), []int{14}
+	return file_workspace_helper_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *Acknowledge) GetStdoutOffset() uint64 {
@@ -1280,7 +1560,7 @@ type TerminalSize struct {
 
 func (x *TerminalSize) Reset() {
 	*x = TerminalSize{}
-	mi := &file_workspace_helper_proto_msgTypes[15]
+	mi := &file_workspace_helper_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1292,7 +1572,7 @@ func (x *TerminalSize) String() string {
 func (*TerminalSize) ProtoMessage() {}
 
 func (x *TerminalSize) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_helper_proto_msgTypes[15]
+	mi := &file_workspace_helper_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1305,7 +1585,7 @@ func (x *TerminalSize) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TerminalSize.ProtoReflect.Descriptor instead.
 func (*TerminalSize) Descriptor() ([]byte, []int) {
-	return file_workspace_helper_proto_rawDescGZIP(), []int{15}
+	return file_workspace_helper_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *TerminalSize) GetCols() uint32 {
@@ -1330,7 +1610,7 @@ type CloseStdin struct {
 
 func (x *CloseStdin) Reset() {
 	*x = CloseStdin{}
-	mi := &file_workspace_helper_proto_msgTypes[16]
+	mi := &file_workspace_helper_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1342,7 +1622,7 @@ func (x *CloseStdin) String() string {
 func (*CloseStdin) ProtoMessage() {}
 
 func (x *CloseStdin) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_helper_proto_msgTypes[16]
+	mi := &file_workspace_helper_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1355,7 +1635,7 @@ func (x *CloseStdin) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseStdin.ProtoReflect.Descriptor instead.
 func (*CloseStdin) Descriptor() ([]byte, []int) {
-	return file_workspace_helper_proto_rawDescGZIP(), []int{16}
+	return file_workspace_helper_proto_rawDescGZIP(), []int{20}
 }
 
 type ExecResponse struct {
@@ -1372,7 +1652,7 @@ type ExecResponse struct {
 
 func (x *ExecResponse) Reset() {
 	*x = ExecResponse{}
-	mi := &file_workspace_helper_proto_msgTypes[17]
+	mi := &file_workspace_helper_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1384,7 +1664,7 @@ func (x *ExecResponse) String() string {
 func (*ExecResponse) ProtoMessage() {}
 
 func (x *ExecResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_helper_proto_msgTypes[17]
+	mi := &file_workspace_helper_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1397,7 +1677,7 @@ func (x *ExecResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecResponse.ProtoReflect.Descriptor instead.
 func (*ExecResponse) Descriptor() ([]byte, []int) {
-	return file_workspace_helper_proto_rawDescGZIP(), []int{17}
+	return file_workspace_helper_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ExecResponse) GetResponse() isExecResponse_Response {
@@ -1471,7 +1751,7 @@ type Exited struct {
 
 func (x *Exited) Reset() {
 	*x = Exited{}
-	mi := &file_workspace_helper_proto_msgTypes[18]
+	mi := &file_workspace_helper_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1483,7 +1763,7 @@ func (x *Exited) String() string {
 func (*Exited) ProtoMessage() {}
 
 func (x *Exited) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_helper_proto_msgTypes[18]
+	mi := &file_workspace_helper_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1496,7 +1776,7 @@ func (x *Exited) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Exited.ProtoReflect.Descriptor instead.
 func (*Exited) Descriptor() ([]byte, []int) {
-	return file_workspace_helper_proto_rawDescGZIP(), []int{18}
+	return file_workspace_helper_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *Exited) GetStatus() isExited_Status {
@@ -1566,7 +1846,7 @@ type Unknown struct {
 
 func (x *Unknown) Reset() {
 	*x = Unknown{}
-	mi := &file_workspace_helper_proto_msgTypes[19]
+	mi := &file_workspace_helper_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1578,7 +1858,7 @@ func (x *Unknown) String() string {
 func (*Unknown) ProtoMessage() {}
 
 func (x *Unknown) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_helper_proto_msgTypes[19]
+	mi := &file_workspace_helper_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1591,25 +1871,40 @@ func (x *Unknown) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Unknown.ProtoReflect.Descriptor instead.
 func (*Unknown) Descriptor() ([]byte, []int) {
-	return file_workspace_helper_proto_rawDescGZIP(), []int{19}
+	return file_workspace_helper_proto_rawDescGZIP(), []int{23}
 }
 
 var File_workspace_helper_proto protoreflect.FileDescriptor
 
 const file_workspace_helper_proto_rawDesc = "" +
 	"\n" +
-	"\x16workspace_helper.proto\x12\x1ckintsugi.workspace_helper.v1\"`\n" +
+	"\x16workspace_helper.proto\x12\x1ckintsugi.workspace_helper.v1\"\xe2\x01\n" +
+	"\x0fOpenFileRequest\x12C\n" +
+	"\x04open\x18\x01 \x01(\v2-.kintsugi.workspace_helper.v1.ReadFileRequestH\x00R\x04open\x12=\n" +
+	"\x04read\x18\x02 \x01(\v2'.kintsugi.workspace_helper.v1.FileRangeH\x00R\x04read\x12@\n" +
+	"\x04stat\x18\x03 \x01(\v2*.kintsugi.workspace_helper.v1.StatOpenFileH\x00R\x04statB\t\n" +
+	"\arequest\";\n" +
+	"\tFileRange\x12\x16\n" +
+	"\x06offset\x18\x01 \x01(\x04R\x06offset\x12\x16\n" +
+	"\x06length\x18\x02 \x01(\rR\x06length\"\x0e\n" +
+	"\fStatOpenFile\"r\n" +
+	"\x10OpenFileResponse\x12<\n" +
+	"\x04stat\x18\x01 \x01(\v2&.kintsugi.workspace_helper.v1.FileStatH\x00R\x04stat\x12\x14\n" +
+	"\x04data\x18\x02 \x01(\fH\x00R\x04dataB\n" +
+	"\n" +
+	"\bresponse\"`\n" +
 	"\x10StatFilesRequest\x126\n" +
 	"\x04user\x18\x01 \x01(\x0e2\".kintsugi.workspace_helper.v1.UserR\x04user\x12\x14\n" +
 	"\x05paths\x18\x02 \x03(\tR\x05paths\"Q\n" +
 	"\x11StatFilesResponse\x12<\n" +
-	"\x05stats\x18\x01 \x03(\v2&.kintsugi.workspace_helper.v1.FileStatR\x05stats\"\xba\x01\n" +
+	"\x05stats\x18\x01 \x03(\v2&.kintsugi.workspace_helper.v1.FileStatR\x05stats\"\xe1\x01\n" +
 	"\bFileStat\x12:\n" +
 	"\x04kind\x18\x01 \x01(\x0e2&.kintsugi.workspace_helper.v1.FileKindR\x04kind\x12\x18\n" +
 	"\asymlink\x18\x02 \x01(\bR\asymlink\x12\x12\n" +
 	"\x04size\x18\x03 \x01(\x04R\x04size\x12(\n" +
 	"\x10modified_unix_ms\x18\x04 \x01(\x03R\x0emodifiedUnixMs\x12\x1a\n" +
-	"\breadable\x18\x05 \x01(\bR\breadable\"]\n" +
+	"\breadable\x18\x05 \x01(\bR\breadable\x12%\n" +
+	"\x0ecanonical_path\x18\x06 \x01(\tR\rcanonicalPath\"]\n" +
 	"\x0fReadFileRequest\x126\n" +
 	"\x04user\x18\x01 \x01(\x0e2\".kintsugi.workspace_helper.v1.UserR\x04user\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\"\x1e\n" +
@@ -1698,13 +1993,14 @@ const file_workspace_helper_proto_rawDesc = "" +
 	"\n" +
 	"SIGNAL_INT\x10\x02\x12\x0f\n" +
 	"\vSIGNAL_TERM\x10\x03\x12\x0f\n" +
-	"\vSIGNAL_KILL\x10\x042\x9e\x04\n" +
+	"\vSIGNAL_KILL\x10\x042\x8d\x05\n" +
 	"\x0fWorkspaceHelper\x12a\n" +
 	"\x04Exec\x12).kintsugi.workspace_helper.v1.ExecRequest\x1a*.kintsugi.workspace_helper.v1.ExecResponse(\x010\x01\x12e\n" +
 	"\x06Attach\x12+.kintsugi.workspace_helper.v1.AttachRequest\x1a*.kintsugi.workspace_helper.v1.ExecResponse(\x010\x01\x12c\n" +
 	"\bReadFile\x12-.kintsugi.workspace_helper.v1.ReadFileRequest\x1a&.kintsugi.workspace_helper.v1.FileData0\x01\x12n\n" +
 	"\tWriteFile\x12..kintsugi.workspace_helper.v1.WriteFileRequest\x1a/.kintsugi.workspace_helper.v1.WriteFileResponse(\x01\x12l\n" +
-	"\tStatFiles\x12..kintsugi.workspace_helper.v1.StatFilesRequest\x1a/.kintsugi.workspace_helper.v1.StatFilesResponseB-Z+kintsugi/workspace-helper/workspacehelperv1b\x06proto3"
+	"\tStatFiles\x12..kintsugi.workspace_helper.v1.StatFilesRequest\x1a/.kintsugi.workspace_helper.v1.StatFilesResponse\x12m\n" +
+	"\bOpenFile\x12-.kintsugi.workspace_helper.v1.OpenFileRequest\x1a..kintsugi.workspace_helper.v1.OpenFileResponse(\x010\x01B-Z+kintsugi/workspace-helper/workspacehelperv1b\x06proto3"
 
 var (
 	file_workspace_helper_proto_rawDescOnce sync.Once
@@ -1719,70 +2015,80 @@ func file_workspace_helper_proto_rawDescGZIP() []byte {
 }
 
 var file_workspace_helper_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_workspace_helper_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_workspace_helper_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
 var file_workspace_helper_proto_goTypes = []any{
 	(FileKind)(0),             // 0: kintsugi.workspace_helper.v1.FileKind
 	(User)(0),                 // 1: kintsugi.workspace_helper.v1.User
 	(Signal)(0),               // 2: kintsugi.workspace_helper.v1.Signal
-	(*StatFilesRequest)(nil),  // 3: kintsugi.workspace_helper.v1.StatFilesRequest
-	(*StatFilesResponse)(nil), // 4: kintsugi.workspace_helper.v1.StatFilesResponse
-	(*FileStat)(nil),          // 5: kintsugi.workspace_helper.v1.FileStat
-	(*ReadFileRequest)(nil),   // 6: kintsugi.workspace_helper.v1.ReadFileRequest
-	(*FileData)(nil),          // 7: kintsugi.workspace_helper.v1.FileData
-	(*WriteFileRequest)(nil),  // 8: kintsugi.workspace_helper.v1.WriteFileRequest
-	(*WriteFileStart)(nil),    // 9: kintsugi.workspace_helper.v1.WriteFileStart
-	(*WriteFileResponse)(nil), // 10: kintsugi.workspace_helper.v1.WriteFileResponse
-	(*ExecRequest)(nil),       // 11: kintsugi.workspace_helper.v1.ExecRequest
-	(*ExecStart)(nil),         // 12: kintsugi.workspace_helper.v1.ExecStart
-	(*Pipes)(nil),             // 13: kintsugi.workspace_helper.v1.Pipes
-	(*Detached)(nil),          // 14: kintsugi.workspace_helper.v1.Detached
-	(*AttachRequest)(nil),     // 15: kintsugi.workspace_helper.v1.AttachRequest
-	(*Attach)(nil),            // 16: kintsugi.workspace_helper.v1.Attach
-	(*Acknowledge)(nil),       // 17: kintsugi.workspace_helper.v1.Acknowledge
-	(*TerminalSize)(nil),      // 18: kintsugi.workspace_helper.v1.TerminalSize
-	(*CloseStdin)(nil),        // 19: kintsugi.workspace_helper.v1.CloseStdin
-	(*ExecResponse)(nil),      // 20: kintsugi.workspace_helper.v1.ExecResponse
-	(*Exited)(nil),            // 21: kintsugi.workspace_helper.v1.Exited
-	(*Unknown)(nil),           // 22: kintsugi.workspace_helper.v1.Unknown
-	nil,                       // 23: kintsugi.workspace_helper.v1.ExecStart.EnvEntry
+	(*OpenFileRequest)(nil),   // 3: kintsugi.workspace_helper.v1.OpenFileRequest
+	(*FileRange)(nil),         // 4: kintsugi.workspace_helper.v1.FileRange
+	(*StatOpenFile)(nil),      // 5: kintsugi.workspace_helper.v1.StatOpenFile
+	(*OpenFileResponse)(nil),  // 6: kintsugi.workspace_helper.v1.OpenFileResponse
+	(*StatFilesRequest)(nil),  // 7: kintsugi.workspace_helper.v1.StatFilesRequest
+	(*StatFilesResponse)(nil), // 8: kintsugi.workspace_helper.v1.StatFilesResponse
+	(*FileStat)(nil),          // 9: kintsugi.workspace_helper.v1.FileStat
+	(*ReadFileRequest)(nil),   // 10: kintsugi.workspace_helper.v1.ReadFileRequest
+	(*FileData)(nil),          // 11: kintsugi.workspace_helper.v1.FileData
+	(*WriteFileRequest)(nil),  // 12: kintsugi.workspace_helper.v1.WriteFileRequest
+	(*WriteFileStart)(nil),    // 13: kintsugi.workspace_helper.v1.WriteFileStart
+	(*WriteFileResponse)(nil), // 14: kintsugi.workspace_helper.v1.WriteFileResponse
+	(*ExecRequest)(nil),       // 15: kintsugi.workspace_helper.v1.ExecRequest
+	(*ExecStart)(nil),         // 16: kintsugi.workspace_helper.v1.ExecStart
+	(*Pipes)(nil),             // 17: kintsugi.workspace_helper.v1.Pipes
+	(*Detached)(nil),          // 18: kintsugi.workspace_helper.v1.Detached
+	(*AttachRequest)(nil),     // 19: kintsugi.workspace_helper.v1.AttachRequest
+	(*Attach)(nil),            // 20: kintsugi.workspace_helper.v1.Attach
+	(*Acknowledge)(nil),       // 21: kintsugi.workspace_helper.v1.Acknowledge
+	(*TerminalSize)(nil),      // 22: kintsugi.workspace_helper.v1.TerminalSize
+	(*CloseStdin)(nil),        // 23: kintsugi.workspace_helper.v1.CloseStdin
+	(*ExecResponse)(nil),      // 24: kintsugi.workspace_helper.v1.ExecResponse
+	(*Exited)(nil),            // 25: kintsugi.workspace_helper.v1.Exited
+	(*Unknown)(nil),           // 26: kintsugi.workspace_helper.v1.Unknown
+	nil,                       // 27: kintsugi.workspace_helper.v1.ExecStart.EnvEntry
 }
 var file_workspace_helper_proto_depIdxs = []int32{
-	1,  // 0: kintsugi.workspace_helper.v1.StatFilesRequest.user:type_name -> kintsugi.workspace_helper.v1.User
-	5,  // 1: kintsugi.workspace_helper.v1.StatFilesResponse.stats:type_name -> kintsugi.workspace_helper.v1.FileStat
-	0,  // 2: kintsugi.workspace_helper.v1.FileStat.kind:type_name -> kintsugi.workspace_helper.v1.FileKind
-	1,  // 3: kintsugi.workspace_helper.v1.ReadFileRequest.user:type_name -> kintsugi.workspace_helper.v1.User
-	9,  // 4: kintsugi.workspace_helper.v1.WriteFileRequest.start:type_name -> kintsugi.workspace_helper.v1.WriteFileStart
-	1,  // 5: kintsugi.workspace_helper.v1.WriteFileStart.user:type_name -> kintsugi.workspace_helper.v1.User
-	12, // 6: kintsugi.workspace_helper.v1.ExecRequest.start:type_name -> kintsugi.workspace_helper.v1.ExecStart
-	19, // 7: kintsugi.workspace_helper.v1.ExecRequest.close_stdin:type_name -> kintsugi.workspace_helper.v1.CloseStdin
-	2,  // 8: kintsugi.workspace_helper.v1.ExecRequest.signal:type_name -> kintsugi.workspace_helper.v1.Signal
-	18, // 9: kintsugi.workspace_helper.v1.ExecRequest.resize:type_name -> kintsugi.workspace_helper.v1.TerminalSize
-	17, // 10: kintsugi.workspace_helper.v1.ExecRequest.acknowledge:type_name -> kintsugi.workspace_helper.v1.Acknowledge
-	1,  // 11: kintsugi.workspace_helper.v1.ExecStart.user:type_name -> kintsugi.workspace_helper.v1.User
-	23, // 12: kintsugi.workspace_helper.v1.ExecStart.env:type_name -> kintsugi.workspace_helper.v1.ExecStart.EnvEntry
-	13, // 13: kintsugi.workspace_helper.v1.ExecStart.pipes:type_name -> kintsugi.workspace_helper.v1.Pipes
-	18, // 14: kintsugi.workspace_helper.v1.ExecStart.terminal:type_name -> kintsugi.workspace_helper.v1.TerminalSize
-	14, // 15: kintsugi.workspace_helper.v1.ExecStart.detached:type_name -> kintsugi.workspace_helper.v1.Detached
-	16, // 16: kintsugi.workspace_helper.v1.AttachRequest.attach:type_name -> kintsugi.workspace_helper.v1.Attach
-	2,  // 17: kintsugi.workspace_helper.v1.AttachRequest.signal:type_name -> kintsugi.workspace_helper.v1.Signal
-	17, // 18: kintsugi.workspace_helper.v1.AttachRequest.acknowledge:type_name -> kintsugi.workspace_helper.v1.Acknowledge
-	21, // 19: kintsugi.workspace_helper.v1.ExecResponse.exited:type_name -> kintsugi.workspace_helper.v1.Exited
-	22, // 20: kintsugi.workspace_helper.v1.Exited.unknown:type_name -> kintsugi.workspace_helper.v1.Unknown
-	11, // 21: kintsugi.workspace_helper.v1.WorkspaceHelper.Exec:input_type -> kintsugi.workspace_helper.v1.ExecRequest
-	15, // 22: kintsugi.workspace_helper.v1.WorkspaceHelper.Attach:input_type -> kintsugi.workspace_helper.v1.AttachRequest
-	6,  // 23: kintsugi.workspace_helper.v1.WorkspaceHelper.ReadFile:input_type -> kintsugi.workspace_helper.v1.ReadFileRequest
-	8,  // 24: kintsugi.workspace_helper.v1.WorkspaceHelper.WriteFile:input_type -> kintsugi.workspace_helper.v1.WriteFileRequest
-	3,  // 25: kintsugi.workspace_helper.v1.WorkspaceHelper.StatFiles:input_type -> kintsugi.workspace_helper.v1.StatFilesRequest
-	20, // 26: kintsugi.workspace_helper.v1.WorkspaceHelper.Exec:output_type -> kintsugi.workspace_helper.v1.ExecResponse
-	20, // 27: kintsugi.workspace_helper.v1.WorkspaceHelper.Attach:output_type -> kintsugi.workspace_helper.v1.ExecResponse
-	7,  // 28: kintsugi.workspace_helper.v1.WorkspaceHelper.ReadFile:output_type -> kintsugi.workspace_helper.v1.FileData
-	10, // 29: kintsugi.workspace_helper.v1.WorkspaceHelper.WriteFile:output_type -> kintsugi.workspace_helper.v1.WriteFileResponse
-	4,  // 30: kintsugi.workspace_helper.v1.WorkspaceHelper.StatFiles:output_type -> kintsugi.workspace_helper.v1.StatFilesResponse
-	26, // [26:31] is the sub-list for method output_type
-	21, // [21:26] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	10, // 0: kintsugi.workspace_helper.v1.OpenFileRequest.open:type_name -> kintsugi.workspace_helper.v1.ReadFileRequest
+	4,  // 1: kintsugi.workspace_helper.v1.OpenFileRequest.read:type_name -> kintsugi.workspace_helper.v1.FileRange
+	5,  // 2: kintsugi.workspace_helper.v1.OpenFileRequest.stat:type_name -> kintsugi.workspace_helper.v1.StatOpenFile
+	9,  // 3: kintsugi.workspace_helper.v1.OpenFileResponse.stat:type_name -> kintsugi.workspace_helper.v1.FileStat
+	1,  // 4: kintsugi.workspace_helper.v1.StatFilesRequest.user:type_name -> kintsugi.workspace_helper.v1.User
+	9,  // 5: kintsugi.workspace_helper.v1.StatFilesResponse.stats:type_name -> kintsugi.workspace_helper.v1.FileStat
+	0,  // 6: kintsugi.workspace_helper.v1.FileStat.kind:type_name -> kintsugi.workspace_helper.v1.FileKind
+	1,  // 7: kintsugi.workspace_helper.v1.ReadFileRequest.user:type_name -> kintsugi.workspace_helper.v1.User
+	13, // 8: kintsugi.workspace_helper.v1.WriteFileRequest.start:type_name -> kintsugi.workspace_helper.v1.WriteFileStart
+	1,  // 9: kintsugi.workspace_helper.v1.WriteFileStart.user:type_name -> kintsugi.workspace_helper.v1.User
+	16, // 10: kintsugi.workspace_helper.v1.ExecRequest.start:type_name -> kintsugi.workspace_helper.v1.ExecStart
+	23, // 11: kintsugi.workspace_helper.v1.ExecRequest.close_stdin:type_name -> kintsugi.workspace_helper.v1.CloseStdin
+	2,  // 12: kintsugi.workspace_helper.v1.ExecRequest.signal:type_name -> kintsugi.workspace_helper.v1.Signal
+	22, // 13: kintsugi.workspace_helper.v1.ExecRequest.resize:type_name -> kintsugi.workspace_helper.v1.TerminalSize
+	21, // 14: kintsugi.workspace_helper.v1.ExecRequest.acknowledge:type_name -> kintsugi.workspace_helper.v1.Acknowledge
+	1,  // 15: kintsugi.workspace_helper.v1.ExecStart.user:type_name -> kintsugi.workspace_helper.v1.User
+	27, // 16: kintsugi.workspace_helper.v1.ExecStart.env:type_name -> kintsugi.workspace_helper.v1.ExecStart.EnvEntry
+	17, // 17: kintsugi.workspace_helper.v1.ExecStart.pipes:type_name -> kintsugi.workspace_helper.v1.Pipes
+	22, // 18: kintsugi.workspace_helper.v1.ExecStart.terminal:type_name -> kintsugi.workspace_helper.v1.TerminalSize
+	18, // 19: kintsugi.workspace_helper.v1.ExecStart.detached:type_name -> kintsugi.workspace_helper.v1.Detached
+	20, // 20: kintsugi.workspace_helper.v1.AttachRequest.attach:type_name -> kintsugi.workspace_helper.v1.Attach
+	2,  // 21: kintsugi.workspace_helper.v1.AttachRequest.signal:type_name -> kintsugi.workspace_helper.v1.Signal
+	21, // 22: kintsugi.workspace_helper.v1.AttachRequest.acknowledge:type_name -> kintsugi.workspace_helper.v1.Acknowledge
+	25, // 23: kintsugi.workspace_helper.v1.ExecResponse.exited:type_name -> kintsugi.workspace_helper.v1.Exited
+	26, // 24: kintsugi.workspace_helper.v1.Exited.unknown:type_name -> kintsugi.workspace_helper.v1.Unknown
+	15, // 25: kintsugi.workspace_helper.v1.WorkspaceHelper.Exec:input_type -> kintsugi.workspace_helper.v1.ExecRequest
+	19, // 26: kintsugi.workspace_helper.v1.WorkspaceHelper.Attach:input_type -> kintsugi.workspace_helper.v1.AttachRequest
+	10, // 27: kintsugi.workspace_helper.v1.WorkspaceHelper.ReadFile:input_type -> kintsugi.workspace_helper.v1.ReadFileRequest
+	12, // 28: kintsugi.workspace_helper.v1.WorkspaceHelper.WriteFile:input_type -> kintsugi.workspace_helper.v1.WriteFileRequest
+	7,  // 29: kintsugi.workspace_helper.v1.WorkspaceHelper.StatFiles:input_type -> kintsugi.workspace_helper.v1.StatFilesRequest
+	3,  // 30: kintsugi.workspace_helper.v1.WorkspaceHelper.OpenFile:input_type -> kintsugi.workspace_helper.v1.OpenFileRequest
+	24, // 31: kintsugi.workspace_helper.v1.WorkspaceHelper.Exec:output_type -> kintsugi.workspace_helper.v1.ExecResponse
+	24, // 32: kintsugi.workspace_helper.v1.WorkspaceHelper.Attach:output_type -> kintsugi.workspace_helper.v1.ExecResponse
+	11, // 33: kintsugi.workspace_helper.v1.WorkspaceHelper.ReadFile:output_type -> kintsugi.workspace_helper.v1.FileData
+	14, // 34: kintsugi.workspace_helper.v1.WorkspaceHelper.WriteFile:output_type -> kintsugi.workspace_helper.v1.WriteFileResponse
+	8,  // 35: kintsugi.workspace_helper.v1.WorkspaceHelper.StatFiles:output_type -> kintsugi.workspace_helper.v1.StatFilesResponse
+	6,  // 36: kintsugi.workspace_helper.v1.WorkspaceHelper.OpenFile:output_type -> kintsugi.workspace_helper.v1.OpenFileResponse
+	31, // [31:37] is the sub-list for method output_type
+	25, // [25:31] is the sub-list for method input_type
+	25, // [25:25] is the sub-list for extension type_name
+	25, // [25:25] is the sub-list for extension extendee
+	0,  // [0:25] is the sub-list for field type_name
 }
 
 func init() { file_workspace_helper_proto_init() }
@@ -1790,11 +2096,20 @@ func file_workspace_helper_proto_init() {
 	if File_workspace_helper_proto != nil {
 		return
 	}
-	file_workspace_helper_proto_msgTypes[5].OneofWrappers = []any{
+	file_workspace_helper_proto_msgTypes[0].OneofWrappers = []any{
+		(*OpenFileRequest_Open)(nil),
+		(*OpenFileRequest_Read)(nil),
+		(*OpenFileRequest_Stat)(nil),
+	}
+	file_workspace_helper_proto_msgTypes[3].OneofWrappers = []any{
+		(*OpenFileResponse_Stat)(nil),
+		(*OpenFileResponse_Data)(nil),
+	}
+	file_workspace_helper_proto_msgTypes[9].OneofWrappers = []any{
 		(*WriteFileRequest_Start)(nil),
 		(*WriteFileRequest_Data)(nil),
 	}
-	file_workspace_helper_proto_msgTypes[8].OneofWrappers = []any{
+	file_workspace_helper_proto_msgTypes[12].OneofWrappers = []any{
 		(*ExecRequest_Start)(nil),
 		(*ExecRequest_Stdin)(nil),
 		(*ExecRequest_CloseStdin)(nil),
@@ -1802,23 +2117,23 @@ func file_workspace_helper_proto_init() {
 		(*ExecRequest_Resize)(nil),
 		(*ExecRequest_Acknowledge)(nil),
 	}
-	file_workspace_helper_proto_msgTypes[9].OneofWrappers = []any{
+	file_workspace_helper_proto_msgTypes[13].OneofWrappers = []any{
 		(*ExecStart_Pipes)(nil),
 		(*ExecStart_Terminal)(nil),
 		(*ExecStart_Detached)(nil),
 	}
-	file_workspace_helper_proto_msgTypes[12].OneofWrappers = []any{
+	file_workspace_helper_proto_msgTypes[16].OneofWrappers = []any{
 		(*AttachRequest_Attach)(nil),
 		(*AttachRequest_Stdin)(nil),
 		(*AttachRequest_Signal)(nil),
 		(*AttachRequest_Acknowledge)(nil),
 	}
-	file_workspace_helper_proto_msgTypes[17].OneofWrappers = []any{
+	file_workspace_helper_proto_msgTypes[21].OneofWrappers = []any{
 		(*ExecResponse_Stdout)(nil),
 		(*ExecResponse_Stderr)(nil),
 		(*ExecResponse_Exited)(nil),
 	}
-	file_workspace_helper_proto_msgTypes[18].OneofWrappers = []any{
+	file_workspace_helper_proto_msgTypes[22].OneofWrappers = []any{
 		(*Exited_ExitCode)(nil),
 		(*Exited_Signal)(nil),
 		(*Exited_Unknown)(nil),
@@ -1829,7 +2144,7 @@ func file_workspace_helper_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_workspace_helper_proto_rawDesc), len(file_workspace_helper_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   21,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

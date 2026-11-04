@@ -92,13 +92,14 @@ func absolute(path string) error {
 	return nil
 }
 
-func (s *helper) ReadFile(request *pb.ReadFileRequest, stream pb.WorkspaceHelper_ReadFileServer) error {
+// Opens a regular file for reading as the request's user, following symlinks.
+func (s *helper) openRegular(request *pb.ReadFileRequest) (*os.File, os.FileInfo, error) {
 	if err := absolute(request.Path); err != nil {
-		return err
+		return nil, nil, err
 	}
 	account, err := s.lookupUser(request.User)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	var file *os.File
 	err = s.asUser(account, func() error {
@@ -107,16 +108,26 @@ func (s *helper) ReadFile(request *pb.ReadFileRequest, stream pb.WorkspaceHelper
 		return err
 	})
 	if err != nil {
-		return fileError(err)
+		return nil, nil, fileError(err)
 	}
-	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return fileError(err)
+		file.Close()
+		return nil, nil, fileError(err)
 	}
 	if !info.Mode().IsRegular() {
-		return notRegular(request.Path)
+		file.Close()
+		return nil, nil, notRegular(request.Path)
 	}
+	return file, info, nil
+}
+
+func (s *helper) ReadFile(request *pb.ReadFileRequest, stream pb.WorkspaceHelper_ReadFileServer) error {
+	file, _, err := s.openRegular(request)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
 	for {
 		// gRPC may still hold a sent message, so each chunk gets its own buffer.
 		chunk := make([]byte, fileChunkBytes)
@@ -263,14 +274,18 @@ func statFile(path string) (*pb.FileStat, error) {
 	} else if info.IsDir() {
 		stat.Kind = pb.FileKind_FILE_KIND_DIRECTORY
 	}
+	// Empty when it can't be resolved, e.g. for a file removed or replaced since
+	// the stat, or one whose real path is longer than the kernel takes.
+	stat.CanonicalPath, _ = filepath.EvalSymlinks(path)
 	if stat.Kind != pb.FileKind_FILE_KIND_OTHER {
 		// access(2) won't do: it checks the real user, not the file system
-		// identity asUser takes on. A file removed since the stat is unreadable.
+		// identity asUser takes on. A file removed or replaced since the stat,
+		// such as by a socket (ENXIO), is unreadable.
 		file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 		if err == nil {
 			file.Close()
 			stat.Readable = true
-		} else if !errors.Is(err, fs.ErrPermission) && !errors.Is(err, fs.ErrNotExist) {
+		} else if !errors.Is(err, fs.ErrPermission) && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) && !errors.Is(err, syscall.ELOOP) && !errors.Is(err, syscall.ENXIO) {
 			return nil, err
 		}
 	}
@@ -302,4 +317,63 @@ func (s *helper) StatFiles(ctx context.Context, request *pb.StatFilesRequest) (*
 		return nil, fileError(err)
 	}
 	return &pb.StatFilesResponse{Stats: stats}, nil
+}
+
+const maxFileRangeBytes = 1024 * 1024
+
+func sendOpenFileStat(stream pb.WorkspaceHelper_OpenFileServer, info os.FileInfo) error {
+	stat := &pb.FileStat{Kind: pb.FileKind_FILE_KIND_REGULAR, Size: uint64(info.Size()), ModifiedUnixMs: info.ModTime().UnixMilli(), Readable: true}
+	return stream.Send(&pb.OpenFileResponse{Response: &pb.OpenFileResponse_Stat{Stat: stat}})
+}
+
+func (s *helper) OpenFile(stream pb.WorkspaceHelper_OpenFileServer) error {
+	request, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+	open := request.GetOpen()
+	if open == nil {
+		return status.Error(codes.InvalidArgument, "the first request must be open")
+	}
+	file, info, err := s.openRegular(open)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if err := sendOpenFileStat(stream, info); err != nil {
+		return err
+	}
+	for {
+		request, err := stream.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		switch request := request.Request.(type) {
+		case *pb.OpenFileRequest_Read:
+			if request.Read.Length > maxFileRangeBytes {
+				return status.Errorf(codes.InvalidArgument, "a read takes at most %d bytes", maxFileRangeBytes)
+			}
+			data := make([]byte, request.Read.Length)
+			read, err := file.ReadAt(data, int64(request.Read.Offset))
+			if err != nil && err != io.EOF {
+				return fileError(err)
+			}
+			if err := stream.Send(&pb.OpenFileResponse{Response: &pb.OpenFileResponse_Data{Data: data[:read]}}); err != nil {
+				return err
+			}
+		case *pb.OpenFileRequest_Stat:
+			info, err := file.Stat()
+			if err != nil {
+				return fileError(err)
+			}
+			if err := sendOpenFileStat(stream, info); err != nil {
+				return err
+			}
+		default:
+			return status.Error(codes.InvalidArgument, "only the first request may be open")
+		}
+	}
 }

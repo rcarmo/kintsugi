@@ -33,7 +33,7 @@ test("native registry includes registered controls and receipt tasks, but no int
     async execute() { return { content: [{ type: "text", text: "done" }], details: undefined }; },
   }));
   try {
-    const registry = createDurableWorkspaceRegistry("assembly-workspace", createModels());
+    const registry = createDurableWorkspaceRegistry("assembly-workspace");
     const tools = registry.snapshot().tools().map(({ tool }) => tool);
     expect(tools.map((tool) => tool.name).sort()).toEqual(["assembly-control", "bash", "edit", "read", "write"]);
     expect(tools.find((tool) => tool.name === "read")?.replay).toBe("safe");
@@ -75,7 +75,7 @@ test("assembled native Harness uses the committed prompt and model across reopen
     return fauxAssistantMessage("Native assembly works.");
   }]);
   const open = async () => {
-    const workspace = await openDurableWorkspace(path, "assembly-workspace", { models, registry: createDurableWorkspaceRegistry("assembly-workspace", models) });
+    const workspace = await openDurableWorkspace(path, "assembly-workspace", { models, registry: createDurableWorkspaceRegistry("assembly-workspace") });
     workspaces.push(workspace);
     return workspace;
   };

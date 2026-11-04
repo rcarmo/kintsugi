@@ -22,7 +22,7 @@ export async function durableImageEndpoint(conversation: Conversation, entryId: 
     if (!/^[1-9]\d*$/.test(id) || !Number.isSafeInteger(Number(id))) return new Response("not found", { status: 404 });
     // Queue images have not acquired an entry ID yet. Read the same scoped
     // committed inbox used by the transcript; never look up global submissions.
-    const watch = await conversation.watch(context);
+    const watch = await conversation.watch(context, { min: 1 });
     try {
       // SAFETY: Harness owns/version-checks pi.inbox before mounting this view.
       const inbox = watch.value.docs[InboxDoc.definition.kind] as InboxState | undefined;

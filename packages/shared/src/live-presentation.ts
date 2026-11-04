@@ -11,6 +11,9 @@ export interface LiveRegion {
   morph?: boolean;
   /** Append-only HTML prefix. Resetting the prefix sends an authoritative replacement. */
   appendOnly?: boolean;
+  /** `html` as a sequence of blocks that are one element each. An update resends only the
+   * blocks that changed since, by position, rather than the whole region. */
+  blocks?: readonly string[];
   children?: readonly LiveRegion[];
 }
 
@@ -67,7 +70,7 @@ export function liveRegionDigests(regions: readonly LiveRegion[], digests: Recor
 
 /** What a client last received for a target: its markup, the parent region it was mounted
  * in, and for a region with children, which of its elements the page holds as permanent. */
-interface SentRegion { html: string; parent?: string; islands?: ReadonlySet<string> }
+interface SentRegion { html: string; parent?: string; islands?: ReadonlySet<string>; blocks?: readonly string[] }
 
 function permanentIslands(html: string): Set<string> {
   const ids = new Set<string>();
@@ -76,7 +79,24 @@ function permanentIslands(html: string): Set<string> {
 }
 
 function sentRegion(region: LiveRegion, parent: string | undefined): SentRegion {
-  return { html: region.html, parent, islands: region.children ? permanentIslands(region.html) : undefined };
+  return { html: region.html, parent, islands: region.children ? permanentIslands(region.html) : undefined, blocks: region.blocks };
+}
+
+/** Streams that bring a block region from `before` to `after`: changed blocks morph in place,
+ * then extra ones go and new ones follow. */
+function blockStreams(target: string, before: readonly string[], after: readonly string[]): string | undefined {
+  let same = 0;
+  while (same < before.length && same < after.length && before[same] === after[same]) same++;
+  // With nothing in common (say, the first blocks moved elsewhere), one update is smaller.
+  if (same === 0) return undefined;
+  const children = (selector: string) => `[id="${target}"] > ${selector}`;
+  let html = "";
+  for (let index = same; index < Math.min(before.length, after.length); index++) {
+    html += turboStream("replace", children(`:nth-child(${index + 1})`), after[index], { targets: true, method: "morph" });
+  }
+  if (after.length < before.length) html += turboStream("remove", children(`:nth-child(n+${after.length + 1})`), "", { targets: true });
+  if (after.length > before.length) html += turboStream("append", target, after.slice(before.length).join(""));
+  return html;
 }
 
 /** `forced` regions are sent even when unchanged: the client lacks them or just lost them.
@@ -94,7 +114,8 @@ function regionStreams(regions: readonly LiveRegion[], previous: Map<string, Sen
     if (forced && shown[region.target] === liveRegionDigest(region.html)) previous.set(region.target, sentRegion(region, parent));
     else if (changed) {
       const append = !forced && !moved && region.appendOnly && before !== undefined && region.html.startsWith(before.html);
-      html += turboStream(append ? "append" : region.action ?? "update", region.target, append ? region.html.slice(before.html.length) : region.html, append || region.morph === false ? {} : { method: "morph" });
+      const blocks = !forced && !moved && region.blocks && before?.blocks && (region.action ?? "update") === "update" ? blockStreams(region.target, before.blocks, region.blocks) : undefined;
+      html += blocks ?? turboStream(append ? "append" : region.action ?? "update", region.target, append ? region.html.slice(before.html.length) : region.html, append || region.morph === false ? {} : { method: "morph" });
       previous.set(region.target, sentRegion(region, parent));
       sent = true;
     }

@@ -187,3 +187,42 @@ export function renderMarkdown(workspaceId: string, text: string, options: Markd
 export function renderProvisionalMarkdown(workspaceId: string, text: string): string {
   return markdown.render(text, { workspaceId, provisional: true } satisfies MarkdownEnvironment).trim();
 }
+
+/** The same rendering as `renderProvisionalMarkdown`, as one element per top-level block, so a live
+ * update can resend only the blocks that changed. Parsed as one document: references, list
+ * looseness and math resolve as they do in the whole. Undefined when a block isn't one element. */
+export function renderProvisionalMarkdownBlocks(workspaceId: string, text: string): string[] | undefined {
+  const environment = { workspaceId, provisional: true } satisfies MarkdownEnvironment;
+  const tokens = markdown.parse(text, environment);
+  const blocks: string[] = [];
+  let start = 0;
+  let depth = 0;
+  for (let index = 0; index <= tokens.length; index++) {
+    const token = tokens[index];
+    // Disclosures don't nest during parsing (see details.ts), but their tokens enclose a block.
+    if (token) depth += token.type === "details_open" ? 1 : token.type === "details_close" ? -1 : token.nesting;
+    if (token && depth !== 0) continue;
+    const html = markdown.renderer.render(tokens.slice(start, index + 1), markdown.options, environment).trim();
+    start = index + 1;
+    if (!html) continue;
+    if (!isSingleElement(html)) return undefined;
+    blocks.push(html);
+  }
+  return blocks;
+}
+
+function isSingleElement(html: string): boolean {
+  let depth = 0;
+  let elements = 0;
+  let text = false;
+  new HTMLRewriter()
+    .on("*", { element(element) {
+      if (depth === 0) elements++;
+      if (element.selfClosing || !element.canHaveContent) return;
+      depth++;
+      element.onEndTag(() => { depth--; });
+    } })
+    .onDocument({ text(chunk) { if (depth === 0 && chunk.text.trim()) text = true; } })
+    .transform(html);
+  return elements === 1 && !text;
+}

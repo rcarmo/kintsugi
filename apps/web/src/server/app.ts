@@ -47,6 +47,7 @@ import {
   type WorkspaceModuleCommandResult,
   type WorkspaceModuleRouteHandler,
   type WorkspaceModuleWorkViewAdapter,
+  type WorkspaceAgentPane,
   type WorkspaceWorkViewPresentation
 } from "@kintsugi/shared";
 import { createWorkspacePresentationStore, createWorkspaceProvisioning, generateWorkspaceId, listWorkspaces, setWorkspaceParked, setWorkspaceTitle, type WorkspaceCreationContext, type WorkspaceInitInstruction, type WorkspaceProvisioning, type WorkspaceProvisionRun, type WorkspaceWorkViewReference, type WorkspaceWorkViewState } from "@kintsugi/workspace";
@@ -55,7 +56,8 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { createAgentPaneHost } from "./agent-pane-host.ts";
 import { welcomeBrandHtml } from "./brand/welcome-brand.ts";
-import { agentContentId, selectAgentTurboStream } from "./agent-pane.ts";
+import { selectAgentTurboStream } from "./agent-pane.ts";
+import { paneContentId, paneSurfaceKinds } from "./workspace-view-markup.ts";
 import { getAgentType, defaultAgentType, orderedAgentTypes, registeredAgentTypes, rememberAgentType } from "./agent-types.ts";
 import { openWorkspaceFile } from "./file-navigation.ts";
 import { httpErrorStatus, problemJsonResponse } from "./http-responses.ts";
@@ -72,7 +74,7 @@ import { themeRegionHtml, themeRegionId } from "./settings/theme.ts";
 import { parseCloseWorkViewRequest, parseReorderWorkViewRequest } from "./work-view-api.ts";
 import { createWorkspaceDeletion } from "./workspace-deletion.ts";
 import { workspaceModules as defaultWorkspaceModules } from "./workspace-modules.generated.ts";
-import { dismissWorkspaceParkConfirmationTurboStream, presentWorkViewTurboStream, renderKintsugiBar, renderMobileWorkspaceBar, renderWorkspaceDeletionPresentation, renderWorkspacePane, renderWorkspaceParkConfirmation, renderWorkspacePresentation, workspacePaneCollectionsRegions, workContentId, type WorkspacePresentation as FixedWorkspacePresentation, type WorkPaneContribution, type WorkspacePanePresentation, type WorkspacePaneWorkspaceTemplate } from "./workspace-presentation.ts";
+import { dismissWorkspaceParkConfirmationTurboStream, presentWorkViewTurboStream, renderKintsugiBar, renderMobileWorkspaceBar, renderWorkspaceDeletionPresentation, renderWorkspacePane, renderWorkspaceParkConfirmation, renderWorkspacePresentation, workspacePaneCollectionsRegions, type InitialWorkspaceSelection, type WorkspacePresentation as FixedWorkspacePresentation, type WorkPaneContribution, type WorkspacePanePresentation, type WorkspacePaneWorkspaceTemplate } from "./workspace-presentation.ts";
 import type { WorkspaceDeletionState, WorkspaceEntry, WorkspaceRegistry } from "./workspace-registry.ts";
 import { workspaceWarnings, type WorkspaceWarning } from "./workspace-warnings.ts";
 
@@ -141,7 +143,9 @@ export function createWebApp(deps: WebAppDeps): WebApp {
 
   const workPresentationIntents = new Map<string, { key: string; revision: string }>();
   type SurfaceState = { kind: "workspace"; presentation: FixedWorkspacePresentation }
-    | { kind: "regions"; regions: readonly LiveRegion[] };
+    | { kind: "regions"; regions: readonly LiveRegion[]; live?: WorkspaceAgentPane["live"] };
+  /** A workspace's chrome, and the Agent pane and Work view body its presentation selects. */
+  const presentationSurfaceKinds = new Set<string>(["workspace", ...paneSurfaceKinds]);
   const surfaces = new Map<string, { workspaceId: string; kind: string; resource: ReturnType<typeof createLiveResource<SurfaceState>> }>();
   const reportPresentationError = (error: Error) => logError(
     `Could not refresh live state: ${errorMessage(error)}`,
@@ -158,13 +162,13 @@ export function createWebApp(deps: WebAppDeps): WebApp {
 
   function invalidatePresentation(): void {
     shell.invalidate();
-    for (const { kind, resource } of surfaces.values()) if (kind === "workspace") resource.invalidate();
+    for (const { kind, resource } of surfaces.values()) if (presentationSurfaceKinds.has(kind)) resource.invalidate();
   }
 
   function invalidateWorkspace(workspaceId?: string): void {
     invalidatePresentation();
     for (const surface of surfaces.values()) {
-      if (surface.kind !== "workspace" && surface.workspaceId === workspaceId) surface.resource.invalidate();
+      if (!presentationSurfaceKinds.has(surface.kind) && surface.workspaceId === workspaceId) surface.resource.invalidate();
     }
   }
 
@@ -174,24 +178,26 @@ export function createWebApp(deps: WebAppDeps): WebApp {
     requireWorkspace(workspaceId);
     const { kind, key = "" } = params;
     const contributed = workspaceModules.flatMap(module => module.liveSurfaces ?? []).find(surface => surface.name === kind);
-    if (kind !== "workspace" && !contributed) throw new Error("Unknown surface kind");
-    const cacheKey = JSON.stringify([workspaceId, kind, key, params.agent ?? "", params.work ?? ""]);
+    if (!presentationSurfaceKinds.has(kind) && !contributed) throw new Error("Unknown surface kind");
+    const cacheKey = JSON.stringify([workspaceId, kind, key]);
     let surface = surfaces.get(cacheKey);
     if (!surface) {
       const resource = createLiveResource<SurfaceState>(async () => {
         const entry = requireWorkspace(workspaceId);
         if (contributed) return { kind: "regions", regions: await contributed.load({ workspaceId, key }) };
-        if (entry.phase.kind === "runningPhase" && !entry.phase.deletion && !entry.parked) {
-          try {
-            const presentation = await withCommandSignal(AbortSignal.timeout(10_000), () => waitForCommand(prepareWorkspacePresentation(workspaceId, { agent: params.agent, workView: params.work })));
-            return { kind: "workspace", presentation };
-          } catch (error) {
-            logError(`Workspace ${workspaceId} is unavailable: ${errorMessage(error)}`);
-            return { kind: "regions", regions: [{ target: workspaceMountId(workspaceId), html: workspaceUnavailableHtml(entry, errorMessage(error)) }] };
-          }
+        const running = entry.phase.kind === "runningPhase" && !entry.phase.deletion && !entry.parked && !parking.has(workspaceId);
+        if (!running) return { kind: "regions", regions: kind === "workspace" ? [{ target: workspaceMountId(workspaceId), html: entry.phase.deletion ? deletionPresentation(entry, entry.phase.deletion) : workspaceBootMountHtml(entry) }] : [] };
+        try {
+          return await withCommandSignal(AbortSignal.timeout(10_000), () => waitForCommand((async (): Promise<SurfaceState> => {
+            if (kind === "workspace") return { kind: "workspace", presentation: (await workspacePresentationBundle(workspaceId)).presentation };
+            if (kind === "agent-pane") return agentPaneSurface(workspaceId, key);
+            return { kind: "regions", regions: await workViewBodyRegions(workspaceId, key) };
+          })()));
+        } catch (error) {
+          logError(`Workspace ${workspaceId} surface ${kind} is unavailable: ${errorMessage(error)}`);
+          if (kind === "workspace") return { kind: "regions", regions: [{ target: workspaceMountId(workspaceId), html: workspaceUnavailableHtml(entry, errorMessage(error)) }] };
+          throw error;
         }
-        return { kind: "regions", regions: [{ target: workspaceMountId(workspaceId), html: entry.phase.deletion
-          ? deletionPresentation(entry, entry.phase.deletion) : workspaceBootMountHtml(entry) }] };
       }, state => state.kind === "workspace"
         ? workspaceRegions(state.presentation)
         : state.regions, reportPresentationError);
@@ -269,6 +275,8 @@ export function createWebApp(deps: WebAppDeps): WebApp {
   }
 
   const persistWorkspaceParked = deps.persistWorkspaceParked ?? setWorkspaceParked;
+  /** Workspaces whose Agents are being suspended for parking, before the registry marks them parked. */
+  const parking = new Set<string>();
   let suppressParkedStateCallbacks = false;
 
   registry.setCallbacks({
@@ -485,43 +493,28 @@ export function createWebApp(deps: WebAppDeps): WebApp {
     return requestAcceptsJson(request) ? jsonResponse({ dismissed: true }) : turboStreamResponse("");
   }
 
-  /** An Agent pane is published as its shell; the Agent's own channel publishes its content. */
+  /** The chrome holds every pane, empty; the selected panes' content has surfaces of its own. */
   function workspaceRegions(presentation: FixedWorkspacePresentation): readonly LiveRegion[] {
-    const workspaceId = presentation.workspace.id;
-    return [{
-      target: workspaceMountId(workspaceId),
-      html: renderWorkspacePresentation(presentation),
-      children: [
-        ...presentation.agents.flatMap(agent => agent.pane === undefined ? [] : [{ target: agentContentId(workspaceId, agent.id), html: agent.pane.html }]),
-        ...presentation.workViews.flatMap(view => view.bodyHtml === undefined ? [] : [{ target: workContentId(workspaceId, view.key), html: view.bodyHtml }]),
-      ],
-    }];
+    const { html, islands } = renderWorkspacePresentation(presentation);
+    return [{ target: workspaceMountId(presentation.workspace.id), html, children: islands }];
   }
 
-  async function prepareWorkspacePresentation(id: string, selection: NonNullable<FixedWorkspacePresentation["initialSelection"]>): Promise<FixedWorkspacePresentation> {
-    const { presentation, storedWorkViews } = await workspacePresentationBundle(id);
-    presentation.initialSelection = {
-      agent: presentation.agents.find(agent => agent.id === selection.agent)?.id ?? presentation.agents[0]?.id,
-      workView: presentation.workViews.find(view => view.key === selection.workView)?.key,
-    };
-    async function loadPane<T>(label: string, render: () => T | Promise<T>, failed: (html: string) => T): Promise<T> {
-      try { return await render(); }
-      catch (error) {
-        const message = errorMessage(error);
-        logError(`Could not load ${label} in workspace ${id}: ${message}`);
-        const retry = new URLSearchParams({ retryPane: "1", agent: presentation.initialSelection?.agent ?? "", workView: presentation.initialSelection?.workView ?? "" });
-        return failed(warningBannerHtml({ title: "This pane could not be loaded", message, role: "alert", actionsHtml: actionLinkHtml({ href: `/workspaces/${encodeURIComponent(id)}?${retry}`, variant: "secondary", content: { kind: "caption", caption: "Retry pane" } }) }));
-      }
-    }
-    await Promise.all([
-      ...presentation.agents.filter(agent => agent.id === presentation.initialSelection!.agent).map(async agent => { agent.pane = await loadPane("Agent " + agent.id, () => agentTabs.render({ workspaceId: id, agentId: agent.id }), html => ({ html })); }),
-      ...presentation.workViews.filter(view => view.key === presentation.initialSelection!.workView).map(async view => {
-        if (view.availability.phase === "unavailable") return;
-        const reference = storedWorkViews.find(stored => workViewKey(stored.reference) === view.key)!.reference;
-        view.bodyHtml = await loadPane("Work view " + view.key, () => workViewAdapterByType.get(reference.type)!.render({ workspaceId: id, reference }), html => html);
-      }),
-    ]);
-    return presentation;
+  /** An Agent pane is published as its shell; the Agent's own channel publishes its content. */
+  async function agentPaneSurface(workspaceId: string, agentId: string): Promise<SurfaceState> {
+    // A closed Agent's pane leaves the chrome; its subscription ends with it.
+    if (!(await agentTabs.list({ workspaceId })).some(agent => agent.id === agentId)) return { kind: "regions", regions: [] };
+    const pane = await agentTabs.render({ workspaceId, agentId });
+    return { kind: "regions", regions: [{ target: paneContentId(workspaceId, "agent-pane", agentId), html: pane.html }], live: pane.live };
+  }
+
+  async function workViewBodyRegions(workspaceId: string, key: string): Promise<LiveRegion[]> {
+    const attachments = await attachWorkspaceModules(workspaceId);
+    const storedWorkViews = await presentationStore.listWorkViews(workspaceId);
+    const view = workViewPresentations(workspaceId, attachments.flatMap(attachment => attachment.workViews ?? []), storedWorkViews).find(candidate => candidate.key === key);
+    // A closed Work view's pane leaves the chrome; an unavailable one keeps what its body last showed.
+    if (!view || view.availability.phase === "unavailable") return [];
+    const { reference } = storedWorkViews.find(stored => workViewKey(stored.reference) === key)!;
+    return [{ target: paneContentId(workspaceId, "work-view-body", key), html: await workViewAdapterByType.get(reference.type)!.render({ workspaceId, reference }) }];
   }
 
   function workspaceBootMountHtml(entry: WorkspaceEntry): string {
@@ -563,10 +556,10 @@ export function createWebApp(deps: WebAppDeps): WebApp {
     </section>`;
   }
 
-  function workspaceMounts(selectedId?: string, selection?: FixedWorkspacePresentation["initialSelection"]): string {
+  function workspaceMounts(selectedId?: string): string {
     // Mounts are invisible siblings, not the sorted workspace list. Keep their DOM order stable
     // when attention clears and the list reorders; moving a permanent mount disconnects it.
-    return registry.list().filter(entry => !entry.parked).sort((a, b) => a.id.localeCompare(b.id)).map(entry => `<div id="${workspaceMountId(entry.id)}" class="workspace-detail-mount${entry.id === selectedId ? " visible" : ""}" data-turbo-permanent data-workspace-selection-target="mount" data-workspace-id="${escapeHtml(entry.id)}" data-controller="live-surface" data-live-surface-workspace-value="${escapeHtml(entry.id)}" data-live-surface-kind-value="workspace" data-live-surface-eager-value="${entry.id === selectedId}" data-live-surface-agent-value="${entry.id === selectedId ? escapeHtml(selection?.agent ?? "") : ""}" data-live-surface-work-value="${entry.id === selectedId ? escapeHtml(selection?.workView ?? "") : ""}"></div>`).join("");
+    return registry.list().filter(entry => !entry.parked).sort((a, b) => a.id.localeCompare(b.id)).map(entry => `<div id="${workspaceMountId(entry.id)}" class="workspace-detail-mount${entry.id === selectedId ? " visible" : ""}" data-turbo-permanent data-workspace-selection-target="mount" data-workspace-id="${escapeHtml(entry.id)}" data-controller="live-surface" data-live-surface-workspace-value="${escapeHtml(entry.id)}" data-live-surface-kind-value="workspace" data-live-surface-eager-value="${entry.id === selectedId}"></div>`).join("");
   }
 
   function workspaceUnavailableHtml(entry: WorkspaceEntry, message?: string): string {
@@ -576,7 +569,7 @@ export function createWebApp(deps: WebAppDeps): WebApp {
     return `<div class="workspace-boot"><div class="main"><div class="body"><h2>${escapeHtml(workspaceTitle(entry))}</h2>${status}<p>You can use other workspaces and Settings while this workspace is unavailable.</p><p>Force parking stops its processes and closes terminal and VS Code views.</p><form method="post" action="/workspaces/${encodeURIComponent(entry.id)}/park?force=1" data-action="submit->workspace-navigation#parkWorkspace">${buttonHtml({ type: "submit", variant: "secondary", content: { kind: "caption", caption: "Force park workspace" } })}</form></div></div></div>`;
   }
 
-  async function workspaceDetailHostHtml(pane: WorkspacePanePresentation, selectedId?: string, initialSelection?: FixedWorkspacePresentation["initialSelection"]): Promise<string> {
+  async function workspaceDetailHostHtml(pane: WorkspacePanePresentation, selectedId?: string, initialSelection?: InitialWorkspaceSelection): Promise<string> {
     const entry = selectedId ? requireWorkspace(selectedId) : undefined;
     // HTTP shell/navigation must not depend on a workspace container responding.
     // Its existing live surface loads the selected workspace after the shell is usable.
@@ -586,7 +579,7 @@ export function createWebApp(deps: WebAppDeps): WebApp {
     return `<div id="workspace_detail" class="workspace-detail-host" data-controller="workspace-selection" data-workspace-selection-max-preloaded-value="5">
       <div class="workspace-detail-empty" data-workspace-selection-target="empty"${selectedId ? " hidden" : ""}>${emptyWorkspaceArtworkHtml(pane)}</div>
       <div class="workspace-detail-loading" data-workspace-selection-target="loading" hidden><div class="workspace-detail-loading-status" role="status"><span class="status-spinner" aria-hidden="true"></span> Loading workspace…</div></div>
-      <div id="workspace_mounts" style="display:contents">${entry ? placeLiveRegions(workspaceMounts(selectedId, initialSelection), [{target: workspaceMountId(entry.id), html: selectedHtml}], workspaceMountId(entry.id)) : workspaceMounts(selectedId, initialSelection)}</div>
+      <div id="workspace_mounts" style="display:contents">${entry ? placeLiveRegions(workspaceMounts(selectedId), [{target: workspaceMountId(entry.id), html: selectedHtml}], workspaceMountId(entry.id)) : workspaceMounts(selectedId)}</div>
     </div>`;
   }
 
@@ -598,7 +591,7 @@ export function createWebApp(deps: WebAppDeps): WebApp {
     | { kind: "settings"; request: Request; section: string | undefined; developerTools?: true }
     | { kind: "models"; focus: string | undefined };
 
-  async function renderWorkspaceShell(selectedId?: string, surface?: ShellSurface, initialSelection?: FixedWorkspacePresentation["initialSelection"]): Promise<string> {
+  async function renderWorkspaceShell(selectedId?: string, surface?: ShellSurface, initialSelection?: InitialWorkspaceSelection): Promise<string> {
     const pane = await workspacePaneCollections(selectedId ?? "");
     const workspaceTemplateEditor = surface?.kind === "workspace-template-editor" ? surface.dialogHtml : '<div id="workspace-template-editor-modal"></div>';
     const settings = surface?.kind === "settings"
@@ -971,7 +964,12 @@ export function createWebApp(deps: WebAppDeps): WebApp {
         else await closeWorkView(id, reference);
       }
       if (entry.parked !== parked) {
-        await persistWorkspaceParked(id, parked, !parked, force);
+        if (parked) parking.add(id);
+        try {
+          await persistWorkspaceParked(id, parked, !parked, force);
+        } finally {
+          parking.delete(id);
+        }
         suppressParkedStateCallbacks = true;
         registry.setParked(id, parked);
         if (parked && entry.phase.kind !== "runningPhase") registry.startRunning(id);

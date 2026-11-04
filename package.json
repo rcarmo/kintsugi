@@ -8,12 +8,12 @@
       "packages/*"
     ],
     "catalog": {
-      "@earendil-works/pi-ai": "1.4.0",
-      "@earendil-works/pi-coding-agent": "1.4.0",
+      "@earendil-works/pi-ai": "1.5.0",
+      "@earendil-works/pi-coding-agent": "1.5.0",
       "@gespenst/core": "0.2.0",
-      "@earendil-works/pi-durable": "1.4.0",
-      "@earendil-works/pi-codemode": "1.4.0",
-      "@earendil-works/chord": "1.4.0"
+      "@earendil-works/pi-durable": "1.5.0",
+      "@earendil-works/pi-codemode": "1.5.0",
+      "@earendil-works/chord": "1.5.0"
     }
   },
   "scripts": {
@@ -34,7 +34,7 @@
     "list": "bun run --cwd apps/web list",
     "demo:recording": "bun apps/web/demo/recording/example.ts",
     "test:parallel": "bun test --parallel=2 --parallel-delay=0 --path-ignore-patterns '**/*.helper.test.ts' --path-ignore-patterns '**/kintsugi-recording.test.ts'",
-    "test:native": "bun test apps/web/test/kintsugi-recording.test.ts packages/observable-terminal/test/server/terminal-process.helper.test.ts packages/workspace-helper/test/authentication.helper.test.ts packages/workspace-helper/test/stat-files.helper.test.ts"
+    "test:native": "bun test apps/web/test/kintsugi-recording.test.ts packages/observable-terminal/test/server/terminal-process.helper.test.ts packages/workspace-helper/test/authentication.helper.test.ts packages/workspace-helper/test/files.helper.test.ts packages/builtin-agent/test/server/durable-workspace-files.helper.test.ts packages/builtin-agent/test/server/durable-workspace-files-abort.helper.test.ts"
   },
   "devDependencies": {
     "@kintsugi/workspace-image": "workspace:*",

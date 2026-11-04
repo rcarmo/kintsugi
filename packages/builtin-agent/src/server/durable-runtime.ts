@@ -17,6 +17,7 @@ import { submitDurableInput, type DurableInput } from "./durable-input.ts";
 import { openDurableWorkspace, WorkspaceAgents, type DurableAgentRecord } from "./durable-workspace.ts";
 import { expandWorkspaceSkillCommand } from "@kintsugi/agent/server/skills";
 import type { WorkspaceAgentToolOptions } from "@kintsugi/agent/server/tools";
+import { onValues } from "./durable-watch.ts";
 
 const context = BACKGROUND_CONTEXT;
 const DurableHistoryLabels = defineDoc<{ labels: Record<string, string[]> }>({
@@ -155,11 +156,12 @@ export async function openDurableAgentRuntime(
       observation = undefined;
       await previous?.stop();
       assertOpen();
-      const watch = await conversation.watch(context);
+      // Only the documents matter here, not the transcript.
+      const watch = await conversation.watch(context, { min: 1 });
       if (suspended) { await watch.stop(); assertOpen(); }
       observation = watch;
       await committed(watch.value);
-      watch.start(committed);
+      watch.start(onValues(committed));
       void watch.closed.then(result => {
         if (observation !== watch || suspended) return;
         console.error("Agent execution observation ended", result);
@@ -233,11 +235,7 @@ export async function openDurableAgentRuntime(
       await Promise.all([...selectionListeners].map(listener => listener()));
     }
     function stopScope() {
-      return new Set(durableStopScope(catalogWatch!.value!.agents, conversation.id, !identity.parentId));
-    }
-    function parkedTasks() {
-      const scope = stopScope();
-      return Object.values(taskWatch.value.tasks).filter(task => scope.has(task.conversationId) && task.blocked === "restart_limit");
+      return new Set(durableStopScope(catalogWatch!.value.agents, conversation.id, !identity.parentId));
     }
     function assertAdmission() {
       assertOpen();
@@ -284,18 +282,6 @@ export async function openDurableAgentRuntime(
       get hasStoppableWork() {
         const scope = stopScope();
         return Object.values(taskWatch.value.tasks).some(task => scope.has(task.conversationId) && task.kind !== "kintsugi.delegation-anchor");
-      },
-      /** Whether the crash-loop guard parked any of this Agent's work, after the app crashed in it again and again. */
-      get hasParkedWork() { return parkedTasks().length > 0; },
-      /** Run parked work again; Stop ends it instead. */
-      retryParkedWork() {
-        return command(async () => {
-          const parked = parkedTasks();
-          if (!parked.length) return false;
-          await readyForExecution();
-          for (const task of parked) await harness.retryTask(task.id, context);
-          return true;
-        });
       },
       subscribeWork(listener: () => void) { workListeners.add(listener); return () => { workListeners.delete(listener); }; },
       subscribeUsage(listener: () => void) { usageListeners.add(listener); return () => { usageListeners.delete(listener); }; },
@@ -521,16 +507,16 @@ export async function openDurableAgentRuntime(
   }
 
   const catalogWatch = await harness.watchDoc(WorkspaceAgents, context);
-  catalogWatch!.start(async value => {
+  catalogWatch!.start(onValues(async value => {
     if (suspended) return;
     for (const listener of workListeners) listener();
-    for (const record of value?.agents ?? []) {
+    for (const record of value.agents) {
       if (!record.parentId || record.readOnly || agents.has(record.agentId)) continue;
       const pending = (async () => controller((await harness.conversation(record.durableId, context))!, record))();
       agents.set(record.agentId, pending);
       await pending;
     }
-  });
+  }));
   observers.add(async () => { await catalogWatch!.stop(); });
 
   return {

@@ -18,6 +18,8 @@ export function sizeComposer(composer: HTMLElement, maxComposer: number): void {
   const height = (element: HTMLElement | null): number => element?.checkVisibility() ? element.getBoundingClientRect().height : 0;
   // Everything but the input area: thumbnails, status, footer.
   const chrome = composer.getBoundingClientRect().height - area.getBoundingClientRect().height;
+  // Measured before the probe below, which leaves the input as it found it.
+  const current = input.getBoundingClientRect().height;
   // Prompt template buttons make way as soon as there is something written.
   const hadText = composer.classList.contains("composer-has-text");
   const hasText = /\S/.test(input.value);
@@ -51,7 +53,6 @@ export function sizeComposer(composer: HTMLElement, maxComposer: number): void {
   const desired = Number.isFinite(manuallySized) ? manuallySized - chrome - below : content;
   const next = Math.max(minimum, Math.min(desired, limit));
   const overflow = content > next ? "auto" : "hidden";
-  const current = input.getBoundingClientRect().height;
   const inlineHeight = Number.parseFloat(input.style.height) || 0;
   if (hasText !== hadText || compact !== hadCompact || Math.abs(next - current) >= 0.5 || Math.abs(next - inlineHeight) >= 0.5 || input.style.overflowY !== overflow) {
     changeLayout(() => {

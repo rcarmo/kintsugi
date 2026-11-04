@@ -7,6 +7,7 @@ the parts it fixes. Test in the Files editor with wrap long lines turned on (the
 using a markdown file that has many long, wrapping lines.
 
 1. CodeView.js: skip layout while the root is hidden (isRootHidden)
+   Upstream PR: https://github.com/pierrecomputer/pierre/pull/1244
    Bug: while the editor is display: none (Source/Rendered toggle, or another work-view tab
    in front), CodeView's ResizeObserver still renders and caches every wrapped line as 0px.
    The zeros stay after the editor shows again, so the wrong lines or a blank gap appear at
@@ -20,6 +21,7 @@ using a markdown file that has many long, wrapping lines.
 
 2. editor.js: ignore the echo of our own window selection (#windowSelectionEcho,
    getComposedWindowRange, isSameRange)
+   Upstream PR (with part 3): https://github.com/pierrecomputer/pierre/pull/1245
    Bug: a late selectionchange from the editor's own setBaseAndExtent is read as a click,
    collapsing the selection to its anchor.
    Can be dropped once holding Shift+Arrow (all four directions, including across wrapped
@@ -33,8 +35,18 @@ using a markdown file that has many long, wrapping lines.
 
 4. selection.js: Up on the first line goes to the line start, Down on the last line goes to
    the line end (mapCursorMove, moveBySoftLine)
+   Upstream PR: https://github.com/pierrecomputer/pierre/pull/1246
    Can be dropped once Up on line 1 jumps the caret to the start of the document and Down
    on the last line jumps to the end, with and without Shift and on wrapped lines too.
+
+5. FileRenderer.js: keep rows aligned when lines are added inside a run of identical lines
+   (applyDocumentChange's prefixLimit, and a <br> for blank placeholder rows)
+   Upstream PR: https://github.com/pierrecomputer/pierre/pull/1243
+   Bug: press Enter 3 times, Up 3 times, then Enter 3 times. The new blank lines are in the
+   document but render as zero-height rows until something rerenders the file. The
+   prefix/suffix line match places the edit at the end of the blank run instead of at the
+   caret, so the editor's fresh rows land on the wrong lines and the gap gets placeholders.
+   Can be dropped once that sequence shows all six blank lines immediately, each a line tall.
 
 diff --git a/dist/components/CodeView.js b/dist/components/CodeView.js
 index ee5c91c5ab44742994d900a81dbd8e9c508efb49..8a39a129e702fe66bea6c2bd240e42af1bc11bb5 100644
@@ -195,3 +207,37 @@ index 453923073d0d43f781cb02ffeb31e5c694df1016..3db3a0fb3cbbffdb98deefbf71f2b893
  		};
  		const resolvedLine = options.resolveRenderableLine == null ? nextLine : options.resolveRenderableLine(nextLine, direction < 0 ? "up" : "down");
  		if (resolvedLine === void 0) return {
+diff --git a/dist/renderers/FileRenderer.js b/dist/renderers/FileRenderer.js
+index 4c65f0554cbb6403c5e45affb33ff6e8d18adcf3..5d36a54b5962aabcb7e1bde9171f11cec9c84efb 100644
+--- a/dist/renderers/FileRenderer.js
++++ b/dist/renderers/FileRenderer.js
+@@ -346,8 +346,13 @@ var FileRenderer = class {
+ 		const nextLines = linesFromFileContents(textDocument.getText());
+ 		if (result != null && previousLines.length !== nextLines.length) {
+ 			const maxShared = Math.min(previousLines.length, nextLines.length);
++			// Rows the editor just tokenized sit at the edit. Stop the unchanged prefix there, or an
++			// edit inside a run of identical lines (blank lines) is matched further down, and the
++			// edited rows land in the wrong place while placeholders fill the rest.
++			let prefixLimit = maxShared;
++			if (pendingStructuralRows !== void 0) for (const line of pendingStructuralRows.keys()) prefixLimit = Math.min(prefixLimit, line);
+ 			let prefix = 0;
+-			while (prefix < maxShared && previousLines[prefix] === nextLines[prefix]) prefix++;
++			while (prefix < prefixLimit && previousLines[prefix] === nextLines[prefix]) prefix++;
+ 			let suffix = 0;
+ 			while (suffix < maxShared - prefix && previousLines[previousLines.length - 1 - suffix] === nextLines[nextLines.length - 1 - suffix]) suffix++;
+ 			const previousCode = result.code;
+@@ -365,7 +370,13 @@ var FileRenderer = class {
+ 					"data-line-type": "context",
+ 					"data-line-index": i
+ 				},
+-				children: [{
++				// An empty span has no height; blank lines need a <br> like tokenized rows.
++				children: [textDocument.getLineText(i) === "" ? {
++					type: "element",
++					tagName: "br",
++					properties: {},
++					children: []
++				} : {
+ 					type: "element",
+ 					tagName: "span",
+ 					properties: { "data-char": 0 },

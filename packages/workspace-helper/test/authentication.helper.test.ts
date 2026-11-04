@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { buildGoProgram } from "@kintsugi/core";
 import { ensureWorkspaceHelperIdentity } from "../../workspace/src/helper-identity.ts";
-import { closeWorkspaceHelper, configureWorkspaceHelperIdentity, runWorkspaceProcess } from "../src/index.ts";
+import { closeWorkspaceHelper, configureWorkspaceHelperIdentity, openWorkspaceFile, runWorkspaceProcess } from "../src/index.ts";
 
 let directory: string;
 let socket: string;
@@ -51,12 +51,14 @@ const request = () => runWorkspaceProcess(socket, { argv: ["sh", "-c", "id -u"],
 
 test("root RPCs reject a client with socket access but no workspace identity", async () => {
   await expect(request()).rejects.toThrow();
+  await expect(openWorkspaceFile(socket, { user: "root", path: "/etc/hostname" }, { signal: AbortSignal.timeout(3000) })).rejects.toThrow();
   closeWorkspaceHelper(socket);
 });
 
 test("a different workspace identity cannot authenticate the server or run root RPCs", async () => {
   configureWorkspaceHelperIdentity(socket, await readFile(join(otherIdentity, "cert.pem")), await readFile(join(otherIdentity, "key.pem")));
   await expect(request()).rejects.toThrow();
+  await expect(openWorkspaceFile(socket, { user: "root", path: "/etc/hostname" }, { signal: AbortSignal.timeout(3000) })).rejects.toThrow();
   closeWorkspaceHelper(socket);
 });
 
@@ -65,6 +67,8 @@ test("the owning app identity can run a root RPC over the authenticated Unix soc
   const result = await request();
   expect(result.exitCode).toBe(0);
   expect(result.stdout.toString().trim()).toBe("0");
+  const opened = await openWorkspaceFile(socket, { user: "agent", path: "/etc/hostname" });
+  try { expect(Buffer.from(await opened.read(0, 1024))).toEqual(await readFile("/etc/hostname")); } finally { opened.close(); }
   closeWorkspaceHelper(socket);
 });
 

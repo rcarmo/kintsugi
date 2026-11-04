@@ -51,6 +51,39 @@ service WorkspaceHelper {
   // for regular files and folders, to tell whether `user` may read them.
   // Fails with INVALID_ARGUMENT for a relative path.
   rpc StatFiles(StatFilesRequest) returns (StatFilesResponse);
+
+  // Opens a regular file as `user`, following symlinks, and reads parts of it
+  // on request, all from the one open file, even when its path is renamed or
+  // replaced meanwhile. The first request must be `open`; its response is the
+  // `stat` of the opened file. Each later request gets one response, in order:
+  // `read` its `data`, `stat` a fresh `stat`. Closing the request stream closes
+  // the file. Fails like ReadFile.
+  rpc OpenFile(stream OpenFileRequest) returns (stream OpenFileResponse);
+}
+
+message OpenFileRequest {
+  oneof request {
+    ReadFileRequest open = 1;
+    FileRange read = 2;
+    StatOpenFile stat = 3;
+  }
+}
+
+// Bytes [offset, offset + length). Fewer arrive only at the end of the file.
+message FileRange {
+  uint64 offset = 1;
+  // At most 1 MiB.
+  uint32 length = 2;
+}
+
+message StatOpenFile {}
+
+message OpenFileResponse {
+  oneof response {
+    // Of the open file: always REGULAR, never a symlink, and readable.
+    FileStat stat = 1;
+    bytes data = 2;
+  }
 }
 
 message StatFilesRequest {
@@ -75,6 +108,8 @@ message FileStat {
   // Opening it for reading as `user` succeeds. Always false for OTHER, which
   // is never opened: opening a device or FIFO can have side effects.
   bool readable = 5;
+  // The absolute path without symlinks, `.` or `..`, as realpath(3) gives it.
+  string canonical_path = 6;
 }
 
 enum FileKind {

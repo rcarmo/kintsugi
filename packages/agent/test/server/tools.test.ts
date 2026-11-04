@@ -1,21 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { Type } from "typebox";
 import { createKintsugiControlTools, executeDeleteCurrentWorkspace, registerWorkspacePresenter } from "../../src/server/tools.ts";
-import { normalizeWorkspacePath } from "../../src/server/workspace-file-tools.ts";
 
 describe("workspace agent tools", () => {
-  test("normalizes paths under /work", () => {
-    expect(normalizeWorkspacePath("foo.ts")).toBe("/work/foo.ts");
-    expect(normalizeWorkspacePath("/work/foo.ts")).toBe("/work/foo.ts");
-    expect(normalizeWorkspacePath("nested/../foo.ts")).toBe("/work/foo.ts");
-  });
-
-  test("allows paths outside /work", () => {
-    expect(normalizeWorkspacePath("../foo.ts")).toBe("/foo.ts");
-    expect(normalizeWorkspacePath("/etc/passwd")).toBe("/etc/passwd");
-    expect(normalizeWorkspacePath("/workspace/work/x")).toBe("/workspace/work/x");
-  });
-
   test("only the built-in agent's present tool teaches embed URLs", () => {
     const unregister = registerWorkspacePresenter("test-browser", () => ({
       kind: "test-browser",

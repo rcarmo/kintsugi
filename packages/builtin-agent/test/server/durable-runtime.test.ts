@@ -12,7 +12,8 @@ import { subscribeWorkspaceAgentBusy } from "@kintsugi/agent/server";
 import { currentNotificationTurn } from "../../src/server/turn-notifications.ts";
 import { openDurableAgentRuntime, type DurableAgentRuntime } from "../../src/server/durable-runtime.ts";
 import { durableEntryContent } from "../../src/server/durable-images.ts";
-import { projectDurableTranscript } from "../../src/server/durable-transcript.ts";
+import { activeConversationView, projectDurableTranscript } from "../../src/server/durable-transcript.ts";
+import { onValues } from "../../src/server/durable-watch.ts";
 
 const context = BACKGROUND_CONTEXT;
 const paths: string[] = [];
@@ -195,13 +196,22 @@ test.each(["suspend", "stop"] as const)("native %s preserves or withdraws commit
 
 test("reset changes active context but retains journal history and settings", async () => {
   const { runtime, faux, open } = await setup();
-  faux.setResponses([fauxAssistantMessage("Old answer")]);
+  faux.setResponses([fauxAssistantMessage("Old answer"), fauxAssistantMessage("New answer")]);
   const agent = await runtime.agent(record);
   const submission = await agent.submit({ requestId: "old", text: "Old input" });
   await submission.wait(context);
   await agent.reset();
   const active = await agent.context(context);
   expect(JSON.stringify(active.messages)).not.toContain("Old input");
+  // The view holds the history; the transcript shows what the model sees, from the reset on.
+  await (await agent.submit({ requestId: "new", text: "New input" })).wait(context);
+  const watch = await agent.watch(context);
+  expect(JSON.stringify(watch.value.entries)).toContain("Old input");
+  const shown = projectDurableTranscript(activeConversationView(watch.value));
+  expect(shown.map(item => item.type)).toEqual(["note", "user", "working", "text"]);
+  expect(JSON.stringify(shown)).not.toContain("Old input");
+  expect(JSON.stringify(shown)).toContain("New answer");
+  await watch.stop();
   expect(JSON.stringify((await agent.history({}, 100, undefined, context)).items)).toContain("Old input");
   expect((await agent.settings()).model?.modelId).toBe("small");
   await runtime.suspend();
@@ -231,7 +241,7 @@ test("committed watches reconnect with complete state; disconnecting a viewer do
   const agent = await runtime.agent(record);
   const viewer = await agent.watch(context);
   const sawRun = Promise.withResolvers<void>();
-  viewer.start(async (value) => { if (value.docs["pi.live"]?.run) sawRun.resolve(); });
+  viewer.start(onValues(value => { if (value.docs["pi.live"]?.run) sawRun.resolve(); }));
   const admitted = await agent.submit({ requestId: "watched", text: "Watch committed state" });
   await sawRun.promise;
   await started.promise;
@@ -333,7 +343,7 @@ test.each(["close", "delete"] as const)("recovery after %s gate commit marks wor
   const restored = await reopened.agent(record);
   const watch = await restored.watch(context);
   const idle = Promise.withResolvers<void>();
-  watch.start(async (value) => { if (!value.docs["pi.live"]?.run) idle.resolve(); });
+  watch.start(onValues(value => { if (!value.docs["pi.live"]?.run) idle.resolve(); }));
   expect(executions).toBe(1);
   expect(faux.state.callCount).toBe(1);
   await reopened.resume();
@@ -1211,9 +1221,9 @@ test("sending the newest of three follow-ups a failed turn left behind keeps the
   expect(at).toEqual([...at].sort((a, b) => a - b));
 });
 
-test("work parked after repeated crashes shows as parked until it is retried", async () => {
+test("work cut off by repeated crashes ends with an error instead of keeping the Agent busy", async () => {
   const { utimes } = await import("node:fs/promises");
-  const path = await mkdtemp(join(tmpdir(), "kintsugi-durable-parked-"));
+  const path = await mkdtemp(join(tmpdir(), "kintsugi-durable-crash-limit-"));
   paths.push(path);
   const journal = join(path, "journal");
   const child = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/durable-runtime-crash.ts"), journal], { stdout: "pipe", stderr: "pipe" });
@@ -1240,7 +1250,7 @@ test("work parked after repeated crashes shows as parked until it is retried", a
     async execute() { executions++; return { output: [{ type: "text", text: "Recovered tool" }] }; },
   })] }));
   const runtime = await openDurableAgentRuntime(journal, "native-workspace", {}, {
-    // One crash is enough to park here; the app keeps pi's default.
+    // One crash is enough to end the step here; the app keeps pi's default.
     harness: async () => ({ models, registry, settings: { restartLimit: 1 } }),
     prepare: async (): Promise<AgentChange> => { throw new Error("Must not reprepare"); },
     expand: async (_workspace: string, text: string) => text,
@@ -1249,16 +1259,11 @@ test("work parked after repeated crashes shows as parked until it is retried", a
   });
   runtimes.push(runtime);
   const agent = await runtime.agent(record);
+  const settled = new Promise<void>(resolve => { const stop = agent.subscribeWork(() => { if (!agent.hasStoppableWork) { stop(); resolve(); } }); });
   await runtime.resume();
-  expect(agent.hasParkedWork).toBe(true);
-  expect(agent.hasStoppableWork).toBe(true);
+  await settled;
   expect(executions).toBe(0);
-
-  const unparked = new Promise<void>(resolve => { const stop = agent.subscribeWork(() => { if (!agent.hasParkedWork) { stop(); resolve(); } }); });
-  expect(await agent.retryParkedWork()).toBe(true);
-  await unparked;
-  const submission = await agent.submit({ requestId: "crash", text: "Run the probe" });
-  expect((await submission.wait(context)).status).toBe("done");
-  expect(executions).toBe(1);
-  expect(await agent.retryParkedWork()).toBe(false);
+  const messages = (await agent.context(context)).messages;
+  expect(messages.find(message => message.role === "toolResult")).toMatchObject({ toolName: "probe", isError: true });
+  expect(JSON.stringify(messages.at(-1))).toContain("Recovered");
 }, 30_000);

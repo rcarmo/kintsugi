@@ -9,7 +9,7 @@ import type { DurableAgentController } from "./durable-runtime.ts";
 import { DurableAgentPresentation } from "./durable-presentation.ts";
 import { enabledModelOptionViews } from "@kintsugi/agent/server/model-state";
 import { renderWorkspaceCompletionCatalog } from "@kintsugi/agent/server/completion-catalog";
-import { renderNotice, renderParkedWorkNotice } from "./render-notice.ts";
+import { renderNotice } from "./render-notice.ts";
 import { ids } from "@kintsugi/agent/server/render-context";
 import { renderAgentPaneComposerFooter, renderPromptActions, type AgentStatsView } from "./render-composer.ts";
 import { notificationControlId, renderNotificationControl } from "./render-notification.ts";
@@ -45,10 +45,7 @@ export class AgentPresentation {
       { target: ids.stats(this), html: renderAgentPaneComposerFooter(this, this.stats()), morph: false },
       { target: ids.completionCatalog(this), html: this.catalog },
       { target: notificationControlId(this), html: renderNotificationControl(this, this.isStreaming), action: "replace" },
-      { target: ids.notices(this), html: [
-        this.failure ? renderNotice("error", "This Agent view disconnected. Reload to reconnect.") : "",
-        this.controller.hasParkedWork ? renderParkedWorkNotice(this) : "",
-      ].join("") },
+      ...(this.failure ? [{ target: ids.notices(this), html: renderNotice("error", "This Agent view disconnected. Reload to reconnect.") }] : []),
     ];
   }
 

@@ -1,5 +1,5 @@
 import { detailsClosingPattern, detailsOpeningPattern } from "./details.ts";
-import { renderMarkdown, renderProvisionalMarkdown } from "./markdown.ts";
+import { renderMarkdown, renderProvisionalMarkdown, renderProvisionalMarkdownBlocks } from "./markdown.ts";
 
 interface Fence {
   marker: "`" | "~";
@@ -15,6 +15,8 @@ export interface StreamingMarkdownUpdate {
   stableBoundary: number;
   stableHtmlAddition: string;
   tailHtml: string;
+  /** The tail as one element per top-level block, when it renders that way; `tailHtml` joins them. */
+  tailBlocks?: string[];
 }
 
 /**
@@ -206,10 +208,13 @@ export class StreamingMarkdownRenderer {
   render(source: string): StreamingMarkdownUpdate {
     const previousBoundary = this.stableBoundary;
     this.stableBoundary = Math.max(previousBoundary, streamingMarkdownStableBoundary(source));
+    const tail = repairStreamingMarkdownTail(source.slice(this.stableBoundary));
+    const tailBlocks = renderProvisionalMarkdownBlocks(this.workspaceId, tail);
     return {
       stableBoundary: this.stableBoundary,
       stableHtmlAddition: renderMarkdown(this.workspaceId, source.slice(previousBoundary, this.stableBoundary)),
-      tailHtml: renderProvisionalMarkdown(this.workspaceId, repairStreamingMarkdownTail(source.slice(this.stableBoundary))),
+      tailHtml: tailBlocks ? tailBlocks.join("") : renderProvisionalMarkdown(this.workspaceId, tail),
+      tailBlocks,
     };
   }
 
