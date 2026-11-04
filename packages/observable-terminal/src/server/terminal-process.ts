@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { KintsugiCoreError, commandSignal, invalidArguments, withCommandSignal } from "@kintsugi/core";
+import { KintsugiCoreError, commandSignal, invalidArguments, shellQuote, withCommandSignal } from "@kintsugi/core";
 import type { WorkspaceServerSocketSession } from "@kintsugi/shared";
 import type { StartWorkspaceProcess, WorkspaceExecStart } from "@kintsugi/workspace-helper";
 import { terminalEndedCloseCode } from "../shared/index.ts";
@@ -181,8 +181,8 @@ printf 'none\\n' > "$dir/exit"
 
 const startScript = `root=$1 dir=$2 session=$3 digest=$4 cwd=$5 cols=$6 rows=$7 history=$8 deadline=$9
 shift 9
-keep=$1 interactive=$2 pane=$3 hook=$4
-shift 4
+keep=$1 interactive=$2 pane=$3 hook=$4 expiry=$5
+shift 5
 ${lockRoot}if ! mkdir "$dir" 2>/dev/null; then
   if [ "$(cat "$dir/request" 2>/dev/null)" = "$digest" ]; then exit 0; fi
   # Stopped before it started.
@@ -233,7 +233,7 @@ if ! pid=$(tmux -N new-session -d -P -F '#{pane_pid}' -s "$session" -x "$cols" -
 fi
 printf '%s\\n' "$pid" > "$dir/pid"
 if [ -n "$remaining" ]; then
-  tmux -N run-shell -b -d "$((remaining / 1000)).$(printf '%03d' "$((remaining % 1000))")" "sh $dir/expire $dir $session >/dev/null 2>&1"
+  tmux -N run-shell -b -d "$((remaining / 1000)).$(printf '%03d' "$((remaining % 1000))")" "$expiry"
 fi
 tmux -N wait-for -S "$session-ready"
 # Holding the lock until the command runs, so a stop always finds it running.
@@ -358,10 +358,13 @@ export function createTerminalProcesses(options: { run: RunTerminalProcessComman
       const pane = `exec sh ${dir}/run ${dir} ${session}`;
       // The prefixes keep each argument in place when tmux expands it to nothing.
       const hook = `run-shell -b "sh ${dir}/finish ${dir} ${session} #{hook_pane} s#{pane_dead_status} g#{pane_dead_signal} >/dev/null 2>&1"`;
+      // The timer outlives release. Guard before opening the script, under the same
+      // root lock as release, so deletion cannot race the check or its execution.
+      const expiry = `flock ${options.root} sh -c ${shellQuote('if [ -f "$1/expire" ]; then . "$1/expire"; fi')} sh ${dir} ${session} >/dev/null 2>&1`;
       await sh(startScript, [
         options.root, dir, session, requestDigest(start, cols, rows), start.cwd,
         String(cols), String(rows), String(observableTerminalHistoryLimit), start.deadline === undefined ? "" : String(start.deadline),
-        start.keepText ? "1" : "0", start.interactive ? "1" : "0", pane, hook, ...env,
+        start.keepText ? "1" : "0", start.interactive ? "1" : "0", pane, hook, expiry, ...env,
       ], start.command);
     },
     state,

@@ -1,8 +1,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { StartWorkspaceProcess } from "@kintsugi/workspace-helper";
+import { shellQuote } from "@kintsugi/core";
 import { terminalEndedCloseCode } from "../../src/shared/index.ts";
 import { createTerminalProcesses, terminalProcessSession, type RunTerminalProcessCommand, type TerminalProcesses, type TerminalProcessState } from "../../src/server/terminal-process.ts";
 import { startPrivateTmux } from "../support/local-terminal-processes.ts";
@@ -236,6 +237,43 @@ export function describeTerminalProcesses(name: string, open: (tmuxDirectory: st
       const result = await processes.waitForExit(id);
       expect(result).toMatchObject({ exitCode: 0, aborted: false, timedOut: false });
       expect(result.output.text).toBe("quick");
+    });
+
+    test.each(["finished", "running"] as const)("a released %s process's pending deadline callback succeeds after its scripts are deleted", async state => {
+      const fixture = await mkdtemp(join(directory, "deadline-callback-"));
+      const bin = join(fixture, "bin");
+      await mkdir(bin);
+      const callback = join(fixture, "callback");
+      const observed = join(fixture, "observed");
+      const status = join(fixture, "status");
+      const executable = await place!.run({ argv: ["sh", "-c", "command -v tmux; printf '%s' \"$PATH\""], user: "agent" }, {});
+      const [tmuxPath, path] = executable.stdout.toString().split("\n");
+      // Record the real scheduled callback's exit code, which tmux otherwise reports only to a client.
+      await writeFile(observed, `sh ${shellQuote(callback)}\nprintf '%s' "$?" > ${shellQuote(status)}\n`);
+      await writeFile(join(bin, "tmux"), `#!/bin/sh
+if [ "$1" = -N ] && [ "$2" = run-shell ] && [ "$3" = -b ] && [ "$4" = -d ]; then
+  printf '%s\\n' "$6" > ${shellQuote(callback)}
+  exec ${shellQuote(tmuxPath!)} "$1" "$2" "$3" "$4" "$5" ${shellQuote(`sh ${shellQuote(observed)}`)}
+fi
+exec ${shellQuote(tmuxPath!)} "$@"
+`, { mode: 0o755 });
+      const monitored = createTerminalProcesses({
+        root: join(directory, "processes"), start: place!.start,
+        run: (command, options) => place!.run({ ...command, env: { ...command.env, PATH: `${bin}:${path}` } }, options),
+      });
+      const id = crypto.randomUUID();
+      started.push(id);
+      await monitored.start({ id, command: state === "finished" ? "echo quick" : "sleep 30", cwd: directory, deadline: Date.now() + 1500 });
+      if (state === "finished") expect((await monitored.waitForExit(id)).timedOut).toBe(false);
+      await monitored.release(id);
+      expect(await Bun.file(join(directory, "processes", id, "expire")).exists()).toBe(false);
+      const limit = Date.now() + 5000;
+      while (!await Bun.file(status).exists()) {
+        if (Date.now() > limit) throw new Error("The scheduled deadline callback did not run");
+        await Bun.sleep(20);
+      }
+      expect(await readFile(status, "utf8")).toBe("0");
+      expect(await monitored.state(id)).toEqual({ state: "missing" });
     });
 
     test("kept plain text holds the whole output and outlives release", async () => {
