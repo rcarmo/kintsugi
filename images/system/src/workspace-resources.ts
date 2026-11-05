@@ -8,7 +8,7 @@ import { workspaceResourceLimitsSchema, workspaceResourceChangeSchema, type Work
 
 const GiB = 1024 ** 3;
 export function workspaceResourceDefaults(memory: number, cpus: number) {
-  return { memory: Math.min(2 * GiB, Math.floor(memory / 2)), cpus: Math.max(0.25, Math.min(4, cpus)), pids: 1024 };
+  return { memory: Math.min(4 * GiB, Math.floor(memory / 2)), cpus: Math.max(0.25, Math.min(4, cpus)), pids: 1024 };
 }
 const limitsSchema = workspaceResourceLimitsSchema;
 const recordSchema = Type.Object({ limits: limitsSchema, managed: Type.Optional(Type.Boolean()), pending: Type.Optional(Type.Boolean()), applyError: Type.Optional(Type.String()), desiredRunning: Type.Optional(Type.Boolean()), oomKills: Type.Integer({ minimum: 0 }), blockedAt: Type.Optional(Type.Number()), reason: Type.Optional(Type.String()), source: Type.Optional(Type.String()), containerId: Type.Optional(Type.String()), observedOom: Type.Optional(Type.Number()), lastOomExit: Type.Optional(Type.String()), exitCode: Type.Optional(Type.Integer()), restartCount: Type.Optional(Type.Integer()), finishedAt: Type.Optional(Type.String()), lastExitAt: Type.Optional(Type.String()), lastExitCode: Type.Optional(Type.Integer()) });
