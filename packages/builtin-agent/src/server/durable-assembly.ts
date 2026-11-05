@@ -49,7 +49,7 @@ export async function createDurableHarnessOptions(workspaceId: string, options: 
   return {
     models: templates.models(delegation?.models ?? models),
     registry,
-    settings: { documentRetentionMs: 60_000, compaction: { enabled: true, keepRecentTokens: 6000 } },
+    settings: { documentRetentionMs: 60_000, stream: { cacheRetention: "short" }, compaction: { enabled: true, keepRecentTokens: 6000 } },
     // Faulted, interrupted and unmigratable tasks, and failing extension code, are otherwise invisible.
     onReport: ({ error, ...info }) => console.error(`Agent work report (${info.kind})`, error, info),
   };
@@ -90,10 +90,11 @@ export async function prepareDurableAgent(
   const instructions = [
     kintsugiSystemPrompt,
     codemodeTemplatesInstructions,
-    durableJournalInstructions(workspaceId, agentId),
     ...appended,
     ...agents.map(formatProjectInstructions),
     formatSkillsForPrompt(skills.skills),
+    // Keep per-Agent identity after the shared project/skill prefix for provider reuse.
+    durableJournalInstructions(workspaceId, agentId),
     `Current working directory: ${workspaceRoot}`,
   ].filter(Boolean).join("\n\n");
   return {

@@ -49,6 +49,7 @@ function bashSummary(tool: ToolView): string {
 function toolSummaryHtml(tool: ToolView): string {
   if (isBashTool(tool.name)) return bashSummary(tool);
   if (tool.name === "codemode") return codemodeSummary(tool);
+  if (tool.name === "plan") return planSummary(tool);
   // Code mode's `models.*` calls name the model they run.
   if (codemodeModelCall.test(tool.name) && Value.Check(modelCallArgumentsSchema, tool.args)) return tool.args.model.id;
   if (tool.name === "read") {
@@ -65,6 +66,33 @@ function toolSummaryHtml(tool: ToolView): string {
     return summaryHtml([pathSummary(tool), editCount, changes]);
   }
   return genericToolSummary(tool);
+}
+
+function planSummary(tool: ToolView): string {
+  const args = toolArgs(tool);
+  const action = args?.action ?? (Array.isArray(args?.plan) ? "update" : Array.isArray(args?.patches) ? "patch" : "read");
+  switch (action) {
+    case "read": return "Read checklist";
+    case "reset": return "Reset checklist";
+    case "write": return "Replace checklist from Markdown";
+    case "edit": {
+      const count = Array.isArray(args?.edits) ? args.edits.length : 1;
+      return `Edit checklist · ${count} ${count === 1 ? "change" : "changes"}`;
+    }
+    case "update": return Array.isArray(args?.plan) ? `Update checklist · ${args.plan.length} ${args.plan.length === 1 ? "step" : "steps"}` : "Update checklist";
+    case "patch": {
+      const patches = Array.isArray(args?.patches) ? args.patches : [];
+      if (patches.length !== 1) return patches.length ? `Change ${patches.length} steps` : "Change checklist";
+      const patch = patches[0];
+      if (!isJsonObject(patch)) return "Change checklist";
+      const verb = patch.operation === "add" ? "Add" : patch.operation === "remove" ? "Remove" : "Update";
+      const index = Value.Check(Type.Integer({ minimum: 1 }), patch.index) ? ` ${patch.index}` : "";
+      const status = patch.status === "completed" ? "complete" : patch.status === "in_progress" ? "in progress" : patch.status === "pending" ? "pending" : "";
+      const step = Value.Check(toolStringArgumentSchema, patch.step) ? patch.step : Value.Check(toolStringArgumentSchema, patch.match) ? patch.match : "";
+      return truncateOneLine(`${verb} step${index}${status ? ` · ${status}` : ""}${step ? ` — ${step}` : ""}`, 120);
+    }
+    default: return "Update checklist";
+  }
 }
 
 function toolSummaryText(tool: ToolView): string {

@@ -14,6 +14,7 @@
     "./server/model-preferences": "./src/server/model-preferences.ts",
     "./server/model-state": "./src/server/model-state.ts",
     "./server/prompt-templates": "./src/server/prompt-templates.ts",
+    "./server/prompt-usage": "./src/server/prompt-usage.ts",
     "./server/render-context": "./src/server/render-context.ts",
     "./server/render-transcript": "./src/server/render-transcript.ts",
     "./server/session-share": "./src/server/session-share.ts",

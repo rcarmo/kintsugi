@@ -93,3 +93,41 @@ test("assembled native Harness uses the committed prompt and model across reopen
   expect((await submission.wait(context)).status).toBe("done");
   expect(faux.state.callCount).toBe(1);
 });
+
+test("shared project and skill prefixes precede per-Agent journal identity", async () => {
+  const one = await prepareDurableAgent("assembly-workspace", "one", {}, {}, resources);
+  const two = await prepareDurableAgent("assembly-workspace", "two", {}, {}, resources);
+  const marker = "## Searchable agent history";
+  const prefix = one.instructions!.slice(0, one.instructions!.indexOf(marker));
+  expect(prefix).toContain("Keep the important invariant.");
+  expect(prefix).toContain("/work/.agents/skills/review/SKILL.md");
+  expect(two.instructions!.startsWith(prefix)).toBe(true);
+  expect(one.instructions).toContain('Kintsugi Agent ID is "one"');
+  expect(two.instructions).toContain('Kintsugi Agent ID is "two"');
+});
+
+test("production assembly enables short retention and preserves session affinity across turns", async () => {
+  const { createDurableHarnessOptions } = await import("../../src/server/durable-assembly.ts");
+  const path = await mkdtemp(join(tmpdir(), "kintsugi-cache-assembly-"));
+  paths.push(path);
+  let workspace: DurableWorkspace;
+  const options = await createDurableHarnessOptions("cache-workspace", {}, async () => {}, () => workspace.harness);
+  expect(options.settings).toMatchObject({ stream: { cacheRetention: "short" } });
+  const models = createModels(), faux = fauxProvider({ tokensPerSecond: 100_000 });
+  models.setProvider(faux.provider);
+  const seen: { session?: string; retention?: string }[] = [];
+  const stream = models.streamSimple.bind(models);
+  models.streamSimple = (model, request, settings) => {
+    seen.push({ session: settings?.sessionId, retention: settings?.cacheRetention });
+    return stream(model, request, settings);
+  };
+  workspace = await openDurableWorkspace(path, "cache-workspace", { ...options, models });
+  workspaces.push(workspace);
+  const conversation = await workspace.agent({ agentId: "cache-agent", label: "Agent", title: "Reuse" }, { model: { provider: "faux", modelId: "faux-1" }, instructions: "Stable instructions" });
+  faux.setResponses([fauxAssistantMessage("First"), fauxAssistantMessage("Second")]);
+  for (const text of ["First request", "Second request"]) await (await conversation.submit({ type: "input", content: text }, context)).wait(context);
+  expect(seen).toHaveLength(2);
+  expect(seen[0]?.session).toBeTruthy();
+  expect(seen[1]?.session).toBe(seen[0]?.session);
+  expect(seen.map(call => call.retention)).toEqual(["short", "short"]);
+});

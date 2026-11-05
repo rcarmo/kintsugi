@@ -11,6 +11,7 @@ import { enabledModelOptionViews } from "@kintsugi/agent/server/model-state";
 import { renderWorkspaceCompletionCatalog } from "@kintsugi/agent/server/completion-catalog";
 import { renderNotice } from "./render-notice.ts";
 import { ids } from "@kintsugi/agent/server/render-context";
+import { promptCacheHitPercent } from "@kintsugi/agent/server/prompt-usage";
 import { renderAgentPaneComposerFooter, renderPromptActions, type AgentStatsView } from "./render-composer.ts";
 import { notificationControlId, renderNotificationControl } from "./render-notification.ts";
 import type { WorkspaceAgentInfo } from "./agent-store.ts";
@@ -140,6 +141,7 @@ export class AgentPresentation {
     const model = this.model && this.modelRuntime.getModel(this.model.provider, this.model.id);
     return { nativeBranchUsage: true, descendantCost: this.descendantCost, contextPercent: model?.contextWindow ? this.contextTokens / model.contextWindow * 100 : null, compactAvailable: !this.isStreaming && Boolean(this.model),
       inputTokens: buckets.reduce((sum, item) => sum + item.input, 0), outputTokens: buckets.reduce((sum, item) => sum + item.output, 0),
+      cacheHitPercent: promptCacheHitPercent(buckets),
       cost: buckets.reduce((sum, item) => sum + item.cost.total, 0), modelName: this.model?.id,
       thinkingLevel: this.thinkingLevel, thinkingLevels: this.availableThinkingLevels(), models: this.models.map(model => ({ ...model, selected: model.provider === this.model?.provider && model.id === this.model.id })) };
   }

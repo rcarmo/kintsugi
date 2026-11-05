@@ -1,3 +1,4 @@
+import { promptCacheHitPercent } from "@kintsugi/agent/server/prompt-usage";
 import { claudeBackgroundActivities, claudeBackgroundDetail, claudeBackgroundRoute } from "./background.ts";
 import { createNativeAgentRendering } from "@kintsugi/native-agent/server";
 import { projectClaudeTranscript } from "./transcript.ts";
@@ -16,6 +17,7 @@ export const rendering = createNativeAgentRendering<ClaudeRuntime>({
       contextPercent: runtime.contextPercent, compactAvailable: !runtime.isTurnRunning,
       inputTokens: usage.length ? usage.reduce((total, value) => total + value.input_tokens + (value.cache_creation_input_tokens ?? 0) + (value.cache_read_input_tokens ?? 0), 0) : null,
       outputTokens: usage.length ? usage.reduce((total, value) => total + value.output_tokens, 0) : null,
+      cacheHitPercent: promptCacheHitPercent(usage.map(value => ({ input: value.input_tokens, cacheRead: value.cache_read_input_tokens, cacheWrite: value.cache_creation_input_tokens }))),
       cost: null, modelName: runtime.selectedModel?.displayName, thinkingLevel: runtime.record.thinkingLevel ?? "", thinkingLevels: selection.thinkingLevels, models: selection.models, connectedProvider: true,
     };
   },
