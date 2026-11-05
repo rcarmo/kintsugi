@@ -72,6 +72,12 @@
   ],
   "files": [
     {
+      "from": "rootfs/etc/systemd/system.conf.d/90-kintsugi-workspace-limits.conf",
+      "to": "/etc/systemd/system.conf.d/90-kintsugi-workspace-limits.conf",
+      "mode": "0644",
+      "afterRun": true
+    },
+    {
       "from": "rootfs/opt/kintsugi/home-defaults/.claude/settings.json",
       "to": "/opt/kintsugi/home-defaults/.claude/settings.json",
       "mode": "0600",

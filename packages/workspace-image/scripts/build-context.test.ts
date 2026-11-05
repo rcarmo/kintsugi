@@ -34,6 +34,7 @@ describe("workspace image content identity", () => {
   });
 
   test.each([
+    ["systemd manager task defaults", "packages/workspace-image/rootfs/etc/systemd/system.conf.d/90-kintsugi-workspace-limits.conf", "files/base/rootfs/etc/systemd/system.conf.d/90-kintsugi-workspace-limits.conf", "#"],
     ["systemd bootstrap script", "packages/workspace-image/rootfs/usr/local/bin/kintsugi-workspace-init", "files/base/rootfs/usr/local/bin/kintsugi-workspace-init", "#"],
     ["Docker capability guard", "packages/workspace-image/rootfs/usr/local/bin/docker", "files/base/rootfs/usr/local/bin/docker", "#"],
   ])("%s is packaged and changes the default image identity", async (_name, sourcePath, packagedPath, comment) => {

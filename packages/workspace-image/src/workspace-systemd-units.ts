@@ -5,6 +5,8 @@ export function workspaceRuntimeUnits() {
 Description=Kintsugi workspace terminal workloads
 [Service]
 Type=exec
+# All terminal children share the finite container PID budget, not 15% of it.
+TasksMax=infinity
 User=agent
 EnvironmentFile=/.kintsugi/environment
 WorkingDirectory=/work
@@ -28,6 +30,7 @@ TimeoutStopSec=10s
 Description=Kintsugi workspace initialization
 [Service]
 Type=oneshot
+TasksMax=infinity
 EnvironmentFile=/.kintsugi/environment
 WorkingDirectory=/work
 ExecStart=/bin/sh /.kintsugi/init.sh
@@ -41,6 +44,7 @@ After=kintsugi-init.service
 StartLimitIntervalSec=60s
 StartLimitBurst=5
 [Service]
+TasksMax=infinity
 EnvironmentFile=/.kintsugi/environment
 WorkingDirectory=/work
 ExecStart=/usr/local/bin/kintsugi-workspace-gateway

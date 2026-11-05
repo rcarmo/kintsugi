@@ -205,6 +205,15 @@ jobs:
         run: |
           docker run --rm --entrypoint /bin/sh '${{ needs.prepare.outputs.workspace }}:${{ needs.prepare.outputs.signature }}-${{ matrix.arch }}' \
             -ec 'test "$(uname -m)" = "${{ matrix.machine }}"; bun --version; gh --version; glab --version; bkt --version; kintsugi-dockerd /usr/local/bin/dockerd --version; test -x /usr/local/bin/kintsugi-workspace-gateway'
+      - name: Verify native workspace task-limit configuration
+        run: |
+          docker run --rm --entrypoint /bin/sh '${{ needs.prepare.outputs.workspace }}:${{ needs.prepare.outputs.signature }}-${{ matrix.arch }}' \
+            -ec '
+              grep -qx "DefaultTasksMax=infinity" /etc/systemd/system.conf.d/90-kintsugi-workspace-limits.conf
+              for unit in kintsugi-tmux.service kintsugi-init.service kintsugi-gateway.service kintsugi-helper.service docker.service containerd.service; do
+                grep -qx "TasksMax=infinity" "/usr/lib/systemd/system/$unit"
+              done
+            '
       - name: Save verified slice receipt
         if: inputs.publish
         run: |
