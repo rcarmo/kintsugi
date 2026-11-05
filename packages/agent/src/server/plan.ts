@@ -57,12 +57,18 @@ export function agentPlanStore() {
   if (!active || active.directory !== directory) active = { directory, store: createAgentPlanStore(directory) };
   return active.store;
 }
-export const planToolDescription = "Read or update your own persistent, user-editable plan. Prefer action=patch with add/update/remove items; action=update replaces the structured plan. Statuses: pending, in_progress, completed; at most one in_progress. read returns Markdown, structured items and revision. write replaces Markdown; edit applies nonoverlapping exact edits (replace/delete/insert_before/insert_after/append/prepend); reset restores the default checklist. Use expectedRevision from read when replacing a plan to avoid overwriting user changes. Saving a plan never starts work. Plans belong to this Agent, not the workspace, and survive new sessions and compaction.";
+export const planToolDescription = "Read or update your own persistent, user-editable plan. Prefer action=patch with add/update/remove items; action=update replaces the structured plan. Statuses: pending, in_progress, completed; at most one in_progress. read returns Markdown and revision; mutations return a compact acknowledgement without repeating the checklist. write replaces Markdown; edit applies nonoverlapping exact edits (replace/delete/insert_before/insert_after/append/prepend); reset restores the default checklist. Use expectedRevision from read when replacing a plan to avoid overwriting user changes. Saving a plan never starts work. Plans belong to this Agent, not the workspace, and survive new sessions and compaction.";
+export function planToolOutput(input: AgentPlanInput, plan: AgentPlan): string {
+  if (agentPlanAction(input) === "read") return `Plan (revision ${plan.revision})\n\n${plan.markdown}`;
+  const done = plan.plan.filter(item => item.status === "completed").length;
+  const active = plan.plan.find(item => item.status === "in_progress")?.step;
+  return `Plan updated (revision ${plan.revision}; ${done}/${plan.plan.length} complete).${active ? ` Current: ${active.slice(0, 160)}` : ""}`;
+}
 export function createAgentPlanTool(workspaceId: string, agentId: string) {
   return defineWorkspaceTool({ name: "plan", label: "Plan", description: planToolDescription, parameters: agentPlanInputSchema,
     async execute(_id, input) {
       const plan = agentPlanStore().change(workspaceId, agentId, input);
-      return { content: [{ type: "text" as const, text: JSON.stringify(plan) }], details: { revision: plan.revision } };
+      return { content: [{ type: "text" as const, text: planToolOutput(input, plan) }], details: { revision: plan.revision } };
     },
   });
 }

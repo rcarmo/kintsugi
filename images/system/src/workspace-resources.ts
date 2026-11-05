@@ -1,5 +1,6 @@
 import { chown, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { workspaceOomGroupKills } from "./workspace-oom-events.ts";
 import { createKeyedOperationQueue, readTextIfExists, writeJsonAtomic } from "../../../packages/core/src/index.ts";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
@@ -70,7 +71,7 @@ export function createWorkspaceResourceControl(options: { memory: number; cpus: 
     if (options.readOom) return options.readOom(c);
     const root = await cgroup(c); if (!root) return;
     await writeFile(join(root, "memory.oom.group"), "1");
-    return Number((await readFile(join(root, "memory.events"), "utf8")).match(/^oom_kill (\d+)$/m)![1]);
+    return workspaceOomGroupKills(root);
   }
   async function observe(c: Container, e: RecordState) {
     if (e.containerId !== c.Id) { e.containerId = c.Id; e.observedOom = 0; }

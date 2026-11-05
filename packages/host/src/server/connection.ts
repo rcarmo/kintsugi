@@ -7,15 +7,22 @@ import { hostSocketPath, terminalSize, type HostReply, type HostCommand, type Ho
 import type { WorkspaceServerSocketHandler } from "@kintsugi/shared";
 
 export const hostAvailable = () => existsSync(hostSocketPath);
-export function hostRequest<Command extends HostCommand>(request: Command, socketPath = hostSocketPath): Promise<HostResults[Command["operation"]]> {
+export function hostRequest<Command extends HostCommand>(request: Command, socketPath = hostSocketPath, options: { signal?: AbortSignal } = {}): Promise<HostResults[Command["operation"]]> {
   return new Promise((resolve, reject) => {
+    options.signal?.throwIfAborted();
     const socket = createConnection(socketPath);
     const lines = createInterface({ input: socket });
     let settled = false;
+    const abort = () => {
+      settled = true;
+      reject(new Error("Host request aborted", { cause: options.signal?.reason }));
+      socket.destroy();
+    };
+    options.signal?.addEventListener("abort", abort, { once: true });
     socket.setTimeout(15000, () => socket.destroy(new Error("Host request timed out")));
     socket.on("connect", () => socket.write(`${JSON.stringify(request)}\n`));
     socket.on("error", reject);
-    socket.on("close", () => { lines.close(); if (!settled) reject(new Error("Host disconnected before responding")); });
+    socket.on("close", () => { options.signal?.removeEventListener("abort", abort); lines.close(); if (!settled) reject(new Error("Host disconnected before responding")); });
     lines.once("line", line => {
       settled = true;
       try {

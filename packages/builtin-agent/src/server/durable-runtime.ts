@@ -1,3 +1,4 @@
+import { collectDescendantUsage } from "./durable-usage.ts";
 import { registerDurableTelemetry } from "./durable-telemetry.ts";
 import { enabledModelOptionViews } from "@kintsugi/agent/server/model-state";
 import { getAgentModelThinkingLevel } from "@kintsugi/llm/server";
@@ -285,22 +286,13 @@ export async function openDurableAgentRuntime(
       },
       subscribeWork(listener: () => void) { workListeners.add(listener); return () => { workListeners.delete(listener); }; },
       subscribeUsage(listener: () => void) { usageListeners.add(listener); return () => { usageListeners.delete(listener); }; },
+      async descendantUsage() {
+        const records = (await harness.snapshot(WorkspaceAgents, context))!.agents;
+        return collectDescendantUsage(records, identity.agentId, id => harness.snapshot(UsageDoc, id, context));
+      },
       async descendantCost() {
         const records = (await harness.snapshot(WorkspaceAgents, context))!.agents;
-        const descendants = new Set([identity.agentId]);
-        let added = true;
-        while (added) {
-          added = false;
-          for (const record of records) if (record.parentId && descendants.has(record.parentId) && !descendants.has(record.agentId)) { descendants.add(record.agentId); added = true; }
-        }
-        descendants.delete(identity.agentId);
-        if (!descendants.size) return undefined;
-        let cost = 0;
-        for (const record of records.filter(record => descendants.has(record.agentId))) for (const id of record.branches ?? [record.durableId]) {
-          const usage = await harness.snapshot(UsageDoc, id, context);
-          for (const value of [...Object.values(usage?.models ?? {}), ...Object.values(usage?.tools ?? {})]) cost += value.cost.total;
-        }
-        return cost;
+        return (await collectDescendantUsage(records, identity.agentId, id => harness.snapshot(UsageDoc, id, context)))?.cost;
       },
       async userMessages() {
         const { entries } = await conversation.context(context);

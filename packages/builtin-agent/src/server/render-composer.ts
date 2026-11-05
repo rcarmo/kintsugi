@@ -22,6 +22,7 @@ export interface AgentStatsView {
   cost: number | null;
   cacheHitPercent?: number | null;
   descendantCost?: number;
+  familyCacheHitPercent?: number | null;
   modelName: string | undefined;
   thinkingLevel: string;
   thinkingLevels: string[];
@@ -170,7 +171,7 @@ ${meter}
 ${stats.inputTokens === null ? "" : `<span class="agent-stat" data-footer-drop="1" title="Tokens up (input)${stats.nativeBranchUsage ? " on this branch" : ""}">↑ <b>${formatTokens(stats.inputTokens)}</b></span>`}
 ${stats.outputTokens === null ? "" : `<span class="agent-stat" data-footer-drop="1" title="Tokens down (output)${stats.nativeBranchUsage ? " on this branch" : ""}">↓ <b>${formatTokens(stats.outputTokens)}</b></span>`}
 ${stats.cost === null ? "" : `<span class="agent-stat" data-footer-drop="2" title="${stats.nativeBranchUsage ? `This branch cost, including compaction and recorded attempts.${stats.descendantCost === undefined ? "" : " Plus what its subagents and its scripts' one-shot agents cost, excluding inherited usage."} Updated when usage commits.` : "Agent cost. Updated at agent turn end."}"><b>${formatCost(stats.cost)}${stats.descendantCost === undefined ? "" : ` + ${formatCost(stats.descendantCost)}`}</b></span>`}
-<span class="agent-stat" data-footer-drop="2" title="CH: provider-reported prompt-token hit rate${stats.nativeBranchUsage ? " on this branch, including compaction and model tools; excluding descendants" : " for this session"}. Reused input divided by all prompt tokens, including writes. Output tokens are excluded. N/A means no usable usage data; providers may report unavailable hits as zero.">CH <b>${stats.cacheHitPercent == null ? "N/A" : `${stats.cacheHitPercent.toFixed(0)}%`}</b></span>
+<span class="agent-stat" data-footer-drop="2" title="CH: provider-reported prompt-token hit rate${stats.nativeBranchUsage ? " on this branch, including compaction and model tools; excluding descendants" : " for this session"}${stats.familyCacheHitPercent === undefined ? "" : ". Second percentage: this branch plus all delegated and one-shot descendants; token-weighted, each branch counted once"}. Reused input divided by all prompt tokens, including writes. Output tokens are excluded. N/A means no usable usage data; providers may report unavailable hits as zero.">CH <b>${stats.cacheHitPercent == null ? "N/A" : `${stats.cacheHitPercent.toFixed(0)}%`}${stats.familyCacheHitPercent === undefined ? "" : ` / ${stats.familyCacheHitPercent === null ? "N/A" : `${stats.familyCacheHitPercent.toFixed(0)}%`}`}</b></span>
 ${selectionForms}
 ${renderSharedComposerSelections({
     modelFormId,

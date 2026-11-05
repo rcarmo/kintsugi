@@ -1,3 +1,4 @@
+import type { DescendantUsage } from "./durable-usage.ts";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { durableContextTokens } from "./durable-accounting.ts";
 import { renderDurableTree } from "./durable-tree.ts";
@@ -28,7 +29,7 @@ export class AgentPresentation {
   private readonly transcriptListeners = new Map<AgentLivePresentationListener, { unsubscribe(): void }>();
   private unsubscribeWork!: () => void;
   private unsubscribeUsage!: () => void;
-  private descendantCost?: number;
+  private descendantUsage?: DescendantUsage;
   private unsubscribeStatus!: () => void;
   private unsubscribeSelection!: () => void;
   model?: { provider: string; id: string };
@@ -132,16 +133,17 @@ export class AgentPresentation {
     return model ? getSupportedThinkingLevels(model) : [];
   }
   private async refreshUsage() {
-    this.descendantCost = await this.controller.descendantCost();
+    this.descendantUsage = await this.controller.descendantUsage();
     if (!this.disposed) this.chrome.invalidate();
   }
   private stats(): AgentStatsView {
     const usage = this.presentation.state.usage;
     const buckets = [...Object.values(usage.models), ...Object.values(usage.tools)];
     const model = this.model && this.modelRuntime.getModel(this.model.provider, this.model.id);
-    return { nativeBranchUsage: true, descendantCost: this.descendantCost, contextPercent: model?.contextWindow ? this.contextTokens / model.contextWindow * 100 : null, compactAvailable: !this.isStreaming && Boolean(this.model),
+    return { nativeBranchUsage: true, descendantCost: this.descendantUsage?.cost, contextPercent: model?.contextWindow ? this.contextTokens / model.contextWindow * 100 : null, compactAvailable: !this.isStreaming && Boolean(this.model),
       inputTokens: buckets.reduce((sum, item) => sum + item.input, 0), outputTokens: buckets.reduce((sum, item) => sum + item.output, 0),
       cacheHitPercent: promptCacheHitPercent(buckets),
+      familyCacheHitPercent: this.descendantUsage ? promptCacheHitPercent([...buckets, this.descendantUsage]) : undefined,
       cost: buckets.reduce((sum, item) => sum + item.cost.total, 0), modelName: this.model?.id,
       thinkingLevel: this.thinkingLevel, thinkingLevels: this.availableThinkingLevels(), models: this.models.map(model => ({ ...model, selected: model.provider === this.model?.provider && model.id === this.model.id })) };
   }

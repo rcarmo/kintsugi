@@ -1,8 +1,10 @@
 import { readFileSync } from "node:fs";
+import { describeWorkspaceHelperFailure } from "./helper-failure.ts";
+import { inspectWorkspaceResources } from "./resources.ts";
 import { assertWorkspaceHelperIdentityScope, ensureWorkspaceHelperIdentity, workspaceHelperIdentityDirectory } from "./helper-identity.ts";
 import { mkdir, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
-import { KintsugiCoreError, kintsugiDataPath, commandSignal, getKintsugiRuntimeContext, requireDocker, runCommand, type CommandInput } from "@kintsugi/core";
+import { KintsugiCoreError, kintsugiDataPath, commandSignal, getKintsugiRuntimeContext, requireDocker, runCommand, workspaceResourceControlAvailable, type CommandInput } from "@kintsugi/core";
 import { configureWorkspaceHelperIdentity, closeWorkspaceHelper, openWorkspaceFile, readWorkspaceFile, readWorkspaceFileStream, runWorkspaceProcess, startWorkspaceProcess, statWorkspaceFiles, WorkspaceHelperError, WorkspaceHelperStatus, writeWorkspaceFile, type WorkspaceExecStart, type WorkspaceFile, type WorkspaceFileStat, type WorkspaceOpenFile, type WorkspaceProcess } from "@kintsugi/workspace-helper";
 
 /** Ingress/egress retain their read-only mount; the helper has a separate socket directory. */
@@ -70,9 +72,11 @@ function authenticatedSocket(id: string): string {
  return socket;
 }
 
-function describeFailure(id: string, error: Error): Error {
-  if (!(error instanceof WorkspaceHelperError) || error.code !== WorkspaceHelperStatus.UNAVAILABLE) return error;
-  return new KintsugiCoreError("workspace_unavailable", `Couldn’t reach workspace ${id}. It may be stopped, or made by an older Kintsugi and need recreating.\n${error.message}`);
+function describeFailure(id: string, error: Error): Promise<Error> {
+  return describeWorkspaceHelperFailure(id, error, async () => {
+    if (commandSignal()?.aborted || !await workspaceResourceControlAvailable()) return undefined;
+    return inspectWorkspaceResources(id, { signal: AbortSignal.timeout(2000) });
+  });
 }
 
 /** Runs to completion; the ambient command signal cancels it. */
@@ -81,7 +85,7 @@ export async function runInWorkspace(id: string, start: Omit<WorkspaceExecStart,
     const result = await runWorkspaceProcess(authenticatedSocket(id), start, { ...options, signal: options.signal ?? commandSignal() });
     return { ...result, stderr: result.stderr.toString() };
   } catch (error) {
-    throw error instanceof Error ? describeFailure(id, error) : error;
+    throw error instanceof Error ? await describeFailure(id, error) : error;
   }
 }
 
@@ -95,7 +99,7 @@ export async function requireRootInWorkspace(id: string, argv: string[], stdin?:
 /** Starts a long-lived process, such as an agent or a terminal client. */
 export function startInWorkspace(id: string, start: WorkspaceExecStart, options: { signal?: AbortSignal } = {}): WorkspaceProcess {
   const process = startWorkspaceProcess(authenticatedSocket(id), start, options);
-  const exited = process.exited.catch((error: Error) => { throw describeFailure(id, error); });
+  const exited = process.exited.catch(async (error: Error) => { throw await describeFailure(id, error); });
   exited.catch(() => {});
   return { ...process, exited };
 }
@@ -104,7 +108,7 @@ async function describingFailure<T>(id: string, operation: Promise<T>): Promise<
   try {
     return await operation;
   } catch (error) {
-    throw error instanceof Error ? describeFailure(id, error) : error;
+    throw error instanceof Error ? await describeFailure(id, error) : error;
   }
 }
 

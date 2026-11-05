@@ -97,3 +97,18 @@ test("HTTP JSON reads/mutations are per-agent, revisioned and cannot start execu
     await expect(planChannel.subscribe({ channel: "module", name: "agent-plan", workspaceId: "other", params: { agentId: "a" } }, () => {}, createKintsugiEventBus())).rejects.toThrow("not found");
   } finally { if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous; }
 });
+
+test("plan tools acknowledge mutations without echoing the checklist; read returns Markdown", async () => {
+  const { planToolOutput } = await import("../../src/server/plan.ts");
+  const directory = await mkdtemp(join(tmpdir(), "plan-tool-text-"));
+  try {
+    const store = createAgentPlanStore(directory);
+    const input = { action: "write" as const, markdown: "- [-] Active step\n- [ ] Private future step" };
+    const plan = store.change("w", "a", input);
+    const result = planToolOutput(input, plan);
+    expect(result).toBe("Plan updated (revision 1; 0/2 complete). Current: Active step");
+    expect(result).not.toContain("Private future step");
+    expect(result).not.toContain('"markdown"');
+    expect(planToolOutput({ action: "read" }, plan)).toBe(`Plan (revision 1)\n\n${input.markdown}`);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});

@@ -6,9 +6,9 @@ import { Value } from "typebox/value";
 async function requireControl() {
   if (!await workspaceResourceControlAvailable()) throw new Error("Workspace resource inspection needs System compatibility version 3. Update the installation; network settings remain available.");
 }
-export async function inspectWorkspaceResources(workspaceId: string): Promise<WorkspaceResourceSnapshot> {
+export async function inspectWorkspaceResources(workspaceId: string, options: { signal?: AbortSignal } = {}): Promise<WorkspaceResourceSnapshot> {
   await requireControl();
-  const result = await hostRequest({ operation: "resources", action: "inspect", workspaceId });
+  const result = await hostRequest({ operation: "resources", action: "inspect", workspaceId }, undefined, options);
   if (!result) throw new Error("System did not provide a workspace resource snapshot. Update the installation.");
   return result;
 }
