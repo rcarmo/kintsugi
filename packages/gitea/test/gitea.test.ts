@@ -29,7 +29,7 @@ test("normalizes a configurable HTTPS instance, port and installation subpath", 
   expect(normalizeGiteaServerUrl("https://192.168.1.8:8443/")).toBe("https://192.168.1.8:8443");
   expect(normalizeGiteaServerUrl("https://[fd00::8]:8443/")).toBe("https://[fd00::8]:8443");
 });
-test.each(["", "http://git.example.test", "ftp://git.example.test", "https://user:secret@git.example.test", "https://git.example.test/?token=secret", "https://git.example.test/#secret", "https://github.com", "https://api.github.com.", "https://gitlab.com:8443", "https://bitbucket.org", "https://api.bitbucket.org"])("refuses unsafe or conflicting instance input: %s", async serverUrl => {
+test.each(["", "https://*.example.test", "http://git.example.test", "ftp://git.example.test", "https://user:secret@git.example.test", "https://git.example.test/?token=secret", "https://git.example.test/#secret", "https://github.com", "https://api.github.com.", "https://gitlab.com:8443", "https://bitbucket.org", "https://api.bitbucket.org"])("refuses unsafe or conflicting instance input: %s", async serverUrl => {
   expect(() => normalizeGiteaServerUrl(serverUrl)).toThrow();
   stub(() => { throw Error("No network call expected"); });
   expect((await validateGiteaCredential({ ...credential, serverUrl })).ok).toBe(false);
@@ -99,4 +99,11 @@ test("provider caches cannot reuse results for a different server with the same 
   const cache = createGitHostingCache<string>(60_000);
   expect(await cache(credential, "repos", async () => "first-server")).toBe("first-server");
   expect(await cache({ ...credential, serverUrl: "https://another.example" }, "repos", async () => "second-server")).toBe("second-server");
+});
+
+test("provider cache entries are isolated by the explicitly selected certificate policy", async () => {
+  const cache = createGitHostingCache<string>(60000);
+  expect(await cache(credential, "repos", async () => "strict")).toBe("strict");
+  expect(await cache({ ...credential, allowUntrustedCertificate: true }, "repos", async () => "exception")).toBe("exception");
+  expect(await cache(credential, "repos", async () => "must not change")).toBe("strict");
 });

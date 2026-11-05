@@ -24,7 +24,7 @@ const workspaceMitmCaPath = "/run/kintsugi-mitm-ca.crt";
 
 const workspaceProxies = new Map<string, Promise<WorkspaceEgressProxy>>();
 type SecretContext = () => Promise<WorkspaceSecretContext>;
-type FetchUpstream = (url: string, init: RequestInit & { tls?: { serverName?: string }; proxy?: string }) => Promise<Response>;
+type FetchUpstream = (url: string, init: RequestInit & { tls?: { serverName?: string; rejectUnauthorized?: boolean }; proxy?: string }) => Promise<Response>;
 type ConnectUpstream = (port: number, address: string) => net.Socket;
 type DnsLookup = (hostname: string) => Promise<Array<{ address: string; family: number }>>;
 type ProxyContext = { secrets: SecretContext; fetch: FetchUpstream; connect: ConnectUpstream; upgrade: UpgradeRequest; dnsLookup: DnsLookup; proxyForUrl: typeof getProxyForUrl };
@@ -34,7 +34,7 @@ const mitmTargetServers = new Map<string, Promise<MitmTargetServer>>();
 /** A policy-checked destination for direct connections; trusted upstream proxies check their own. */
 type ResolvedDestination = { address: string; family: 4 | 6 };
 
-type MitmConnectionContext = { context: ProxyContext; hostname: string };
+type MitmConnectionContext = { context: ProxyContext; authority: string };
 type MitmTargetServer = { server: ReturnType<typeof createHttpsServer>; port: number; connections: Map<number, MitmConnectionContext>; renewAt: number };
 
 function workspaceProxyEnv() {
@@ -142,7 +142,9 @@ async function handleConnect(ca: MitmCa, context: ProxyContext, req: IncomingMes
   const { hostname, port } = parseConnectTarget(req.url || "");
   // Resolve and check once; the tunnel connects to this exact address, so a
   // hostname cannot re-resolve to something the policy never approved.
-  const destination = await resolveAllowedDestination(context, hostname, port, port === 443 ? "https" : "http");
+  const authority = `${hostname.includes(":") ? `[${hostname}]` : hostname}${port === 443 ? "" : `:${port}`}`;
+  const optedInTlsOrigin = (await context.secrets()).untrustedTlsOrigins?.includes(new URL(`https://${authority}`).origin) === true;
+  const destination = await resolveAllowedDestination(context, hostname, port, port === 443 || optedInTlsOrigin ? "https" : "http");
   // Zig std.http HTTPS proxy compatibility (verified with 0.15.2 and 0.16.0):
   // CONNECT normally establishes a byte tunnel, after which the client must start
   // TLS before sending HTTP. Zig's connectProxied() instead returns the plain
@@ -176,13 +178,13 @@ async function handleConnect(ca: MitmCa, context: ProxyContext, req: IncomingMes
     return;
   }
   if (!(await shouldMitmConnectTarget(context, hostname))) return tunnelConnect(context.connect, destination.address, port, socket, head);
-  if (port !== 443) throw new HttpRequestBlockedError("MITM CONNECT only allowed to port 443");
+  if (port !== 443 && !optedInTlsOrigin) throw new HttpRequestBlockedError("MITM CONNECT only allowed to port 443 or an explicitly configured untrusted HTTPS origin");
   const targetServer = await ensureMitmTargetServer(ca, hostname);
   socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
   let connectionPort: number | undefined;
   const bridge = net.connect(targetServer.port, "127.0.0.1", () => {
     connectionPort = bridge.localPort;
-    if (connectionPort) targetServer.connections.set(connectionPort, { context, hostname });
+    if (connectionPort) targetServer.connections.set(connectionPort, { context, authority });
     if (head.length) bridge.write(head);
   });
   socket.pipe(bridge).pipe(socket);
@@ -262,7 +264,7 @@ async function startMitmTargetServer(ca: MitmCa, hostname: string): Promise<Mitm
       return;
     }
     const path = mitmReq.url || "/";
-    mitmReq.url = `https://${context.hostname}${path.startsWith("/") ? path : `/${path}`}`;
+    mitmReq.url = `https://${context.authority}${path.startsWith("/") ? path : `/${path}`}`;
     void handleProxyHttp(context.context, mitmReq, mitmRes).catch((thrown) => {
       handleProxyHttpFailure(mitmRes, thrown instanceof Error ? thrown : new Error(String(thrown)));
     });
@@ -276,7 +278,7 @@ async function startMitmTargetServer(ca: MitmCa, hostname: string): Promise<Mitm
     }
     // The CONNECT-bound hostname, never the inner Host header, selects the destination.
     const path = req.url || "/";
-    req.url = `https://${connection.hostname}${path.startsWith("/") ? path : `/${path}`}`;
+    req.url = `https://${connection.authority}${path.startsWith("/") ? path : `/${path}`}`;
     void handleProxyUpgrade(connection.context, req, socket, head).catch(error => socket.end(connectErrorResponse(proxyFailure(error))));
   });
   await new Promise<void>((resolve, reject) => {
@@ -311,7 +313,8 @@ async function handleProxyHttp(context: ProxyContext, req: IncomingMessage, res:
   if (canHaveBody) requestInit.duplex = "half";
   const request = new Request(parsed.toString(), requestInit);
 
-  const { hooks } = await context.secrets();
+  const secrets = await context.secrets();
+  const { hooks } = secrets;
   const next = await hooks.onRequest(request);
   const scrubHeader = (value: string) => hooks.scrubResponseHeader(value, next);
   if (hooks.isRequestAllowed && !(await hooks.isRequestAllowed(new Request(next.url, { method: next.method, headers: next.headers })))) throw new HttpRequestBlockedError("request blocked by policy");
@@ -334,14 +337,17 @@ async function handleProxyHttp(context: ProxyContext, req: IncomingMessage, res:
   // nested installations). Preserve the logical hostname so that boundary can
   // enforce policy, pin its own outbound socket, and apply hostname-bound secrets.
   const proxy = context.proxyForUrl(next.url);
-  const upstreamInit: RequestInit & { duplex?: "half"; tls?: { serverName: string }; proxy: string } = {
+  const upstreamInit: RequestInit & { duplex?: "half"; tls?: { serverName: string; rejectUnauthorized?: boolean }; proxy: string } = {
     proxy,
     method: next.method,
     headers: upstreamHeaders,
     body: ["GET", "HEAD"].includes(next.method.toUpperCase()) ? undefined : next.body,
     redirect: "manual",
   };
-  if (nextProtocol === "https") upstreamInit.tls = { serverName: nextUrl.hostname };
+  if (nextProtocol === "https") {
+    upstreamInit.tls = { serverName: nextUrl.hostname };
+    if (secrets.untrustedTlsOrigins?.includes(nextUrl.origin)) upstreamInit.tls.rejectUnauthorized = false;
+  }
   if (!["GET", "HEAD"].includes(next.method.toUpperCase())) upstreamInit.duplex = "half";
   const upstream = await context.fetch(proxy ? next.url : pinnedUrl.toString(), upstreamInit);
   const finalResponse = hooks.onResponse ? await hooks.onResponse(upstream, next) ?? upstream : upstream;
@@ -363,7 +369,8 @@ async function handleProxyUpgrade(context: ProxyContext, req: IncomingMessage, s
   const destination = await checkDestination(target);
   const request = new Request(target, { method: req.method, headers: incomingHeaders(req) });
   validateWebSocketRequest(request);
-  const { hooks } = await context.secrets();
+  const secrets = await context.secrets();
+  const { hooks } = secrets;
   const next = await hooks.onRequest(request);
   validateWebSocketRequest(next);
   // Direct upgrades use the checked address. An environment proxy owns its
@@ -372,9 +379,10 @@ async function handleProxyUpgrade(context: ProxyContext, req: IncomingMessage, s
   const finalDestination = next.url !== request.url ? await checkDestination(new URL(next.url)) : destination;
   if (hooks.isRequestAllowed && !await hooks.isRequestAllowed(next)) throw new HttpRequestBlockedError("request blocked by policy");
   if (socket.destroyed) return;
-  const open = (url: URL, options: RequestOptions) => context.upgrade(url, context.proxyForUrl(url.href)
-    ? options
-    : { ...options, lookup: pinnedLookup(finalDestination) });
+  const open = (url: URL, options: RequestOptions) => {
+    const forwarded = { ...options, rejectUnauthorized: !(url.protocol === "https:" && secrets.untrustedTlsOrigins?.includes(url.origin)) };
+    return context.upgrade(url, context.proxyForUrl(url.href) ? forwarded : { ...forwarded, lookup: pinnedLookup(finalDestination) });
+  };
   await bridgeWebSocket(next, socket, head, open, value => hooks.scrubResponseHeader(value, next));
 }
 

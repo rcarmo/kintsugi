@@ -12,6 +12,8 @@ export interface GitHostingCredential {
   account?: string;
   /** Configured instance for self-hosted providers. */
   serverUrl?: string;
+  /** Explicit operator opt-in, scoped to this configured HTTPS server. */
+  allowUntrustedCertificate?: boolean;
 }
 
 export interface GitHostingIdentity {
@@ -40,6 +42,7 @@ export interface GitHostingConnectForm {
   tokenPlaceholder: string;
   account?: { label: string; placeholder: string };
   serverUrl?: { label: string; placeholder: string };
+  allowUntrustedCertificate?: { label: string; warning: string };
 }
 
 /** One place where people keep repositories, connected with a token that never enters a workspace. */
@@ -57,8 +60,10 @@ export interface GitHostingProvider {
   tokenHosts: string[];
   /** Exact HTTPS origins for a configurable provider; restricts scheme and port as well as host. */
   tokenOrigins?: string[];
+  /** Exact HTTPS origins with an operator-approved certificate exception. */
+  untrustedTlsOrigins?: string[];
   /** Resolve instance-specific routing from the same credential snapshot used for its token. */
-  connection?(credential: GitHostingCredential): Pick<GitHostingProvider, "gitHost" | "gitUsername" | "tokenHosts" | "tokenOrigins">;
+  connection?(credential: GitHostingCredential): Pick<GitHostingProvider, "gitHost" | "gitUsername" | "tokenHosts" | "tokenOrigins" | "untrustedTlsOrigins">;
   /** Verified known_hosts records trusted by default. */
   sshKnownHosts: string;
   connectForm: GitHostingConnectForm;
@@ -87,7 +92,7 @@ export function createGitHostingCache<T>(ttlMs: number): (credential: GitHosting
   return async (credential, key, load) => {
     const now = Date.now();
     for (const [entryKey, entry] of entries) if (entry.expiresAt <= now) entries.delete(entryKey);
-    const credentialKey = credential ? createHash("sha256").update(JSON.stringify([credential.serverUrl ?? "", credential.account ?? "", credential.token])).digest("hex") : "anonymous";
+    const credentialKey = credential ? createHash("sha256").update(JSON.stringify([credential.serverUrl ?? "", credential.account ?? "", credential.token, credential.allowUntrustedCertificate === true])).digest("hex") : "anonymous";
     const cacheKey = `${credentialKey}:${key}`;
     const cached = entries.get(cacheKey);
     if (cached) return cached.value;

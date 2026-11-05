@@ -247,3 +247,25 @@ test("host credential transforms precede secret replacement and are replaceable 
     forgetWorkspaceSecretContext(workspaceId);
   }
 });
+
+test("certificate opt-in follows the configured HTTPS origin and is revoked on reconnect/disconnect", async () => {
+  const previous = process.env.ATELIER_DATA_DIR, dir = await mkdtemp(join(tmpdir(), "gitea-tls-context-"));
+  process.env.ATELIER_DATA_DIR = dir;
+  const provider = gitHostingProvider("gitea");
+  try {
+    saveGitHostingCredential(provider, { serverUrl: "https://private-git.example.test:8443/forge", account: "alice", token: "fixture", allowUntrustedCertificate: true });
+    const accepted = await getWorkspaceSecretContext("tls-scope", async () => undefined);
+    expect(accepted.untrustedTlsOrigins).toEqual(["https://private-git.example.test:8443"]);
+    expect(await accepted.hooks.isIpAllowed!({ hostname: "private-git.example.test", ip: "10.0.0.2", family: 4, port: 8443, protocol: "https" })).toBe(false);
+    saveGitHostingCredential(provider, { serverUrl: "https://other.example.test:9443", account: "alice", token: "fixture", allowUntrustedCertificate: true });
+    expect((await getWorkspaceSecretContext("tls-scope", async () => undefined)).untrustedTlsOrigins).toEqual(["https://other.example.test:9443"]);
+    saveGitHostingCredential(provider, { serverUrl: "https://other.example.test:9443", account: "alice", token: "fixture" });
+    expect((await getWorkspaceSecretContext("tls-scope", async () => undefined)).untrustedTlsOrigins).toEqual([]);
+    clearGitHostingCredential(provider);
+    expect((await getWorkspaceSecretContext("tls-scope", async () => undefined)).untrustedTlsOrigins).toEqual([]);
+  } finally {
+    forgetWorkspaceSecretContext("tls-scope");
+    if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous;
+    await rm(dir, { recursive: true, force: true });
+  }
+});

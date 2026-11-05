@@ -46,8 +46,9 @@ export function gitHostingGitConfiguration() {
     const credential = connected.get(provider);
     return { ...(credential ? gitHostingConnection(provider, credential) : provider), tokenEnvVar: provider.tokenEnvVar };
   });
+  const configArgs = [...new Set(providers.flatMap(provider => provider.untrustedTlsOrigins ?? []))].flatMap(origin => ["-c", `http.${origin}/.sslVerify=false`, "-c", `http.${origin}/.followRedirects=false`]);
   const shellBody = credentialHelperShellBody(providers);
-  return { shellBody, command: `!f() { ${shellBody}; }; f`, environment: Object.fromEntries([...connected].map(([provider, credential]) => [provider.tokenEnvVar, credential.token])) };
+  return { shellBody, configArgs, command: `!f() { ${shellBody}; }; f`, environment: Object.fromEntries([...connected].map(([provider, credential]) => [provider.tokenEnvVar, credential.token])) };
 }
 
 export function gitCredentialHelperShellBody(): string { return gitHostingGitConfiguration().shellBody; }

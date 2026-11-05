@@ -12,6 +12,7 @@ export type WorkspaceSecretContext = {
   env: Record<string, string>;
   hooks: RequestTransformHttpHooks;
   secrets: Array<{ name: string; placeholder: string; hosts: string[] }>;
+  untrustedTlsOrigins?: string[];
 };
 
 const subscriptionSecrets: Record<string, SecretDefinition> = {};
@@ -59,9 +60,11 @@ export async function createWorkspaceSecretContext(workspaceId: string, init?: W
   const generation = configurationGeneration;
   const secrets: Record<string, SecretDefinition> = {};
   const plainEnv: Record<string, string> = {};
+  const untrustedTlsOrigins: string[] = [];
   for (const { provider, credential } of connectedGitHostingProviders()) {
     const placeholder = workspaceTemplateSecretPlaceholder(provider.tokenEnvVar);
     const connection = gitHostingConnection(provider, credential);
+    untrustedTlsOrigins.push(...connection.untrustedTlsOrigins ?? []);
     secrets[provider.tokenEnvVar] = { value: credential.token, hosts: connection.tokenHosts, origins: connection.tokenOrigins, placeholder };
     Object.assign(plainEnv, provider.workspaceEnv(credential));
     for (const alias of provider.tokenEnvAliases) plainEnv[alias] = placeholder;
@@ -77,7 +80,7 @@ export async function createWorkspaceSecretContext(workspaceId: string, init?: W
       resolve: () => resolveInstanceCredential(credential, workspaceTemplateId!) };
   }
   if (generation !== configurationGeneration) return createWorkspaceSecretContext(workspaceId, init);
-  const created = buildContext(workspaceId, { ...secrets, ...subscriptionSecrets }, plainEnv);
+  const created = buildContext(workspaceId, { ...secrets, ...subscriptionSecrets }, plainEnv, untrustedTlsOrigins);
   contexts.set(workspaceId, created);
   return created;
 }
@@ -95,7 +98,7 @@ export function forgetWorkspaceSecretContext(workspaceId: string): void {
   contexts.delete(workspaceId);
 }
 
-function buildContext(workspaceId: string, secrets: Record<string, SecretDefinition>, plainEnv: Record<string, string>): WorkspaceSecretContext {
+function buildContext(workspaceId: string, secrets: Record<string, SecretDefinition>, plainEnv: Record<string, string>, untrustedTlsOrigins: string[]): WorkspaceSecretContext {
   const hooks = createHttpHooks({
     allowedHosts: ["*"],
     blockInternalRanges: false,
@@ -116,6 +119,7 @@ function buildContext(workspaceId: string, secrets: Record<string, SecretDefinit
   });
   return {
     workspaceId,
+    untrustedTlsOrigins,
     env: { ...plainEnv, ...Object.fromEntries(Object.entries(hooks.env).filter(([name]) => !(name in subscriptionSecrets))) },
     hooks: hooks.httpHooks,
     secrets: hooks.secrets,

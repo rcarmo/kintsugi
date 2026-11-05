@@ -106,7 +106,7 @@ async function requireCommand(name: string, args: string[], options: { env?: Rec
 
 async function git(args: string[], options: { errorCode?: string } = {}): Promise<CommandResult> {
   const credentials = gitHostingGitConfiguration();
-  return await requireCommand("git", ["-c", `credential.helper=${credentials.command}`, ...args], {
+  return await requireCommand("git", ["-c", `credential.helper=${credentials.command}`, ...credentials.configArgs, ...args], {
     env: credentials.environment,
     errorCode: options.errorCode ?? "git_error",
   });
@@ -140,7 +140,7 @@ credential_helper=${shellQuote(credentials.command)}
 effective_branch_file=${shellQuote(effectiveBranchPath)}
 resolved_commit_file=${shellQuote(resolvedCommitPath)}
 
-git_cmd() { git -c credential.helper="$credential_helper" "$@"; }
+git_cmd() { git -c credential.helper="$credential_helper" ${credentials.configArgs.map(shellQuote).join(" ")} "$@"; }
 trap 'rm -rf "$tmp_path"' EXIT
 
 # Inspect the remote, not the cached checkout: local branches may retain old commits.
