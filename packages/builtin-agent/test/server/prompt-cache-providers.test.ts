@@ -16,8 +16,8 @@ const token = `x.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": {
 // Use actual canonical requests produced through the journal, not hand-assembled
 // suffixes. Capture before network for every SDK text-generation API.
 test("append-only plans survive every provider serializer without transient marker rewrites", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "cache-providers-")), previous = process.env.ATELIER_DATA_DIR;
-  process.env.ATELIER_DATA_DIR = dir;
+  const dir = await mkdtemp(join(tmpdir(), "cache-providers-")), previous = process.env.KINTSUGI_DATA_DIR;
+  process.env.KINTSUGI_DATA_DIR = dir;
   const models = createModels(), faux = fauxProvider({ tokensPerSecond: 100_000 }); models.setProvider(faux.provider);
   const registry = createRegistry(), requests: (readonly Message[])[] = [];
   const originalStream = models.streamSimple.bind(models);
@@ -68,7 +68,7 @@ test("append-only plans survive every provider serializer without transient mark
     }
   } finally {
     await workspace.close();
-    if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous;
+    if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR; else process.env.KINTSUGI_DATA_DIR = previous;
     await rm(dir, { recursive: true, force: true });
   }
 }, 30000);

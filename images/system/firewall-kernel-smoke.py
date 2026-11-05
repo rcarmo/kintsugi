@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 
 root = pathlib.Path(__file__).resolve().parents[2]
-with tempfile.TemporaryDirectory(prefix="aitc-firewall-kernel-") as directory:
+with tempfile.TemporaryDirectory(prefix="kintsugi-firewall-kernel-") as directory:
     path = pathlib.Path(directory)
     for enabled in (True, False):
         source = 'import {workspaceFirewallRules} from "./images/system/src/firewall.ts"; process.stdout.write(workspaceFirewallRules("/system/workloads/build-clients", ["127.0.0.53", "::1"], ' + str(enabled).lower() + '));'
@@ -31,9 +31,9 @@ relative=${cgroup#/}
 level=$(printf '%s' "$relative" | awk -F/ '{print NF}')
 sed -e "s|system/workloads/build-clients|$relative|g" -e "s|cgroupv2 level 3 |cgroupv2 level $level |g" /rules/protected.nft >/tmp/protected.nft
 cat >/tmp/probe.nft <<EOF
-add table inet aitc_socket_preflight
-add chain inet aitc_socket_preflight output { type filter hook output priority -10; policy accept; }
-add rule inet aitc_socket_preflight output socket cgroupv2 level $level "$relative" counter
+add table inet kintsugi_socket_preflight
+add chain inet kintsugi_socket_preflight output { type filter hook output priority -10; policy accept; }
+add rule inet kintsugi_socket_preflight output socket cgroupv2 level $level "$relative" counter
 EOF
 if nft -c -f /tmp/probe.nft 2>/tmp/probe.err; then
   protected=true
@@ -43,7 +43,7 @@ else
   protected=false
 fi
 # A check must not have committed its probe table.
-if nft list table inet aitc_socket_preflight >/dev/null 2>&1; then exit 1; fi
+if nft list table inet kintsugi_socket_preflight >/dev/null 2>&1; then exit 1; fi
 # Always exercise the exact rule set used on kernels without NFT_SOCKET.
 nft -f /rules/bridge-only.nft
 nft -f /rules/bridge-only.nft

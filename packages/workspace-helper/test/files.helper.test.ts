@@ -13,7 +13,7 @@ let helper: Bun.Subprocess<"ignore", "inherit", "pipe">;
 
 beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), "helper-files-"));
-  const binary = join(directory, "aitc-workspace-helper");
+  const binary = join(directory, "kintsugi-workspace-helper");
   await buildGoProgram(fileURLToPath(new URL("../helper", import.meta.url)), binary, `linux/${process.arch === "arm64" ? "arm64" : "amd64"}`);
   socket = join(directory, "helper.sock");
   helper = Bun.spawn(["sudo", "-n", binary, "--allow-unauthenticated", "--listen", socket, "--state", join(directory, "state")], { stdout: "inherit", stderr: "pipe" });

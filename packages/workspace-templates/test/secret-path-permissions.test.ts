@@ -40,7 +40,7 @@ test("path overrides persist, omitted updates preserve them, and older files get
 });
 
 test("configured secret routing cannot reuse an unknown value, and failed updates are atomic", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "aitc-secret-routing-"));
+  const directory = await mkdtemp(join(tmpdir(), "kintsugi-secret-routing-"));
   const file = join(directory, "templates.json"), keyFile = join(directory, "key");
   try {
     const { workspaceTemplate } = await addWorkspaceTemplate("https://github.com/example/routing.git", file);

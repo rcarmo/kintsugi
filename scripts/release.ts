@@ -19,7 +19,7 @@ export const usage = `Release Kintsugi from the current origin/main commit.
   bun run release --check     Check Git, local/SSH Docker builders and both architectures; publish nothing
 
 --check may be combined with --stable. Working files are never released or reset.
-Requires ATELIER_RELEASE_HELPER=[user@]hostname with noninteractive SSH and Docker access.
+Requires KINTSUGI_RELEASE_HELPER=[user@]hostname with noninteractive SSH and Docker access.
 Uses the existing GH_PACKAGE_TOKEN for publishing. Logs/status live under Git's
 common directory in kintsugi-releases/<run-id>/. See docs/releases.md.
 `;

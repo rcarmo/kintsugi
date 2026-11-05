@@ -227,11 +227,11 @@ describe("Workspace templates", () => {
   });
 
   test("Commit identity adopts the host global git config when Settings has no saved Commit identity", async () => {
-    const previousDataDir = process.env.ATELIER_DATA_DIR;
+    const previousDataDir = process.env.KINTSUGI_DATA_DIR;
     const previousGlobalConfig = process.env.GIT_CONFIG_GLOBAL;
     const dataDir = await mkdtemp(join(tmpdir(), "kintsugi-workspace-template-settings-"));
     const gitConfig = join(await mkdtemp(join(tmpdir(), "kintsugi-git-config-")), ".gitconfig");
-    process.env.ATELIER_DATA_DIR = dataDir;
+    process.env.KINTSUGI_DATA_DIR = dataDir;
     process.env.GIT_CONFIG_GLOBAL = gitConfig;
     try {
       await writeFile(gitConfig, "[user]\n\tname = Grace Hopper\n\temail = grace@example.com\n", "utf8");
@@ -240,8 +240,8 @@ describe("Workspace templates", () => {
       expect(await getCommitIdentity()).toEqual({ name: "Grace Hopper", email: "grace@example.com" });
       expect(JSON.parse(await readFile(commitIdentitySettingsFile(), "utf8"))).toEqual({ gitIdentity: { name: "Grace Hopper", email: "grace@example.com" } });
     } finally {
-      if (previousDataDir === undefined) delete process.env.ATELIER_DATA_DIR;
-      else process.env.ATELIER_DATA_DIR = previousDataDir;
+      if (previousDataDir === undefined) delete process.env.KINTSUGI_DATA_DIR;
+      else process.env.KINTSUGI_DATA_DIR = previousDataDir;
       if (previousGlobalConfig === undefined) delete process.env.GIT_CONFIG_GLOBAL;
       else process.env.GIT_CONFIG_GLOBAL = previousGlobalConfig;
     }

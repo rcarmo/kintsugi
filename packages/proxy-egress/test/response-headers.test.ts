@@ -101,7 +101,7 @@ test("HTTP redirect reflection is scrubbed at the wire boundary, after response 
 });
 
 test("an upstream body failure after headers are sent does not crash the proxy", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "agents-in-the-cloud-stream-failure-test-"));
+  const directory = await mkdtemp(join(tmpdir(), "kintsugi-stream-failure-test-"));
   const socketPath = join(directory, "egress.sock");
   const ca = await ensureMitmCa({ kintsugiDataDir: directory, dockerHostKintsugiDataDir: directory, dockerBridgeHost: "127.0.0.1" });
   const upstreamError = new Error("upstream body failed");

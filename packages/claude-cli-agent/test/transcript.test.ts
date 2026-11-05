@@ -44,8 +44,8 @@ test("connects images in tool results to the Read visualization", () => {
 
 test("serves a nested tool-result image through the transcript image route's source", async () => {
   const root = await mkdtemp(join(tmpdir(), "claude-transcript-"));
-  const previous = process.env.ATELIER_DATA_DIR;
-  process.env.ATELIER_DATA_DIR = root;
+  const previous = process.env.KINTSUGI_DATA_DIR;
+  process.env.KINTSUGI_DATA_DIR = root;
   try {
     const path = join(root, "home/.claude/projects/-work/session.jsonl");
     await mkdir(dirname(path), { recursive: true });
@@ -55,8 +55,8 @@ test("serves a nested tool-result image through the transcript image route's sou
     expect(response.headers.get("content-type")).toBe("image/png");
     expect(await response.text()).toBe("hello");
   } finally {
-    if (previous === undefined) delete process.env.ATELIER_DATA_DIR;
-    else process.env.ATELIER_DATA_DIR = previous;
+    if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR;
+    else process.env.KINTSUGI_DATA_DIR = previous;
     await rm(root, { recursive: true, force: true });
   }
 });

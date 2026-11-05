@@ -5,16 +5,16 @@ import { tmpdir } from "node:os";
 import { addWorkspaceTemplate, saveInstanceCredential, deleteInstanceCredential, listInstanceCredentials, type InstanceCredentialInput, type GitWorkspaceTemplateInitInstruction } from "@kintsugi/workspace-templates";
 import { createWorkspaceSecretContext, getWorkspaceSecretContext, forgetWorkspaceSecretContext } from "../../src/secrets/workspace-secrets.ts";
 let directory: string, template: string;
-const original = process.env.ATELIER_DATA_DIR;
+const original = process.env.KINTSUGI_DATA_DIR;
 const values: InstanceCredentialInput = { name: "Test API", envName: "CATALOGUE_TOKEN", type: "token", description: "Fixture", hostPattern: "api.example.com", allowInPath: false, enabled: true, templateIds: [] };
 function init(id = template): GitWorkspaceTemplateInitInstruction { return { type: "project.git", projectId: id, name: "Test", gitUrl: "https://example.com/repo.git", branch: null, sessionShareKey: "Test" }; }
 beforeEach(async () => {
-  directory = await mkdtemp(join(tmpdir(), "credential-proxy-")); process.env.ATELIER_DATA_DIR = directory;
+  directory = await mkdtemp(join(tmpdir(), "credential-proxy-")); process.env.KINTSUGI_DATA_DIR = directory;
   template = (await addWorkspaceTemplate("https://example.com/repo.git")).workspaceTemplate.id;
 });
 afterEach(async () => {
   forgetWorkspaceSecretContext("credential-proxy"); forgetWorkspaceSecretContext("credential-empty");
-  if (original === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = original;
+  if (original === undefined) delete process.env.KINTSUGI_DATA_DIR; else process.env.KINTSUGI_DATA_DIR = original;
   await rm(directory, { recursive: true, force: true });
 });
 test("only explicitly granted workspaces receive opaque placeholders; HTTPS origins remain exact", async () => {

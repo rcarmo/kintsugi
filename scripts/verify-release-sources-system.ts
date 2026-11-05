@@ -9,11 +9,11 @@ import { Value } from "typebox/value";
 import { parseArgs } from "node:util";
 
 const { values } = parseArgs({ options: { app: { type: "string", default: "kintsugi-release:local" }, system: { type: "string", default: "kintsugi-system:release-local" }, workspace: { type: "string" }, "release-updates": { type: "boolean", default: false }, "installer-system": { type: "string" } } });
-const name = `aitc-release-integration-${crypto.randomUUID().slice(0, 8)}`;
+const name = `kintsugi-release-integration-${crypto.randomUUID().slice(0, 8)}`;
 const volume = name;
 const fixtureApp = `${name}:app`;
 const hostPort = 35000 + Math.floor(Math.random() * 4000);
-const directory = await mkdtemp(join(tmpdir(), "aitc-release-system-"));
+const directory = await mkdtemp(join(tmpdir(), "kintsugi-release-system-"));
 async function run(args: string[], input?: string) {
   const child = Bun.spawn(args, { stdin: input === undefined ? "ignore" : "pipe", stdout: "pipe", stderr: "pipe" });
   if (input !== undefined) { child.stdin.write(input); child.stdin.end(); }

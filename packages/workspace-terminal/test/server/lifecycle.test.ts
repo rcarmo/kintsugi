@@ -40,7 +40,7 @@ async function scenario(script: string): Promise<void> {
       } }));
       const { createWorkspaceTerminal: create, attachWorkspaceTerminal: attach, deleteWorkspaceTerminal: remove, listWorkspaceTerminals: list } = await import(${JSON.stringify(join(import.meta.dir, "../../src/server/workspace-terminals.ts"))});
       ${script}
-    `], { cwd: join(import.meta.dir, "../.."), env: { ...process.env, ATELIER_DATA_DIR: directory }, stdout: "pipe", stderr: "pipe" });
+    `], { cwd: join(import.meta.dir, "../.."), env: { ...process.env, KINTSUGI_DATA_DIR: directory }, stdout: "pipe", stderr: "pipe" });
     const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
     expect({ code, stdout, stderr }).toEqual({ code: 0, stdout: "", stderr: "" });
   } finally { await rm(directory, { recursive: true, force: true }); }
@@ -94,7 +94,7 @@ test("existing terminal metadata keeps its flat format, IDs and session ownershi
   // Started by a Terminal view before terminal processes, so closing it kills its session.
   const owned = { id: "owned-id", title: "Terminal 1", tmuxSession: "Terminal 1", sessionRelationship: "owned" };
   of(sessions, "legacy").add("existing-session").add("Terminal 1");
-  const path = process.env.ATELIER_DATA_DIR + "/workspaces/legacy/metadata/terminals.json";
+  const path = process.env.KINTSUGI_DATA_DIR + "/workspaces/legacy/metadata/terminals.json";
   await Bun.write(path, JSON.stringify([existing, owned]));
   expect(await list("legacy")).toEqual([existing, owned]);
   const created = await create("legacy");

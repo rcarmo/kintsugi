@@ -64,7 +64,7 @@ switch (path) {
   }
   case "bash": {
     const { embeddedBashCommand } = await import("../../agent/src/server/embedded-code.ts");
-    run = (text) => { embeddedBashCommand(`cat > ${fixture} <<'ATELIER_REPRO_EOF'\n${text}\nATELIER_REPRO_EOF`); };
+    run = (text) => { embeddedBashCommand(`cat > ${fixture} <<'KINTSUGI_REPRO_EOF'\n${text}\nKINTSUGI_REPRO_EOF`); };
     break;
   }
   case "review":

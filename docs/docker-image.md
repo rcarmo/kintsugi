@@ -6,7 +6,7 @@ Build the Kintsugi app and its matching default workspace image:
 bun run image:build
 ```
 
-By default the script builds `ghcr.io/rcarmo/kintsugi:<git-description>` and `ghcr.io/rcarmo/kintsugi:latest` from `apps/web/Dockerfile` and embeds the current git commit in `ATELIER_COMMIT_ID`. The default workspace image uses a deterministic content tag, so the build reuses it when that tag already exists locally (or in the registry during `image:publish`). Pass `--workspace` to force rebuilding that image.
+By default the script builds `ghcr.io/rcarmo/kintsugi:<git-description>` and `ghcr.io/rcarmo/kintsugi:latest` from `apps/web/Dockerfile` and embeds the current git commit in `KINTSUGI_COMMIT_ID`. The default workspace image uses a deterministic content tag, so the build reuses it when that tag already exists locally (or in the registry during `image:publish`). Pass `--workspace` to force rebuilding that image.
 
 Useful options:
 
@@ -40,7 +40,7 @@ bun run image:publish -- --tag docker-rewrite --tag "sha-$(git rev-parse HEAD)" 
 This builds/publishes **both complete images**, for amd64 and arm64, and bakes the
 matching content-addressed workspace tag into the app. No runtime-file overlays,
 source mounts, dev server or manually patched workspace are needed. In an Kintsugi
-workspace, set `ATELIER_RELEASE_HELPER=user@hostname` and run
+workspace, set `KINTSUGI_RELEASE_HELPER=user@hostname` and run
 `bun run release --check` first to check the local and SSH helper Docker builders.
 For a native split build of this branch, add `--builder <local-context>`,
 `--helper-context <helper-context>`, and `--native-platform linux/amd64` (or

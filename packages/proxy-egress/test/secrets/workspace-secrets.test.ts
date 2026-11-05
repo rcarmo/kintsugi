@@ -20,18 +20,18 @@ describe("workspace secrets", () => {
   let dataDir: string;
 
   beforeEach(async () => {
-    previousDataDir = process.env.ATELIER_DATA_DIR;
+    previousDataDir = process.env.KINTSUGI_DATA_DIR;
     previousGitHubToken = process.env.GH_TOKEN;
     dataDir = await mkdtemp(join(tmpdir(), "kintsugi-workspace-secrets-"));
-    process.env.ATELIER_DATA_DIR = dataDir;
+    process.env.KINTSUGI_DATA_DIR = dataDir;
     delete process.env.GH_TOKEN;
   });
 
   afterEach(async () => {
     for (const provider of gitHostingProviders) clearGitHostingCredential(provider);
     forgetWorkspaceSecretContext("test-workspace");
-    if (previousDataDir === undefined) delete process.env.ATELIER_DATA_DIR;
-    else process.env.ATELIER_DATA_DIR = previousDataDir;
+    if (previousDataDir === undefined) delete process.env.KINTSUGI_DATA_DIR;
+    else process.env.KINTSUGI_DATA_DIR = previousDataDir;
     if (previousGitHubToken === undefined) delete process.env.GH_TOKEN;
     else process.env.GH_TOKEN = previousGitHubToken;
     await rm(dataDir, { recursive: true, force: true });
@@ -249,8 +249,8 @@ test("host credential transforms precede secret replacement and are replaceable 
 });
 
 test("certificate opt-in follows the configured HTTPS origin and is revoked on reconnect/disconnect", async () => {
-  const previous = process.env.ATELIER_DATA_DIR, dir = await mkdtemp(join(tmpdir(), "gitea-tls-context-"));
-  process.env.ATELIER_DATA_DIR = dir;
+  const previous = process.env.KINTSUGI_DATA_DIR, dir = await mkdtemp(join(tmpdir(), "gitea-tls-context-"));
+  process.env.KINTSUGI_DATA_DIR = dir;
   const provider = gitHostingProvider("gitea");
   try {
     saveGitHostingCredential(provider, { serverUrl: "https://private-git.example.test:8443/forge", account: "alice", token: "fixture", allowUntrustedCertificate: true });
@@ -265,7 +265,7 @@ test("certificate opt-in follows the configured HTTPS origin and is revoked on r
     expect((await getWorkspaceSecretContext("tls-scope", async () => undefined)).untrustedTlsOrigins).toEqual([]);
   } finally {
     forgetWorkspaceSecretContext("tls-scope");
-    if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous;
+    if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR; else process.env.KINTSUGI_DATA_DIR = previous;
     await rm(dir, { recursive: true, force: true });
   }
 });

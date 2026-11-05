@@ -65,6 +65,7 @@ export {
   type GitHostingValidation,
 } from "./git-hosting.ts";
 
+export { kintsugiEnv } from "./environment.ts";
 export { createKeyedOperationQueue } from "./keyed-operation-queue.ts";
 export { workloadCgroupArgs, workloadCommand, workspaceResourceControlAvailable } from "./workload-resources.ts";
 

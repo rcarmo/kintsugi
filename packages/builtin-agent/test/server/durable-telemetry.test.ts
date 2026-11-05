@@ -12,8 +12,8 @@ import { openDurableWorkspace, WorkspaceAgents } from "../../src/server/durable-
 
 /** Native storage/accounting integration, with no provider calls, container or presentation. */
 test("native usage snapshots include subagents and model tools but never inherited fork usage", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "kintsugi-native-telemetry-")), previous = process.env.ATELIER_DATA_DIR;
-  process.env.ATELIER_DATA_DIR = directory;
+  const directory = await mkdtemp(join(tmpdir(), "kintsugi-native-telemetry-")), previous = process.env.KINTSUGI_DATA_DIR;
+  process.env.KINTSUGI_DATA_DIR = directory;
   const workspace = await openDurableWorkspace(join(directory, "journal"), "workspace", { models: createModels(), registry: createRegistry() });
   const context = BACKGROUND_CONTEXT, { harness } = workspace;
   const parent = await workspace.agent({ agentId: "parent", label: "Parent", title: "Parent" });
@@ -50,7 +50,7 @@ test("native usage snapshots include subagents and model tools but never inherit
     } finally { db.close(); }
   } finally {
     await unregister(); await service.close(); await workspace.close();
-    if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous;
+    if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR; else process.env.KINTSUGI_DATA_DIR = previous;
     await rm(directory, { recursive: true, force: true });
   }
 });

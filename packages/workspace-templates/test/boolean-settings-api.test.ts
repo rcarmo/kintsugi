@@ -7,9 +7,9 @@ import { addWorkspaceTemplate, getWorkspaceTemplateConfiguration } from "../src/
 
 for (const [path, name] of [["privileged", "privileged"], ["seed-config", "seedConfigEnabled"]] as const) {
   test(`${name} defaults off, accepts explicit booleans and does not mutate on invalid input`, async () => {
-    const previous = process.env.ATELIER_DATA_DIR;
+    const previous = process.env.KINTSUGI_DATA_DIR;
     const directory = await mkdtemp(join(tmpdir(), "workspace-template-boolean-api-"));
-    process.env.ATELIER_DATA_DIR = directory;
+    process.env.KINTSUGI_DATA_DIR = directory;
     try {
       const { workspaceTemplate } = await addWorkspaceTemplate("/tmp/example");
       const routes = createWorkspaceTemplateRoutes({
@@ -43,8 +43,8 @@ for (const [path, name] of [["privileged", "privileged"], ["seed-config", "seedC
         expect((await getWorkspaceTemplateConfiguration(workspaceTemplate.id))[name]).toBe(value === "true");
       }
     } finally {
-      if (previous === undefined) delete process.env.ATELIER_DATA_DIR;
-      else process.env.ATELIER_DATA_DIR = previous;
+      if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR;
+      else process.env.KINTSUGI_DATA_DIR = previous;
       await rm(directory, { recursive: true, force: true });
     }
   });

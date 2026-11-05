@@ -11,7 +11,7 @@ test("prepares bundled session-private native MCP registration without putting i
     const { preparePiSession, piKintsugiExtensionPath } = await import(${JSON.stringify(source)});
     const mcp = { url: "http://127.0.0.1:2988/mcp", token: "private-bearer-token" };
     const session = { id: "session", directory: "/session", turnSignalCommand: "/session/signal.sh" };
-    const instructions = "Full AITC instructions\\n" + "x".repeat(12000);
+    const instructions = "Full Kintsugi instructions\\n" + "x".repeat(12000);
     expect(await preparePiSession("workspace", session, { ...mcp, instructions })).toEqual({});
     expect(calls).toHaveLength(1);
     const [, command, options] = calls[0];

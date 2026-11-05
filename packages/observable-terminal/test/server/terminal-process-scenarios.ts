@@ -95,6 +95,53 @@ export function describeTerminalProcesses(name: string, open: (tmuxDirectory: st
       await rm(directory, { recursive: true, force: true });
     });
 
+    test("new process sessions use the Kintsugi brand", () => {
+      expect(terminalProcessSession("0b27ca")).toBe("kintsugi-process-0b27ca");
+    });
+
+    function startLegacy(command: string) {
+      const id = crypto.randomUUID();
+      started.push(id);
+      const legacy = createTerminalProcesses({
+        root: join(directory, "processes"), start: place!.start,
+        run: (request, options) => place!.run({
+          ...request, argv: request.argv.map(arg => arg.replaceAll(terminalProcessSession(id), `aitc-process-${id}`)),
+        }, options),
+      });
+      return { id, started: legacy.start({ id, command, cwd: directory }) };
+    }
+
+    test("legacy sessions remain watchable and wake waiters on their original channel", async () => {
+      const proceed = `proceed-${crypto.randomUUID()}`;
+      const { id, started } = startLegacy(`echo legacy; tmux wait-for ${proceed}; echo finished`);
+      await started;
+      expect(await processes.state(id)).toEqual({ state: "running", interactive: false });
+      const watcher = viewer();
+      const connection = processes.connect(id, { cols: 80, rows: 24 });
+      try {
+        await connection.open!(watcher.socket);
+        await watcher.sees("legacy");
+        const ended = processes.waitForExit(id);
+        await tmux("wait-for", "-S", proceed);
+        expect((await ended).output.text).toContain("finished");
+        expect(await watcher.closed).toEqual({ code: terminalEndedCloseCode, reason: "ended" });
+      } finally {
+        connection.close!(watcher.socket);
+      }
+    });
+
+    test("legacy sessions can still be stopped and released", async () => {
+      const { id, started } = startLegacy("sleep 30");
+      await started;
+      await processes.stop(id);
+      expect(await processes.waitForExit(id)).toMatchObject({ aborted: true });
+      const running = startLegacy("sleep 30");
+      await running.started;
+      await processes.release(running.id);
+      expect((await tmux("has-session", "-t", `=aitc-process-${running.id}`)).exitCode).not.toBe(0);
+      expect(await processes.state(running.id)).toEqual({ state: "missing" });
+    });
+
     test("records the exit code and the whole scrollback once the command exits", async () => {
       const { id, started } = start("seq 1 500; exit 7");
       await started;

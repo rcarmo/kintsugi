@@ -197,9 +197,9 @@ test("background checks cannot replace a pinned download or prepared target", as
   expect(checks).toBe(2);
 });
 test("channel changes persist, discard prior prepared images, and survive manager restart", async () => {
-  const previous = process.env.ATELIER_DATA_DIR;
+  const previous = process.env.KINTSUGI_DATA_DIR;
   const directory = await mkdtemp(join(tmpdir(), "kintsugi-update-settings-"));
-  process.env.ATELIER_DATA_DIR = directory;
+  process.env.KINTSUGI_DATA_DIR = directory;
   try {
     await writeStoredUpdateChannel("stable");
     expect(JSON.parse(await readFile(join(directory, "update.json"), "utf8"))).toEqual({ releaseChannel: "stable", releaseSelection: "stable" });
@@ -213,7 +213,7 @@ test("channel changes persist, discard prior prepared images, and survive manage
     expect(restarted.snapshot().updateChannel).toBe("latest");
     expect(JSON.parse(await readFile(join(directory, "update.json"), "utf8"))).toEqual({ releaseChannel: "latest", releaseSelection: "latest" });
   } finally {
-    if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous;
+    if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR; else process.env.KINTSUGI_DATA_DIR = previous;
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -270,9 +270,9 @@ test.each(["stable", "latest"] as const)("stored %s channel overrides the latest
 });
 
 test("switching from stable to latest persists the channel and refreshes the target", async () => {
-  const previous = process.env.ATELIER_DATA_DIR;
+  const previous = process.env.KINTSUGI_DATA_DIR;
   const directory = await mkdtemp(join(tmpdir(), "kintsugi-latest-settings-"));
-  process.env.ATELIER_DATA_DIR = directory;
+  process.env.KINTSUGI_DATA_DIR = directory;
   try {
     await writeStoredUpdateChannel("stable");
     const channels: string[] = [];
@@ -296,7 +296,7 @@ test("switching from stable to latest persists the channel and refreshes the tar
     await restarted.initialize(context().ctx);
     expect(restarted.snapshot().updateChannel).toBe("latest");
   } finally {
-    if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous;
+    if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR; else process.env.KINTSUGI_DATA_DIR = previous;
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -342,9 +342,9 @@ test("JSON source and update controls return JSON without Turbo markup", async (
 });
 
 test("Latest follows the configured custom repositories and Custom reopens their fields", async () => {
-  const previous = process.env.ATELIER_DATA_DIR;
+  const previous = process.env.KINTSUGI_DATA_DIR;
   const directory = await mkdtemp(join(tmpdir(), "custom-channel-"));
-  process.env.ATELIER_DATA_DIR = directory;
+  process.env.KINTSUGI_DATA_DIR = directory;
   try {
     const { readStoredReleaseSource, writeStoredReleaseSource } = await import("../../src/server/settings-store.ts");
     await writeStoredReleaseSource({ appRepository: "docker.io/example/app", systemRepository: "ghcr.io/example/system", appVersion: "v2" });
@@ -363,7 +363,7 @@ test("Latest follows the configured custom repositories and Custom reopens their
     await upstream.initialize(context().ctx); await upstream.startPull();
     expect(references).toEqual([`docker.io/example/app@${newDigest}`]);
   } finally {
-    if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous;
+    if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR; else process.env.KINTSUGI_DATA_DIR = previous;
     await rm(directory, { recursive: true, force: true });
   }
 });

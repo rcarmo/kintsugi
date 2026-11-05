@@ -1,3 +1,4 @@
+import { kintsugiEnv } from "./environment.ts";
 import { homedir, platform } from "node:os";
 import { isAbsolute, join } from "node:path";
 
@@ -47,10 +48,10 @@ function createRuntimeContext(paths: Pick<KintsugiRuntimeContext, "kintsugiDataD
 }
 
 function runtimePathsFromEnv(): Pick<KintsugiRuntimeContext, "kintsugiDataDir" | "dockerHostKintsugiDataDir"> {
-  const kintsugiDataDir = envString("ATELIER_DATA_DIR") ?? defaultDataDir();
+  const kintsugiDataDir = envString("DATA_DIR") ?? defaultDataDir();
   return {
     kintsugiDataDir,
-    dockerHostKintsugiDataDir: envString("ATELIER_DOCKER_HOST_DATA_DIR") ?? kintsugiDataDir,
+    dockerHostKintsugiDataDir: envString("DOCKER_HOST_DATA_DIR") ?? kintsugiDataDir,
   };
 }
 
@@ -67,7 +68,7 @@ function defaultDataDir(): string {
 }
 
 function envString(name: string): string | undefined {
-  const value = process.env[name]?.trim();
+  const value = kintsugiEnv(name)?.trim();
   return value ? value : undefined;
 }
 

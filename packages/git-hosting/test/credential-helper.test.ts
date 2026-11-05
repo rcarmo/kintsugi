@@ -52,7 +52,7 @@ test("expands provider shorthand to HTTPS URLs", () => {
 
 test("configurable helper captures the instance and token together and matches IPv6 authorities literally", async () => {
   const {mkdtemp,rm}=await import("node:fs/promises");const {tmpdir}=await import("node:os");const {join}=await import("node:path");
-  const previous=process.env.ATELIER_DATA_DIR;const dir=await mkdtemp(join(tmpdir(),"kintsugi-gitea-helper-"));process.env.ATELIER_DATA_DIR=dir;
+  const previous=process.env.KINTSUGI_DATA_DIR;const dir=await mkdtemp(join(tmpdir(),"kintsugi-gitea-helper-"));process.env.KINTSUGI_DATA_DIR=dir;
   try {
     const provider=gitHostingProvider("gitea");
     provider.saveCredential({serverUrl:"https://git.example.test:8443",account:"alice",token:"first-token"});
@@ -67,5 +67,5 @@ test("configurable helper captures the instance and token together and matches I
     expect(await invoke(second.shellBody,second.environment,"git.example.test:8443")).toBe("");
     expect(await invoke(second.shellBody,second.environment,"[fd00::8]:9443")).toBe("username=bob\npassword=second-token\n");
     expect(await invoke(second.shellBody,second.environment,"[fd00::8]:443")).toBe("");
-  } finally {if(previous===undefined)delete process.env.ATELIER_DATA_DIR;else process.env.ATELIER_DATA_DIR=previous;await rm(dir,{recursive:true,force:true});}
+  } finally {if(previous===undefined)delete process.env.KINTSUGI_DATA_DIR;else process.env.KINTSUGI_DATA_DIR=previous;await rm(dir,{recursive:true,force:true});}
 });

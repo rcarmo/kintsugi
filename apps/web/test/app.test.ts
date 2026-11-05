@@ -80,11 +80,11 @@ async function withTestApp(
   created?: TestConversation | TestConversation[],
   additionalModules: WorkspaceModule[] = [],
 ): Promise<void> {
-  const previousDataDir = process.env.ATELIER_DATA_DIR;
+  const previousDataDir = process.env.KINTSUGI_DATA_DIR;
   const dataDir = await mkdtemp(join(tmpdir(), "kintsugi-app-agent-routes-"));
   const originalModules = workspaceModules.splice(0, workspaceModules.length);
   const agent = createTestAgentModule(initial, created);
-  process.env.ATELIER_DATA_DIR = dataDir;
+  process.env.KINTSUGI_DATA_DIR = dataDir;
   workspaceModules.push(agent.module, ...additionalModules);
   try {
     const registry = createWorkspaceRegistry();
@@ -104,8 +104,8 @@ async function withTestApp(
     await run({ app, events, registry, agent, workspaceId });
   } finally {
     workspaceModules.splice(0, workspaceModules.length, ...originalModules);
-    if (previousDataDir === undefined) delete process.env.ATELIER_DATA_DIR;
-    else process.env.ATELIER_DATA_DIR = previousDataDir;
+    if (previousDataDir === undefined) delete process.env.KINTSUGI_DATA_DIR;
+    else process.env.KINTSUGI_DATA_DIR = previousDataDir;
     await rm(dataDir, { recursive: true, force: true });
   }
 }
@@ -163,7 +163,7 @@ for (const operation of ["createWorkView", "presentWorkViewFromAgent"] as const)
     await withTestApp([], async ({ app, workspaceId, agent }) => {
       await app[operation](workspaceId, { type: "requested-view" });
       await app[operation](workspaceId, { type: "requested-view" });
-      const state = JSON.parse(await readFile(join(process.env.ATELIER_DATA_DIR!, "workspaces", workspaceId, "metadata", "presentation.json"), "utf8"));
+      const state = JSON.parse(await readFile(join(process.env.KINTSUGI_DATA_DIR!, "workspaces", workspaceId, "metadata", "presentation.json"), "utf8"));
       expect(state.workViews).toEqual([
         { reference: { type: "default-view" } },
         { reference: { type: "requested-view" } },
@@ -204,7 +204,7 @@ test("the theme is a server setting pushed to every open page", async () => {
     expect(response.status).toBe(200);
     await Bun.sleep(10);
     expect(pushed.join("")).toContain('data-kintsugi-theme-name-value="tokyo-night"');
-    expect(JSON.parse(await readFile(join(process.env.ATELIER_DATA_DIR!, "theme.json"), "utf8"))).toEqual({ theme: "tokyo-night" });
+    expect(JSON.parse(await readFile(join(process.env.KINTSUGI_DATA_DIR!, "theme.json"), "utf8"))).toEqual({ theme: "tokyo-night" });
     const settings = await (await app.fetch(new Request("http://test.local/settings/sections/theme"))).text();
     expect(settings).toContain('<option value="tokyo-night" selected>');
     const rejected = await app.fetch(new Request("http://test.local/settings/theme", { method: "POST", body: new URLSearchParams({ theme: "neon" }) }));

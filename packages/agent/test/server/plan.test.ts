@@ -69,7 +69,7 @@ test("identifiers, payload limits and foreign target selectors are rejected", ()
   expect(() => store.change("w", "a", JSON.parse('{"action":"read","agentId":"foreign"}'))).toThrow();
 });
 test("HTTP JSON reads/mutations are per-agent, revisioned and cannot start execution", async () => {
-  const previous = process.env.ATELIER_DATA_DIR; process.env.ATELIER_DATA_DIR = directory;
+  const previous = process.env.KINTSUGI_DATA_DIR; process.env.KINTSUGI_DATA_DIR = directory;
   try {
     await mkdir(join(directory, "workspaces/w/metadata"), { recursive: true });
     await mkdir(join(directory, "workspaces/other/metadata"), { recursive: true });
@@ -95,7 +95,7 @@ test("HTTP JSON reads/mutations are per-agent, revisioned and cannot start execu
     expect(agentPlanStore().read("w", "a").markdown).toBe("- [-] Work");
     expect(agentPlanStore().read("w", "b").markdown).toBe("- [x] CLI plan");
     await expect(planChannel.subscribe({ channel: "module", name: "agent-plan", workspaceId: "other", params: { agentId: "a" } }, () => {}, createKintsugiEventBus())).rejects.toThrow("not found");
-  } finally { if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous; }
+  } finally { if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR; else process.env.KINTSUGI_DATA_DIR = previous; }
 });
 
 test("plan tools acknowledge mutations without echoing the checklist; read returns Markdown", async () => {

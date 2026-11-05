@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 
-test("marks only AITC MCP alwaysLoad so Claude waits at startup, keeping the credential off the command line", async () => {
+test("marks only Kintsugi MCP alwaysLoad so Claude waits at startup, keeping the credential off the command line", async () => {
   const source = join(import.meta.dir, "../src/server/session.ts");
   const child = Bun.spawn([process.execPath, "-e", `
     import { expect, mock } from "bun:test";
@@ -11,7 +11,7 @@ test("marks only AITC MCP alwaysLoad so Claude waits at startup, keeping the cre
     const { prepareClaudeSession, claudeMcpConfigPath, claudeFileLinkInstructions } = await import(${JSON.stringify(source)});
     const mcp = { url: "http://127.0.0.1:2988/mcp", token: "private-bearer-token" };
     const session = { id: "session", directory: "/session", turnSignalCommand: "/session/signal.sh" };
-    const instructions = "Full AITC instructions\\n" + "x".repeat(12000);
+    const instructions = "Full Kintsugi instructions\\n" + "x".repeat(12000);
     expect(await prepareClaudeSession("workspace", session, { ...mcp, instructions })).toEqual({});
     expect(calls).toHaveLength(1);
     const [workspaceId, command, options] = calls[0];

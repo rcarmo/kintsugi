@@ -2,10 +2,10 @@ import { readFileSync } from "node:fs";
 import { createHash, createPrivateKey } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createKeyedOperationQueue, getKintsugiRuntimeContext, kintsugiDataPath, readTextIfExists, runCommand, withCommandSignal } from "@kintsugi/core";
+import { kintsugiEnv, createKeyedOperationQueue, getKintsugiRuntimeContext, kintsugiDataPath, readTextIfExists, runCommand, withCommandSignal } from "@kintsugi/core";
 
 const serialize = createKeyedOperationQueue();
-const identityScope = (id: string): string => `${process.env.ATELIER_NAMESPACE || "host"}\0${id}`;
+const identityScope = (id: string): string => `${kintsugiEnv("NAMESPACE") || "host"}\0${id}`;
 
 export function assertWorkspaceHelperIdentityScope(id: string): void {
  if (readFileSync(join(workspaceHelperIdentityDirectory(id), "namespace"), "utf8") !== identityScope(id)) throw new Error("Workspace helper identity belongs to another namespace");

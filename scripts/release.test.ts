@@ -79,9 +79,9 @@ async function scenario(options: { appRequirement?: string; systemVersion?: stri
   const current = status();
   current.digest = undefined;
   current.check = options.check ?? false;
-  const oldHelper = process.env.ATELIER_RELEASE_HELPER;
-  if (options.missingHelper) delete process.env.ATELIER_RELEASE_HELPER;
-  else process.env.ATELIER_RELEASE_HELPER = "builder@helper";
+  const oldHelper = process.env.KINTSUGI_RELEASE_HELPER;
+  if (options.missingHelper) delete process.env.KINTSUGI_RELEASE_HELPER;
+  else process.env.KINTSUGI_RELEASE_HELPER = "builder@helper";
   const oldToken = process.env.GH_PACKAGE_TOKEN;
   process.env.GH_PACKAGE_TOKEN = "test-not-a-real-credential";
   try {
@@ -115,8 +115,8 @@ async function scenario(options: { appRequirement?: string; systemVersion?: stri
     catch (caught) { error = caught; }
     return { calls, current, error };
   } finally {
-    if (oldHelper === undefined) delete process.env.ATELIER_RELEASE_HELPER;
-    else process.env.ATELIER_RELEASE_HELPER = oldHelper;
+    if (oldHelper === undefined) delete process.env.KINTSUGI_RELEASE_HELPER;
+    else process.env.KINTSUGI_RELEASE_HELPER = oldHelper;
     if (oldToken === undefined) delete process.env.GH_PACKAGE_TOKEN;
     else process.env.GH_PACKAGE_TOKEN = oldToken;
     rmSync(directory, { recursive: true, force: true });
@@ -233,10 +233,10 @@ test(`image build CLI pairs images from its working checkout, not its tooling ch
     expect(appBuild).toContain("org.kintsugi.required-system-version=3");
     expect(appBuild).toContain("org.opencontainers.image.source=https://github.com/example/portable-fork");
     expect(readFileSync(join(expectedContext, "Dockerfile"), "utf8")).toContain('org.opencontainers.image.source="https://github.com/example/portable-fork"');
-    const workspaceArg = appBuild.find(arg => arg.startsWith("ATELIER_DEFAULT_WORKSPACE_IMAGE="))!;
-    expect(workspaceArg).toBe(`ATELIER_DEFAULT_WORKSPACE_IMAGE=ghcr.io/rcarmo/kintsugi-workspace:${expectedSignature}@${digest}`);
+    const workspaceArg = appBuild.find(arg => arg.startsWith("KINTSUGI_DEFAULT_WORKSPACE_IMAGE="))!;
+    expect(workspaceArg).toBe(`KINTSUGI_DEFAULT_WORKSPACE_IMAGE=ghcr.io/rcarmo/kintsugi-workspace:${expectedSignature}@${digest}`);
     expect(builds[0]).toContain(`ghcr.io/rcarmo/kintsugi-workspace:${expectedSignature}${split ? "-amd64" : ""}`);
-    expect(appBuild).toContain(`ATELIER_EAGERLY_PRELOAD=${JSON.stringify([workspaceArg.split("=")[1]])}`);
+    expect(appBuild).toContain(`KINTSUGI_EAGERLY_PRELOAD=${JSON.stringify([workspaceArg.split("=")[1]])}`);
     if (split) {
       const merges = commands.filter(args => args.includes("imagetools") && args.includes("create"));
       expect(merges).toHaveLength(2);

@@ -40,6 +40,8 @@ export function vscodeStartupScript(workspaceFile: string): string {
     # An owned listener may still be booting. Start only when the port is free.
     if ! listener_is_owned; then
       printf '%s\n' '${JSON.stringify({ folders: [{ path: workspaceRoot }] })}' > ${shellQuote(workspaceFile)}
+      # Supply both names while existing workspace images retain older launchers.
+      KINTSUGI_VSCODE_HOST=0.0.0.0 KINTSUGI_VSCODE_PORT=${workspaceVSCodePort} KINTSUGI_VSCODE_DEFAULT_WORKSPACE=${shellQuote(workspaceFile)} \
       ATELIER_VSCODE_HOST=0.0.0.0 ATELIER_VSCODE_PORT=${workspaceVSCodePort} ATELIER_VSCODE_DEFAULT_WORKSPACE=${shellQuote(workspaceFile)} nohup /opt/kintsugi/bin/kintsugi-start-vscode > /.kintsugi/vscode/server.log 2>&1 9>&- &
       started_pid=$!
     fi

@@ -78,8 +78,8 @@ async function buildClientEntrypoints(): Promise<void> {
         builder.onResolve({ filter: /^jszip$/ }, args => ({ path: Bun.resolveSync("jszip/lib/index.js", dirname(args.importer)) }));
       } }],
       define: {
-        ATELIER_GHOSTTY_WASM_URL: JSON.stringify(requiredAssetPath("/ghostty-vt.wasm")),
-        ATELIER_GHOSTTY_CALLBACKS_WASM_URL: JSON.stringify(requiredAssetPath("/ghostty-callbacks.wasm")),
+        KINTSUGI_GHOSTTY_WASM_URL: JSON.stringify(requiredAssetPath("/ghostty-vt.wasm")),
+        KINTSUGI_GHOSTTY_CALLBACKS_WASM_URL: JSON.stringify(requiredAssetPath("/ghostty-callbacks.wasm")),
       },
       naming: {
         entry: "[name]-[hash].[ext]",

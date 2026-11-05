@@ -9,11 +9,11 @@ import { agentPlanStore } from "@kintsugi/agent/server/plan";
 import { createNativePlanExtension, durablePlanContextEntry } from "../../src/server/durable-plan.ts";
 import { openDurableWorkspace, WorkspaceAgents, type DurableWorkspace } from "../../src/server/durable-workspace.ts";
 const context = BACKGROUND_CONTEXT;
-const original = process.env.ATELIER_DATA_DIR;
+const original = process.env.KINTSUGI_DATA_DIR;
 let directory: string, workspace: DurableWorkspace;
-afterEach(async () => { await workspace?.close(); if (original === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = original; if (directory) await rm(directory, { recursive: true, force: true }); });
+afterEach(async () => { await workspace?.close(); if (original === undefined) delete process.env.KINTSUGI_DATA_DIR; else process.env.KINTSUGI_DATA_DIR = original; if (directory) await rm(directory, { recursive: true, force: true }); });
 async function setup(retry = false) {
-  directory = await mkdtemp(join(tmpdir(), "durable-plan-")); process.env.ATELIER_DATA_DIR = directory;
+  directory = await mkdtemp(join(tmpdir(), "durable-plan-")); process.env.KINTSUGI_DATA_DIR = directory;
   const models = createModels(), faux = fauxProvider({ tokensPerSecond: 100_000 }); models.setProvider(faux.provider);
   const registry = createRegistry(); registry.install(createNativePlanExtension("w", () => workspace.harness));
   const seen: string[][] = [];

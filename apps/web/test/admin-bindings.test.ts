@@ -235,8 +235,8 @@ test("CLI bootstraps JSON bindings, issues metadata and locally revokes tokens",
 }));
 
 test("real app JSON template, environment, secret and security operations", () => fixture(async ({ directory, store, issued, auditPath }) => {
-  const previous = process.env.ATELIER_DATA_DIR;
-  process.env.ATELIER_DATA_DIR = directory;
+  const previous = process.env.KINTSUGI_DATA_DIR;
+  process.env.KINTSUGI_DATA_DIR = directory;
   const registry = createWorkspaceRegistry();
   const modules = workspaceModules.splice(0, workspaceModules.length);
   await writeFile(join(directory, "default-agent-type.json"), JSON.stringify("admin-fixture"));
@@ -294,7 +294,7 @@ test("real app JSON template, environment, secret and security operations", () =
     expect(registry.get(createdWorkspace.id)).toBeUndefined();
   } finally {
     workspaceModules.splice(0, workspaceModules.length, ...modules);
-    if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous;
+    if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR; else process.env.KINTSUGI_DATA_DIR = previous;
   }
 }));
 

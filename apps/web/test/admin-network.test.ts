@@ -9,17 +9,17 @@ import { createWebApp } from "../src/server/app.ts";
 import { createWorkspaceRegistry } from "../src/server/workspace-registry.ts";
 
 async function fixture(run: (context: Awaited<ReturnType<typeof setup>>) => Promise<void>) {
-  const previous = process.env.ATELIER_DATA_DIR;
+  const previous = process.env.KINTSUGI_DATA_DIR;
   const context = await setup();
   try { await run(context); }
   finally {
-    if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous;
+    if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR; else process.env.KINTSUGI_DATA_DIR = previous;
     await rm(context.directory, { recursive: true, force: true });
   }
 }
 async function setup() {
   const directory = await mkdtemp(join(tmpdir(), "kintsugi-admin-network-"));
-  process.env.ATELIER_DATA_DIR = directory;
+  process.env.KINTSUGI_DATA_DIR = directory;
   const store = createAdminStore(join(directory, "admin-bindings.json"));
   const issued = await store.issue({ name: "network-admin", scopes: ["security"] });
   const registry = createWorkspaceRegistry();

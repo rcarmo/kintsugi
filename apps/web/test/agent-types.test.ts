@@ -8,13 +8,13 @@ import { getAgentType, defaultAgentType, orderedAgentTypes, rememberAgentType } 
 let directory: string;
 let previous: string | undefined;
 beforeEach(async () => {
-  previous = process.env.ATELIER_DATA_DIR;
+  previous = process.env.KINTSUGI_DATA_DIR;
   directory = await mkdtemp(join(tmpdir(), "kintsugi-agent-types-"));
-  process.env.ATELIER_DATA_DIR = directory;
+  process.env.KINTSUGI_DATA_DIR = directory;
 });
 afterEach(async () => {
-  if (previous === undefined) delete process.env.ATELIER_DATA_DIR;
-  else process.env.ATELIER_DATA_DIR = previous;
+  if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR;
+  else process.env.KINTSUGI_DATA_DIR = previous;
   await rm(directory, { recursive: true, force: true });
 });
 
@@ -80,7 +80,7 @@ test("defaults to Claude Code when an Anthropic subscription is the only way to 
     builtinHasModel = false;
     credentials = [{ providerId: "anthropic", type: "api_key" }];
     expect((await defaultAgentType()).id).toBe("builtin");
-  `], { cwd: join(import.meta.dir, ".."), env: { ...process.env, ATELIER_DATA_DIR: directory }, stdout: "pipe", stderr: "pipe" });
+  `], { cwd: join(import.meta.dir, ".."), env: { ...process.env, KINTSUGI_DATA_DIR: directory }, stdout: "pipe", stderr: "pipe" });
   const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
   expect({ code, stdout, stderr }).toEqual({ code: 0, stdout: "", stderr: "" });
 });

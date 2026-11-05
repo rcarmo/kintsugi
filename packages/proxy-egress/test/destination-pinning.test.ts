@@ -41,7 +41,7 @@ async function proxiedWorkspace(hostnames: Record<string, { first: string; later
   const directory = await mkdtemp(join(tmpdir(), "kintsugi-pin-"));
   const ca = await ensureMitmCa({ kintsugiDataDir: directory, dockerHostKintsugiDataDir: directory, dockerBridgeHost: "127.0.0.1" });
   const rebind = rebindingLookup(hostnames, options.stableCalls ?? 1);
-  const hooks = createHttpHooks(options.mitmHost ? { secrets: { API_KEY: { hosts: [options.mitmHost], value: "mitm-secret", placeholder: "ATELIER_PIN_PLACEHOLDER" } } } : {});
+  const hooks = createHttpHooks(options.mitmHost ? { secrets: { API_KEY: { hosts: [options.mitmHost], value: "mitm-secret", placeholder: "KINTSUGI_PIN_PLACEHOLDER" } } } : {});
   const recorded: Recorded = { fetches: [], connects: [], lookups: [] };
   // A local sink accepts tunnel connections so tests need no real upstream network.
   const sinkConnections = new Set<net.Socket>();

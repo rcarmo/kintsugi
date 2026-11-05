@@ -426,9 +426,9 @@ jobs:
           provenance: false
           tags: ghcr.io/${{ github.repository_owner }}/kintsugi:sha-${{ needs.prepare.outputs.commit }}-${{ matrix.arch }}
           build-args: |
-            ATELIER_COMMIT_ID=${{ needs.prepare.outputs.commit }}
-            ATELIER_DEFAULT_WORKSPACE_IMAGE=${{ steps.dependency.outputs.ref }}
-            ATELIER_EAGERLY_PRELOAD=["${{ steps.dependency.outputs.ref }}"]
+            KINTSUGI_COMMIT_ID=${{ needs.prepare.outputs.commit }}
+            KINTSUGI_DEFAULT_WORKSPACE_IMAGE=${{ steps.dependency.outputs.ref }}
+            KINTSUGI_EAGERLY_PRELOAD=["${{ steps.dependency.outputs.ref }}"]
           labels: |
             ${{ needs.prepare.outputs.image_source }}
             com.kintsugi.workspace-image.ref=${{ steps.dependency.outputs.ref }}

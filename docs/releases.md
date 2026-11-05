@@ -137,18 +137,20 @@ replace the public Atelier installer or advance Atelier's update tags.
 `--uninstall` removes Kintsugi data. The fork installer refuses automatic removal
 of a legacy Atelier installation.
 
-Existing `ATELIER_*` environment/build-argument names remain unchanged; defaults,
-storage names, labels and runtime protocols do not adopt Atelier state.
+Use `KINTSUGI_*` environment and build-argument names. Existing `ATELIER_*` names
+remain compatibility aliases; an explicitly set Kintsugi name takes precedence.
+Data locations, namespaces, labels and saved identities do not change, and Kintsugi
+does not adopt upstream installation data.
 
 Local publishing requires the existing `GH_PACKAGE_TOKEN` with GHCR package write access.
-Docker, Buildx, Bun and Git are required and supplied by the Atelier workspace.
+Docker, Buildx, Bun and Git are required and supplied by the Kintsugi workspace.
 The release CLI runs on Linux and macOS; it calls the native OS locking API through
 Bun rather than requiring a `flock` executable. No GitHub Actions or host Docker
 socket is needed.
 
 ### Local builders
 
-Set `ATELIER_RELEASE_HELPER=builder@hostname` (or an SSH config alias). The helper
+Set `KINTSUGI_RELEASE_HELPER=builder@hostname` (or an SSH config alias). The helper
 must allow noninteractive SSH with an already trusted host key, and its SSH user
 must have Docker access. It must run Linux on the opposite architecture from the
 local Docker daemon: arm64 for an amd64 workstation, or amd64 for an ARM laptop.
@@ -158,7 +160,7 @@ helpers fail before publishing; there is no emulation fallback.
 The command fetches `origin/main` and records its exact SHA. It uses the integrated
 Docker BuildKit builders (`docker` driver) for the current Docker context and a
 persistent SSH context derived from the helper destination. No separate BuildKit
-container is created. Inside Atelier this preserves the patched daemon's EROFS
+container is created. Inside Kintsugi this preserves the patched daemon's EROFS
 snapshotter and shared-cache configuration.
 
 Every invocation checks both daemon architectures and builder drivers, then exercises
@@ -201,8 +203,8 @@ storage configuration.
 ### Local progress
 
 The script is an ordinary foreground CLI: stdout is live and simultaneously saved.
-It needs neither tmux nor Atelier to function. For long runs in Atelier, start it
-in a persistent tmux session, **present that session with Atelier's `present`
+It needs neither tmux nor Kintsugi to function. For long runs in Kintsugi, start it
+in a persistent tmux session, **present that session with Kintsugi's `present`
 tool**, and read the status file periodically. Screenshots are unnecessary.
 
 ```sh

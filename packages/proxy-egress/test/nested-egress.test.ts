@@ -23,7 +23,7 @@ test("nested HTTP, HTTPS and WebSocket egress preserve inherited credentials and
     const ca = await ensureMitmCa({ kintsugiDataDir: directory, dockerHostKintsugiDataDir: directory, dockerBridgeHost: "127.0.0.1" });
     const caPem = await readFile(ca.certPath, "utf8");
     const hostname = "nested-egress.test";
-    const placeholder = "ATELIER_NESTED_PLACEHOLDER";
+    const placeholder = "KINTSUGI_NESTED_PLACEHOLDER";
     const value = "parent-secret";
     const leaf = await ensureLeafCertificate(ca, hostname);
     const websocketCredentials: string[] = [];

@@ -113,9 +113,9 @@ async function nft(rules: string, check = false) {
 export async function buildClientFirewallSupported(buildClientsCgroup: string): Promise<boolean> {
   workspaceFirewallRules(buildClientsCgroup, []); // Validate before interpolation.
   const parts = buildClientsCgroup.split("/").filter(Boolean);
-  const result = await nft(`add table inet aitc_socket_preflight
-add chain inet aitc_socket_preflight output { type filter hook output priority -10; policy accept; }
-add rule inet aitc_socket_preflight output socket cgroupv2 level ${parts.length} "${parts.join("/")}" counter
+  const result = await nft(`add table inet kintsugi_socket_preflight
+add chain inet kintsugi_socket_preflight output { type filter hook output priority -10; policy accept; }
+add rule inet kintsugi_socket_preflight output socket cgroupv2 level ${parts.length} "${parts.join("/")}" counter
 `, true);
   if (result.code === 0) return true;
   if (result.diagnostic.includes("Could not process rule: No such file or directory")) return false;

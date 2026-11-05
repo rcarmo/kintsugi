@@ -13,7 +13,7 @@ import { prepareUpdate } from "../src/server/docker.ts";
 import { UpdateManager } from "../src/server/index.ts";
 import { readStoredUpdateChannel, writeStoredUpdateChannel } from "../src/server/settings-store.ts";
 
-process.env.ATELIER_DATA_DIR = "/data/app";
+process.env.KINTSUGI_DATA_DIR = "/data/app";
 
 const name = `updater-${randomUUID().slice(0, 8)}`;
 const directory = `/tmp/${name}`;

@@ -58,7 +58,7 @@ test("VS Code startup keeps server state outside home and preserves existing set
   const startup = (await readFile(new URL("./workspace_tools/kintsugi-start-vscode", import.meta.url), "utf8"))
     .replaceAll("/opt/kintsugi", imageRoot)
     .replaceAll("/.kintsugi", stateRoot);
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("ATELIER_VSCODE_")));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(?:KINTSUGI|ATELIER)_VSCODE_/.test(key)));
   const run = (options: Record<string, string> = {}) => Bun.spawnSync(["sh", "-c", startup], { env: { ...env, HOME: home, ...options } });
   const result = run();
   expect(result.exitCode).toBe(0);
@@ -73,9 +73,16 @@ test("VS Code startup keeps server state outside home and preserves existing set
   expect(await readFile(settings, "utf8")).toBe('{"default":true}');
   expect(await readFile(join(stateRoot, "vscode/server-data/data/Machine/mcp.json"), "utf8")).toBe('{"servers":{}}');
   await writeFile(settings, '{"user":true}');
-  const restarted = run({ ATELIER_VSCODE_DEFAULT_WORKSPACE: "/work/project.code-workspace" });
+  const restarted = run({ KINTSUGI_VSCODE_DEFAULT_WORKSPACE: "/work/project.code-workspace" });
   expect(restarted.exitCode).toBe(0);
   expect(restarted.stdout.toString()).toContain("--default-workspace\n/work/project.code-workspace\n");
+  const legacy = run({ ATELIER_VSCODE_PORT: "24801", ATELIER_VSCODE_DEFAULT_WORKSPACE: "/work/legacy.code-workspace" });
+  expect(legacy.exitCode).toBe(0);
+  expect(legacy.stdout.toString()).toContain("--port\n24801\n");
+  expect(legacy.stdout.toString()).toContain("--default-workspace\n/work/legacy.code-workspace\n");
+  const primary = run({ KINTSUGI_VSCODE_PORT: "24802", ATELIER_VSCODE_PORT: "24801" });
+  expect(primary.exitCode).toBe(0);
+  expect(primary.stdout.toString()).toContain("--port\n24802\n");
   expect(await readFile(settings, "utf8")).toBe('{"user":true}');
   expect(await readdir(home)).toEqual([]);
 });

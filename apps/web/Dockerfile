@@ -1,5 +1,7 @@
 # syntax=docker/dockerfile:1-labs
+# Legacy build arguments remain aliases for existing external builders.
 ARG ATELIER_RUNTIME_IMAGE=ghcr.io/rcarmo/kintsugi-docker@sha256:5b3106e3e906e30b2d314ce66d53afc1bb816f8bcd91aa578879e13194c5f351
+ARG KINTSUGI_RUNTIME_IMAGE=${ATELIER_RUNTIME_IMAGE}
 FROM oven/bun:1.4.4 AS bun-dist
 
 FROM ubuntu:26.04 AS transcription-runtime
@@ -32,7 +34,7 @@ FROM deps AS build
 COPY --exclude=packages/workspace-helper/dist --exclude=packages/workspace-helper/workspace_tools . .
 RUN bun run --cwd apps/web build:client
 
-FROM ${ATELIER_RUNTIME_IMAGE} AS runtime
+FROM ${KINTSUGI_RUNTIME_IMAGE} AS runtime
 # Adapt executable names supplied by the pinned upstream runtime.
 RUN test -x /usr/local/bin/kintsugi-dockerd || ln -s /usr/local/bin/agents-in-the-cloud-dockerd /usr/local/bin/kintsugi-dockerd
 RUN test -x /usr/local/bin/kintsugi-image-transfer || ln -s /usr/local/bin/agents-in-the-cloud-image-transfer /usr/local/bin/kintsugi-image-transfer
@@ -64,8 +66,8 @@ RUN ln -s /opt/nemo-speech/bin/nemo-speech /usr/local/bin/nemo-speech
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=3000
-ENV ATELIER_NAMESPACE=default
-ENV ATELIER_DATA_DIR=/data/app
+# Runtime path/namespace defaults are set by the entrypoint, so an explicit
+# legacy environment value is not masked by an image-level KINTSUGI default.
 
 COPY --from=deps /app/node_modules /app/node_modules
 COPY --from=build --exclude=node_modules /app /app
@@ -77,12 +79,15 @@ RUN printf '%s\n' '#!/usr/bin/env sh' 'exec /usr/local/bin/bun /app/packages/pro
 ARG ATELIER_COMMIT_ID
 ARG ATELIER_DEFAULT_WORKSPACE_IMAGE
 ARG ATELIER_EAGERLY_PRELOAD="[]"
-ENV ATELIER_COMMIT_ID=${ATELIER_COMMIT_ID}
+ARG KINTSUGI_COMMIT_ID=${ATELIER_COMMIT_ID}
+ARG KINTSUGI_DEFAULT_WORKSPACE_IMAGE=${ATELIER_DEFAULT_WORKSPACE_IMAGE}
+ARG KINTSUGI_EAGERLY_PRELOAD=${ATELIER_EAGERLY_PRELOAD}
+ENV KINTSUGI_COMMIT_ID=${KINTSUGI_COMMIT_ID}
 LABEL kintsugi.deployment-config="1"
 LABEL kintsugi.storage-drivers="erofs,overlayfs" \
-      org.opencontainers.image.revision="${ATELIER_COMMIT_ID}" \
-      eagerly-preload="${ATELIER_EAGERLY_PRELOAD}"
-RUN printf '%s\n' "$ATELIER_DEFAULT_WORKSPACE_IMAGE" > /app/.kintsugi-default-workspace-image
+      org.opencontainers.image.revision="${KINTSUGI_COMMIT_ID}" \
+      eagerly-preload="${KINTSUGI_EAGERLY_PRELOAD}"
+RUN printf '%s\n' "$KINTSUGI_DEFAULT_WORKSPACE_IMAGE" > /app/.kintsugi-default-workspace-image
 
 EXPOSE 3000
 

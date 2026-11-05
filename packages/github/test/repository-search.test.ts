@@ -17,10 +17,10 @@ let queries: string[];
 let requests: URL[];
 
 beforeEach(async () => {
-  previousDataDir = process.env.ATELIER_DATA_DIR;
+  previousDataDir = process.env.KINTSUGI_DATA_DIR;
   previousToken = process.env.GH_TOKEN;
   dataDir = await mkdtemp(join(tmpdir(), "kintsugi-repo-search-"));
-  process.env.ATELIER_DATA_DIR = dataDir;
+  process.env.KINTSUGI_DATA_DIR = dataDir;
   process.env.GH_TOKEN = crypto.randomUUID();
   queries = [];
   requests = [];
@@ -28,8 +28,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   globalThis.fetch = originalFetch;
-  if (previousDataDir === undefined) delete process.env.ATELIER_DATA_DIR;
-  else process.env.ATELIER_DATA_DIR = previousDataDir;
+  if (previousDataDir === undefined) delete process.env.KINTSUGI_DATA_DIR;
+  else process.env.KINTSUGI_DATA_DIR = previousDataDir;
   if (previousToken === undefined) delete process.env.GH_TOKEN;
   else process.env.GH_TOKEN = previousToken;
   await rm(dataDir, { recursive: true, force: true });

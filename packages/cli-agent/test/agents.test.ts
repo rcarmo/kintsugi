@@ -63,7 +63,7 @@ async function scenario(script: string): Promise<void> {
       const titleEvents = [];
       module.initialize({ events: { on() {}, emit: async (name, payload) => { titleEvents.push({ name, payload }); } }, registerSocketHandler() {} });
       const agentType = module.agentType;
-      const saved = (workspaceId, agentTypeId = "example") => Bun.file(process.env.ATELIER_DATA_DIR + "/workspaces/" + workspaceId + "/metadata/" + agentTypeId + "-agents.json").json();
+      const saved = (workspaceId, agentTypeId = "example") => Bun.file(process.env.KINTSUGI_DATA_DIR + "/workspaces/" + workspaceId + "/metadata/" + agentTypeId + "-agents.json").json();
       const list = (workspaceId) => agentType.tabs.list({ workspaceId });
       // Creates a session in a fresh workspace and reports its turn boundaries the way its CLI does.
       async function turnSignals(workspaceId) {
@@ -74,7 +74,7 @@ async function scenario(script: string): Promise<void> {
         return { id, signal: (boundary) => handleAgentMcpRequest(new Request("http://localhost/agent-turn-" + boundary, { method: "POST", headers: { authorization: "Bearer " + token } }), workspaceId) };
       }
       ${script}
-    `], { cwd: join(import.meta.dir, ".."), env: { ...process.env, ATELIER_DATA_DIR: directory }, stdout: "pipe", stderr: "pipe" });
+    `], { cwd: join(import.meta.dir, ".."), env: { ...process.env, KINTSUGI_DATA_DIR: directory }, stdout: "pipe", stderr: "pipe" });
     const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
     expect({ code, stdout, stderr }).toEqual({ code: 0, stdout: "", stderr: "" });
   } finally { await rm(directory, { recursive: true, force: true }); }
@@ -253,7 +253,7 @@ test("Agent types and Workspaces have independent Agent stores", () => scenario(
 test("existing CLI placeholders, Claude and Pi agents retain paths, IDs and tmux names", () => scenario(`
   for (const id of ["codex-cli", "claude", "pi"]) {
     const session = { id: "old-" + id, title: "Existing tab", tmuxSession: id + "-existing", input: { text: "Never submit", images: [], attachmentNotes: [] }, model: "saved-model", thinkingLevel: "high", firstPresentation: true, ...(id !== "codex-cli" ? { kind: id } : {}) };
-    const path = process.env.ATELIER_DATA_DIR + "/workspaces/legacy/metadata/" + id + "-agents.json";
+    const path = process.env.KINTSUGI_DATA_DIR + "/workspaces/legacy/metadata/" + id + "-agents.json";
     await Bun.write(path, JSON.stringify({ sessions: [session] }));
     const legacy = createCliAgentModule({ ...adapter, id }).agentType;
     expect(await legacy.tabs.list({ workspaceId: "legacy" })).toEqual([{ id: session.id, title: session.title }]);
@@ -406,7 +406,7 @@ test("a renamed adapter keeps its earlier metadata file and restores agents of i
   const { createCliAgents } = await import(${JSON.stringify(join(import.meta.dir, "../src/server/agents.ts"))});
   const resumed = [];
   const agents = createCliAgents({ ...adapter, id: "renamed", legacyId: "original", resumeScript: async (...args) => { resumed.push(args[2].id); return "printf resumed"; } }, async () => {});
-  const path = process.env.ATELIER_DATA_DIR + "/workspaces/renamed/metadata/original-agents.json";
+  const path = process.env.KINTSUGI_DATA_DIR + "/workspaces/renamed/metadata/original-agents.json";
   const agent = (id, kind) => ({ id, title: "Existing tab", tmuxSession: "original-" + id, input: { text: "", images: [], attachmentNotes: [] }, kind });
   await Bun.write(path, JSON.stringify({ agents: [agent("earlier", "original"), agent("placeholder")] }));
   expect(agents.list("renamed").map(agent => agent.id)).toEqual(["earlier", "placeholder"]);
@@ -550,7 +550,7 @@ test("the terminal reports installation failure even when the CLI script owns it
   launchScript = "set -eu; trap 'printf installation-failed >&2' EXIT; exit 7";
   await agentType.launch.prepareWorkspace("installer-failure", { agent: { input: { text: "Hello", images: [], attachmentNotes: [] } } });
   const [{ id }] = await list("installer-failure");
-  const directory = process.env.ATELIER_DATA_DIR;
+  const directory = process.env.KINTSUGI_DATA_DIR;
   const signalScript = directory + "/signal.sh";
   const signalFile = directory + "/boundary";
   const { shellQuote } = await import("@kintsugi/core");

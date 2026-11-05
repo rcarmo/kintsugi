@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { addWorkspaceTemplate, saveInstanceCredential } from "@kintsugi/workspace-templates";
 import { createCredentialCatalogueTool } from "../../src/server/credential-catalogue.ts";
 test("agent catalogue returns only granted metadata and placeholders, never values or other grants", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "agent-credential-catalogue-")), previous = process.env.ATELIER_DATA_DIR;
-  process.env.ATELIER_DATA_DIR = directory;
+  const directory = await mkdtemp(join(tmpdir(), "agent-credential-catalogue-")), previous = process.env.KINTSUGI_DATA_DIR;
+  process.env.KINTSUGI_DATA_DIR = directory;
   try {
     const a = (await addWorkspaceTemplate("https://example.com/a.git")).workspaceTemplate;
     const b = (await addWorkspaceTemplate("https://example.com/b.git")).workspaceTemplate;
@@ -21,7 +21,7 @@ test("agent catalogue returns only granted metadata and placeholders, never valu
     for (const value of ["agent-fixture-secret", "Foreign credential", "encryptedSecret", "templateIds"]) expect(rendered).not.toContain(value);
     expect((await createCredentialCatalogueTool("empty", async () => undefined).execute("call", {})).content).toEqual([{ type: "text", text: '{"credentials":[]}' }]);
   } finally {
-    if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous;
+    if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR; else process.env.KINTSUGI_DATA_DIR = previous;
     await rm(directory, { recursive: true, force: true });
   }
 });

@@ -31,7 +31,7 @@ async function scenario(script: string): Promise<void> {
       const signal = (boundary) => handleAgentMcpRequest(new Request("http://127.0.0.1:2988/agent-turn-" + boundary, { method: "POST", headers: { Authorization: "Bearer " + token } }), "workspace");
       const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
       ${script}
-    `], { cwd: join(import.meta.dir, "../.."), env: { ...process.env, ATELIER_DATA_DIR: directory }, stdout: "pipe", stderr: "pipe" });
+    `], { cwd: join(import.meta.dir, "../.."), env: { ...process.env, KINTSUGI_DATA_DIR: directory }, stdout: "pipe", stderr: "pipe" });
     const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
     expect({ code, stdout, stderr }).toEqual({ code: 0, stdout: "", stderr: "" });
   } finally { await rm(directory, { recursive: true, force: true }); }

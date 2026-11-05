@@ -16,8 +16,8 @@ let previous: string | undefined;
 
 beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), "helper-authentication-"));
-  previous = process.env.ATELIER_DATA_DIR;
-  process.env.ATELIER_DATA_DIR = directory;
+  previous = process.env.KINTSUGI_DATA_DIR;
+  process.env.KINTSUGI_DATA_DIR = directory;
   for (const id of ["own", "other"]) {
     await mkdir(join(directory, "workspaces", id), { recursive: true });
     await writeFile(join(directory, "workspaces", id, "gateway-token"), crypto.randomUUID() + crypto.randomUUID(), { mode: 0o600 });
@@ -42,8 +42,8 @@ afterAll(async () => {
   closeWorkspaceHelper(socket);
   helper?.kill();
   if (helper) await helper.exited;
-  if (previous === undefined) delete process.env.ATELIER_DATA_DIR;
-  else process.env.ATELIER_DATA_DIR = previous;
+  if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR;
+  else process.env.KINTSUGI_DATA_DIR = previous;
   if (directory) await Bun.spawn(["sudo", "-n", "rm", "-rf", directory]).exited;
 });
 
@@ -78,12 +78,12 @@ test("the workspace identity is stable across preparation and rejects traversal"
 });
 
 test("a helper identity cannot be reused by another app namespace", async () => {
-  const previous = process.env.ATELIER_NAMESPACE;
-  process.env.ATELIER_NAMESPACE = `${previous || "host"}-other`;
+  const previous = process.env.KINTSUGI_NAMESPACE;
+  process.env.KINTSUGI_NAMESPACE = `${previous || "host"}-other`;
   try {
     await expect(ensureWorkspaceHelperIdentity("own")).rejects.toThrow("another namespace");
   } finally {
-    if (previous === undefined) delete process.env.ATELIER_NAMESPACE;
-    else process.env.ATELIER_NAMESPACE = previous;
+    if (previous === undefined) delete process.env.KINTSUGI_NAMESPACE;
+    else process.env.KINTSUGI_NAMESPACE = previous;
   }
 });

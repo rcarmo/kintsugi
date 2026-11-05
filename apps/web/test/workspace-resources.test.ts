@@ -32,7 +32,7 @@ test("unsupported installation capability is a bounded unavailable response",asy
 test("properties network controls stage supported policy and require confirmation for installation-wide DNS",async()=>{
   const {mkdtemp,rm}=await import("node:fs/promises");const {tmpdir}=await import("node:os");const {join}=await import("node:path");
   const {handleWorkspaceProperties}=await import("../src/server/workspace-properties.ts");const {getNetworkConfiguration,setNetworkConfiguration,getWorkspaceNetworkMode,getAppliedWorkspaceNetwork,workspaceNetworkRestartRequired}=await import("@kintsugi/workspace");
-  const previous=process.env.ATELIER_DATA_DIR,directory=await mkdtemp(join(tmpdir(),"inspector-network-"));process.env.ATELIER_DATA_DIR=directory;
+  const previous=process.env.KINTSUGI_DATA_DIR,directory=await mkdtemp(join(tmpdir(),"inspector-network-"));process.env.KINTSUGI_DATA_DIR=directory;
   const backend:WorkspaceResourceBackend={inspect:async()=>snapshot(),configure:async()=>snapshot()};
   const form=(path:string,fields:Record<string,string>)=>new Request("http://test.local"+path,{method:"POST",headers:{Origin:"http://test.local",Accept:"text/vnd.turbo-stream.html","content-type":"application/x-www-form-urlencoded"},body:new URLSearchParams(fields)});
   try{
@@ -41,5 +41,5 @@ test("properties network controls stage supported policy and require confirmatio
     expect(getWorkspaceNetworkMode("fixture")).toBe("lan");expect(getAppliedWorkspaceNetwork("fixture").mode).toBe("off");expect(await workspaceNetworkRestartRequired("fixture")).toBe(true);
     const missing=form("/workspaces/fixture/properties/dns",{cidrs:"192.168.22.0/24",dns:"8.8.8.8",search:"example.test"});expect((await handleWorkspaceProperties(missing,new URL(missing.url),"fixture","Fixture",async()=>new Response("page"),backend)).status).toBe(422);expect((await getNetworkConfiguration()).dns).toEqual([]);
     const confirmed=form("/workspaces/fixture/properties/dns",{cidrs:"192.168.22.0/24",dns:"8.8.8.8",search:"example.test",confirmGlobalNetworkChange:"on"});expect((await handleWorkspaceProperties(confirmed,new URL(confirmed.url),"fixture","Fixture",async()=>new Response("page"),backend)).status).toBe(200);expect(await getNetworkConfiguration()).toEqual({cidrs:["192.168.22.0/24"],dns:["8.8.8.8"],search:["example.test"]});
-  }finally{if(previous===undefined)delete process.env.ATELIER_DATA_DIR;else process.env.ATELIER_DATA_DIR=previous;await rm(directory,{recursive:true,force:true});}
+  }finally{if(previous===undefined)delete process.env.KINTSUGI_DATA_DIR;else process.env.KINTSUGI_DATA_DIR=previous;await rm(directory,{recursive:true,force:true});}
 });

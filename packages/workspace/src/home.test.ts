@@ -11,7 +11,7 @@ async function homeScenario(script: string): Promise<void> {
       import { expect, mock } from "bun:test";
       import { readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
       import { join } from "node:path";
-      const directory = process.env.ATELIER_DATA_DIR;
+      const directory = process.env.KINTSUGI_DATA_DIR;
       const home = join(directory, "home");
       const core = await import("@kintsugi/core");
       const commands = [];
@@ -32,7 +32,7 @@ async function homeScenario(script: string): Promise<void> {
       ${script}
     `], {
       cwd: join(import.meta.dir, "../../.."),
-      env: { ...process.env, ATELIER_DATA_DIR: directory, ATELIER_DOCKER_HOST_DATA_DIR: "/host/kintsugi-data" },
+      env: { ...process.env, KINTSUGI_DATA_DIR: directory, KINTSUGI_DOCKER_HOST_DATA_DIR: "/host/kintsugi-data" },
       stdout: "pipe", stderr: "pipe",
     });
     const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);

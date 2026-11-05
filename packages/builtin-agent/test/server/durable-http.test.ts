@@ -15,18 +15,18 @@ import { handleAgentRequest } from "../../src/server/routes.ts";
 
 let directory: string;
 let owner: DurableAgentRuntime | undefined;
-const originalDataDir = process.env.ATELIER_DATA_DIR;
+const originalDataDir = process.env.KINTSUGI_DATA_DIR;
 afterEach(async () => {
   await suspendAllDurableWorkspaceOwners();
   owner = undefined;
-  if (originalDataDir === undefined) delete process.env.ATELIER_DATA_DIR;
-  else process.env.ATELIER_DATA_DIR = originalDataDir;
+  if (originalDataDir === undefined) delete process.env.KINTSUGI_DATA_DIR;
+  else process.env.KINTSUGI_DATA_DIR = originalDataDir;
   if (directory) await rm(directory, { recursive: true, force: true });
 });
 
 test("lost HTTP response retries admitted input after attachment staging is consumed, without preparation or another generation", async () => {
   directory = await mkdtemp(join(tmpdir(), "durable-http-"));
-  process.env.ATELIER_DATA_DIR = directory;
+  process.env.KINTSUGI_DATA_DIR = directory;
   const agent = await ensureDefaultWorkspaceAgent("http-workspace");
   const models = createModels();
   const faux = fauxProvider({ tokensPerSecond: 100_000, models: [{ id: "test", input: ["text", "image"] }] });
@@ -91,7 +91,7 @@ test("lost HTTP response retries admitted input after attachment staging is cons
 
 test("offline HTTP Stop bypasses model/UI preparation and commits intent before cleanup failure", async () => {
   directory = await mkdtemp(join(tmpdir(), "durable-http-stop-"));
-  process.env.ATELIER_DATA_DIR = directory;
+  process.env.KINTSUGI_DATA_DIR = directory;
   const agent = await ensureDefaultWorkspaceAgent(`stop-${crypto.randomUUID()}`);
   const models = createModels();
   const faux = fauxProvider({ tokensPerSecond: 100_000 });
@@ -142,7 +142,7 @@ test("offline HTTP Stop bypasses model/UI preparation and commits intent before 
 
 test("thinking level HTTP configuration uses canonical fields and validates native model support", async () => {
   directory = await mkdtemp(join(tmpdir(), "durable-thinking-level-http-"));
-  process.env.ATELIER_DATA_DIR = directory;
+  process.env.KINTSUGI_DATA_DIR = directory;
   const agent = await ensureDefaultWorkspaceAgent("thinking-level-workspace");
   const models = createModels();
   const faux = fauxProvider({ models: [{ id: "test" }] });

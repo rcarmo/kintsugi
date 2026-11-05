@@ -1,4 +1,4 @@
-import { workspaceResourceControlAvailable } from "@kintsugi/core";
+import { kintsugiEnv, workspaceResourceControlAvailable } from "@kintsugi/core";
 import { hostRequest } from "@kintsugi/host/control";
 import { createHash } from "node:crypto";
 import { workspaceHomeMounts } from "./home.ts";
@@ -65,7 +65,7 @@ type WorkspaceExecBufferResult = Omit<WorkspaceExecResult, "stdout"> & { stdout:
 export interface WorkspaceCommandOptions { workdir?: string; user?: "agent" | "root"; stdin?: CommandInput; maxOutputBytes?: number }
 interface DeleteWorkspaceOptions { force?: boolean; events?: KintsugiEventBus }
 
-function namespace(): string { return process.env.ATELIER_NAMESPACE || "host"; }
+function namespace(): string { return kintsugiEnv("NAMESPACE") || "host"; }
 export function generateWorkspaceId(): string { return crypto.randomUUID().replaceAll("-", "").slice(0, 8); }
 export function workspaceContainerName(id: string): string { return `kintsugi-${id}`; }
 
@@ -362,7 +362,8 @@ function hostUserEnv(): WorkspaceEnvironment {
   const gid = process.getgid?.();
   if (uid === undefined || gid === undefined) throw new KintsugiCoreError("unsupported_platform", "workspace containers require a POSIX host uid/gid");
   if (uid === 0 || gid === 0) throw new KintsugiCoreError("unsupported_root_user", "workspace containers require a non-root Kintsugi process");
-  return { ATELIER_HOST_UID: String(uid), ATELIER_HOST_GID: String(gid) };
+  // Older workspace startup scripts still consume the legacy aliases.
+  return { KINTSUGI_HOST_UID: String(uid), KINTSUGI_HOST_GID: String(gid), ATELIER_HOST_UID: String(uid), ATELIER_HOST_GID: String(gid) };
 }
 
 function baseWorkspacePlan(labels: Record<string, string>): WorkspaceDockerPlan {
@@ -370,8 +371,8 @@ function baseWorkspacePlan(labels: Record<string, string>): WorkspaceDockerPlan 
 }
 
 function alignWorkspaceUserScript(): string {
-  return `work_uid="\${ATELIER_HOST_UID:?}"
-work_gid="\${ATELIER_HOST_GID:?}"
+  return `work_uid="\${KINTSUGI_HOST_UID:-\${ATELIER_HOST_UID:?}}"
+work_gid="\${KINTSUGI_HOST_GID:-\${ATELIER_HOST_GID:?}}"
 if [ "$work_uid" = 0 ] || [ "$work_gid" = 0 ]; then echo "Kintsugi must run as a non-root host user" >&2; exit 1; fi
 conflict_user="$(getent passwd "$work_uid" | cut -d: -f1 || true)"
 if [ -n "$conflict_user" ] && [ "$conflict_user" != agent ]; then userdel "$conflict_user"; fi

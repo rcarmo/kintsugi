@@ -1,3 +1,4 @@
+import { kintsugiEnv } from "@kintsugi/core";
 import { imageNamespace } from "../packages/shared/src/publishing.ts";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -55,9 +56,9 @@ export async function authenticateRegistry(run: Run) {
 }
 
 export async function ensureBuilders(run: Run, directory: string) {
-  const helper = process.env.ATELIER_RELEASE_HELPER?.trim();
+  const helper = kintsugiEnv("RELEASE_HELPER")?.trim();
   if (!helper || !/^(?:[A-Za-z0-9_][A-Za-z0-9_.-]*@)?[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(helper)) {
-    throw new Error("ATELIER_RELEASE_HELPER must be an SSH destination: [user@]hostname (SSH aliases are supported)");
+    throw new Error("KINTSUGI_RELEASE_HELPER must be an SSH destination: [user@]hostname (SSH aliases are supported)");
   }
   await run(["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10", helper, "docker info --format '{{.Architecture}}'"]);
   const local = (await run(["docker", "context", "show"])).stdout.trim();

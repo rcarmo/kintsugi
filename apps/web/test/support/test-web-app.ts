@@ -84,13 +84,13 @@ export function temporaryKintsugiDataDir() {
   let path: string | undefined;
   return {
     async setUp() {
-      previous = process.env.ATELIER_DATA_DIR;
+      previous = process.env.KINTSUGI_DATA_DIR;
       path = await mkdtemp(join(tmpdir(), "kintsugi-web-test-"));
-      process.env.ATELIER_DATA_DIR = path;
+      process.env.KINTSUGI_DATA_DIR = path;
     },
     async tearDown() {
-      if (previous === undefined) delete process.env.ATELIER_DATA_DIR;
-      else process.env.ATELIER_DATA_DIR = previous;
+      if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR;
+      else process.env.KINTSUGI_DATA_DIR = previous;
       if (path) await rm(path, { recursive: true, force: true });
       previous = undefined;
       path = undefined;

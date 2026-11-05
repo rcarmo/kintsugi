@@ -6,8 +6,8 @@ import { giteaProvider, validateGiteaCredential, searchGiteaRepositories } from 
 import { gitHostingGitConfiguration } from "../src/index.ts";
 
 test("self-signed Gitea needs explicit opt-in for API/search/Git and never follows redirects or disables TLS elsewhere", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "gitea-self-signed-")), previous = process.env.ATELIER_DATA_DIR;
-  process.env.ATELIER_DATA_DIR = dir;
+  const dir = await mkdtemp(join(tmpdir(), "gitea-self-signed-")), previous = process.env.KINTSUGI_DATA_DIR;
+  process.env.KINTSUGI_DATA_DIR = dir;
   const key = join(dir, "key.pem"), cert = join(dir, "cert.pem");
   const openssl = Bun.spawn(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert, "-days", "1", "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost"], { stdout: "pipe", stderr: "pipe" });
   if (await openssl.exited !== 0) throw Error(await new Response(openssl.stderr).text());
@@ -58,7 +58,7 @@ test("self-signed Gitea needs explicit opt-in for API/search/Git and never follo
     expect((await git(["ls-remote", `${serverUrl}/alice/repo.git`])).code).not.toBe(0);
   } finally {
     await server.stop(true);
-    if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous;
+    if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR; else process.env.KINTSUGI_DATA_DIR = previous;
     await rm(dir, { recursive: true, force: true });
   }
 }, 30000);

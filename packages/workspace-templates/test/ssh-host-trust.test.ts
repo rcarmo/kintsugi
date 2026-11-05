@@ -23,14 +23,14 @@ async function run(command: string[], cwd?: string): Promise<string> {
 }
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "kintsugi-ssh-transport-"));
-  previousDataDir = process.env.ATELIER_DATA_DIR;
-  process.env.ATELIER_DATA_DIR = join(root, "data");
+  previousDataDir = process.env.KINTSUGI_DATA_DIR;
+  process.env.KINTSUGI_DATA_DIR = join(root, "data");
 });
 afterEach(async () => {
   await stopWorkspaceTemplateSshAgents();
   if (daemon) { daemon.kill(); await daemon.exited; const stderr = await new Response(daemon.stderr).text(); if (stderr) console.error(stderr); daemon = undefined; }
-  if (previousDataDir === undefined) delete process.env.ATELIER_DATA_DIR;
-  else process.env.ATELIER_DATA_DIR = previousDataDir;
+  if (previousDataDir === undefined) delete process.env.KINTSUGI_DATA_DIR;
+  else process.env.KINTSUGI_DATA_DIR = previousDataDir;
   await rm(root, { recursive: true, force: true });
 });
 

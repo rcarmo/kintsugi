@@ -108,7 +108,7 @@ test("workspace socket controls HTTP and HTTPS identity, policy and reconnection
   for (const workspaceId of ["alpha", "beta"]) {
     const hooks = createHttpHooks({
       allowedInternalHosts: ["127.0.0.1", "localhost"],
-      secrets: { API_KEY: { value: `${workspaceId}-secret`, placeholder: "ATELIER_TEST_PLACEHOLDER", hosts: ["127.0.0.1", "localhost"] } },
+      secrets: { API_KEY: { value: `${workspaceId}-secret`, placeholder: "KINTSUGI_TEST_PLACEHOLDER", hosts: ["127.0.0.1", "localhost"] } },
     });
     contexts.set(workspaceId, { workspaceId, env: hooks.env, hooks: hooks.httpHooks, secrets: hooks.secrets });
   }
@@ -131,7 +131,7 @@ test("workspace socket controls HTTP and HTTPS identity, policy and reconnection
   cleanup.push(() => alpha.close()); cleanup.push(() => beta.close());
   const alphaPort = await localRelay(join(directory, "alpha", "egress.sock"));
   const betaPort = await localRelay(join(directory, "beta", "egress.sock"));
-  const headers = { "X-Api-Key": "ATELIER_TEST_PLACEHOLDER", Authorization: "Bearer destination-authorization", "Proxy-Authorization": `Basic ${Buffer.from("beta:forged-token").toString("base64")}`, "X-Workspace-Id": "beta" };
+  const headers = { "X-Api-Key": "KINTSUGI_TEST_PLACEHOLDER", Authorization: "Bearer destination-authorization", "Proxy-Authorization": `Basic ${Buffer.from("beta:forged-token").toString("base64")}`, "X-Workspace-Id": "beta" };
   for (const [id, port] of [["alpha", alphaPort], ["beta", betaPort]] as const) {
     const response = await proxyRequest(port, `http://127.0.0.1:${httpPort}/upload`, { method: "POST", headers, body: "streamed payload" });
     expect(response.body).toBe("destination response");
@@ -173,7 +173,7 @@ test("workspace socket controls HTTP and HTTPS identity, policy and reconnection
     secure.on("error", reject);
     secure.on("data", data => body += data.toString());
     secure.on("end", () => resolve(body));
-    secure.once("secureConnect", () => secure.write(`GET /secure HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nX-Api-Key: ATELIER_TEST_PLACEHOLDER\r\nAuthorization: Bearer destination-authorization\r\nProxy-Authorization: forged\r\n\r\n`));
+    secure.once("secureConnect", () => secure.write(`GET /secure HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nX-Api-Key: KINTSUGI_TEST_PLACEHOLDER\r\nAuthorization: Bearer destination-authorization\r\nProxy-Authorization: forged\r\n\r\n`));
   });
   secure.destroy();
   expect(response).toContain("destination response");
@@ -200,16 +200,16 @@ test("workspace socket controls HTTP and HTTPS identity, policy and reconnection
       };
       socket.on("data", received);
       socket.once("error", reject);
-      socket.write("GET /reuse HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: keep-alive\r\nX-Api-Key: ATELIER_TEST_PLACEHOLDER\r\n\r\n");
+      socket.write("GET /reuse HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: keep-alive\r\nX-Api-Key: KINTSUGI_TEST_PLACEHOLDER\r\n\r\n");
     });
   }
   const existingTls = await connectTls();
   await requestOnTls(existingTls);
-  expect(received.at(-1)?.key).toBe("ATELIER_TEST_PLACEHOLDER");
-  const addedSecret = createHttpHooks({ allowedInternalHosts: ["127.0.0.1"], secrets: { API_KEY: { value: "new-secret", placeholder: "ATELIER_TEST_PLACEHOLDER", hosts: ["127.0.0.1"] } } });
+  expect(received.at(-1)?.key).toBe("KINTSUGI_TEST_PLACEHOLDER");
+  const addedSecret = createHttpHooks({ allowedInternalHosts: ["127.0.0.1"], secrets: { API_KEY: { value: "new-secret", placeholder: "KINTSUGI_TEST_PLACEHOLDER", hosts: ["127.0.0.1"] } } });
   contexts.set("beta", { workspaceId: "beta", env: addedSecret.env, hooks: addedSecret.httpHooks, secrets: addedSecret.secrets });
   await requestOnTls(existingTls);
-  expect(received.at(-1)?.key).toBe("ATELIER_TEST_PLACEHOLDER");
+  expect(received.at(-1)?.key).toBe("KINTSUGI_TEST_PLACEHOLDER");
   existingTls.destroy();
   const freshTls = await connectTls();
   await requestOnTls(freshTls);
@@ -236,7 +236,7 @@ test("workspace socket controls HTTP and HTTPS identity, policy and reconnection
   bridgeHosts = [];
   const opaqueTls = await connectTls();
   await requestOnTls(opaqueTls);
-  expect(received.at(-1)?.key).toBe("ATELIER_TEST_PLACEHOLDER");
+  expect(received.at(-1)?.key).toBe("KINTSUGI_TEST_PLACEHOLDER");
   opaqueTls.destroy();
   contexts.set("beta", { workspaceId: "beta", env: {}, hooks: withoutSecrets.httpHooks, secrets: [] });
   // Zig also needs the alternate path when there are no secrets: a normal
@@ -245,10 +245,10 @@ test("workspace socket controls HTTP and HTTPS identity, policy and reconnection
   expect(noSecretsZig.response).toContain("405 Method Not Allowed");
   noSecretsZig.socket.destroy();
   const noSecretsForwarded = await proxyRequest(betaPort, "https://127.0.0.1/zig-no-secrets", {
-    headers: { "User-Agent": "zig/1.0.0 (std.http)", "X-Api-Key": "ATELIER_TEST_PLACEHOLDER" },
+    headers: { "User-Agent": "zig/1.0.0 (std.http)", "X-Api-Key": "KINTSUGI_TEST_PLACEHOLDER" },
   });
   expect(noSecretsForwarded.status).toBe(200);
-  expect(received.at(-1)?.key).toBe("ATELIER_TEST_PLACEHOLDER");
+  expect(received.at(-1)?.key).toBe("KINTSUGI_TEST_PLACEHOLDER");
   expect(received.at(-1)?.authorization).toBeUndefined();
   // The Zig compatibility path must not change non-HTTPS CONNECT tunnels.
   const plain = await tunnel(betaPort, `127.0.0.1:${httpPort}`, "User-Agent: zig/0.16.0 (std.http)\r\n");

@@ -1,10 +1,10 @@
 import { imageSource } from "@kintsugi/shared/publishing";
 import { mkdir, readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { writeFileAtomic } from "@kintsugi/core";
+import { kintsugiEnv, writeFileAtomic } from "@kintsugi/core";
 
 /** Merge shared and package-owned documentation into the existing read-only bind mount. */
-export async function syncWorkspaceDocs(repositoryRoot: string, destination: string, buildCommit = process.env.ATELIER_COMMIT_ID): Promise<void> {
+export async function syncWorkspaceDocs(repositoryRoot: string, destination: string, buildCommit = kintsugiEnv("COMMIT_ID")): Promise<void> {
   const sources = [join(repositoryRoot, "docs", "deploy-in-workspace")];
   const packages = join(repositoryRoot, "packages");
   for (const entry of await readdir(packages, { withFileTypes: true })) {

@@ -53,12 +53,12 @@ describe("Anthropic subscription models", () => {
   let dataDir: string;
   beforeEach(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "kintsugi-model-state-"));
-    process.env.ATELIER_DATA_DIR = dataDir;
+    process.env.KINTSUGI_DATA_DIR = dataDir;
     await setEnabledModels([{ provider: "anthropic", id: "claude", label: "Claude" }, { provider: "openai", id: "gpt", label: "GPT" }]);
     await setAgentModelPreference("builtin", { provider: "anthropic", id: "claude" });
   });
   afterEach(async () => {
-    delete process.env.ATELIER_DATA_DIR;
+    delete process.env.KINTSUGI_DATA_DIR;
     await rm(dataDir, { recursive: true, force: true });
   });
   const catalogueModel = (provider: string, id: string): Model<Api> => ({ provider, id, name: id, api: "openai-completions", baseUrl: "https://example.test", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 1000, maxTokens: 100 });

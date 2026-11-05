@@ -10,18 +10,18 @@ import { retainedDurableWorkspaceOwner, suspendAllDurableWorkspaceOwners } from 
 import { durableJournalDirectory } from "../../src/server/durable-storage.ts";
 import { ensureDefaultWorkspaceAgent, listWorkspaceAgents } from "../../src/server/agent-store.ts";
 
-const original = process.env.ATELIER_DATA_DIR;
+const original = process.env.KINTSUGI_DATA_DIR;
 let directory: string;
 afterEach(async () => {
   await suspendAllDurableWorkspaceOwners();
-  if (original === undefined) delete process.env.ATELIER_DATA_DIR;
-  else process.env.ATELIER_DATA_DIR = original;
+  if (original === undefined) delete process.env.KINTSUGI_DATA_DIR;
+  else process.env.KINTSUGI_DATA_DIR = original;
   if (directory) await rm(directory, { recursive: true, force: true });
 });
 
 async function setup() {
   directory = await mkdtemp(join(tmpdir(), "kintsugi-history-"));
-  process.env.ATELIER_DATA_DIR = directory;
+  process.env.KINTSUGI_DATA_DIR = directory;
   const models = createModels();
   const faux = fauxProvider({ tokensPerSecond: 100_000 });
   models.setProvider(faux.provider);

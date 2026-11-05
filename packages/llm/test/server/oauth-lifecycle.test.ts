@@ -8,13 +8,13 @@ import { handleModelsRequest } from "../../src/server/models-panel.ts";
 let directory: string | undefined;
 let previous: string | undefined;
 beforeEach(async () => {
-  previous = process.env.ATELIER_DATA_DIR;
+  previous = process.env.KINTSUGI_DATA_DIR;
   directory = await mkdtemp(join(tmpdir(), "kintsugi-oauth-lifecycle-"));
-  process.env.ATELIER_DATA_DIR = directory;
+  process.env.KINTSUGI_DATA_DIR = directory;
 });
 afterEach(async () => {
-  if (previous === undefined) delete process.env.ATELIER_DATA_DIR;
-  else process.env.ATELIER_DATA_DIR = previous;
+  if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR;
+  else process.env.KINTSUGI_DATA_DIR = previous;
   if (directory) await rm(directory, { recursive: true, force: true });
 });
 

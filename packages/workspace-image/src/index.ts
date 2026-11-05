@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { runDocker, waitForCommand, commandSignal, workloadCgroupArgs, shellQuote, type KintsugiEventBus } from "@kintsugi/core";
+import { kintsugiEnv, runDocker, waitForCommand, commandSignal, workloadCgroupArgs, shellQuote, type KintsugiEventBus } from "@kintsugi/core";
 import { appTerminalProcesses, runTerminalProcess, tailTerminalOutput, tailTerminalText, terminalOutputDisplayBytes } from "@kintsugi/observable-terminal/server";
 import { appTerminalProcessSocketPath } from "@kintsugi/observable-terminal/shared";
 import { type WorkspaceImageMetadata } from "./metadata.ts";
@@ -38,7 +38,7 @@ const buildTasks = new Map<string, WorkspaceImageBuildTask>();
 const defaultImageRefFile = new URL("../../../.kintsugi-default-workspace-image", import.meta.url);
 
 function namespaceSlug(): string {
-  return (process.env.ATELIER_NAMESPACE || "host").replaceAll(/[^a-zA-Z0-9_.-]/g, "-");
+  return (kintsugiEnv("NAMESPACE") || "host").replaceAll(/[^a-zA-Z0-9_.-]/g, "-");
 }
 
 function contextBaseDir(): string {
@@ -71,7 +71,7 @@ async function dockerBuildArgs(tag: string, kind: WorkspaceImageKind, dockerfile
     ...(kind === "default" ? await workloadCgroupArgs() : []),
     "--builder", "default",
     ...(options.buildOutput === "inherit" ? ["--progress=plain"] : []),
-    ...(process.env.ATELIER_WORKSPACE_IMAGE_NO_CACHE === "1" ? ["--no-cache"] : []),
+    ...(kintsugiEnv("WORKSPACE_IMAGE_NO_CACHE") === "1" ? ["--no-cache"] : []),
     "--label", `${workspaceImageKindLabel}=${kind}`,
     "-t", tag,
     "-f", dockerfile,
@@ -154,7 +154,7 @@ export async function ensureDefaultWorkspaceImage(options: ResolveWorkspaceImage
   }
   const innerKintsugi = existsSync("/run/kintsugi-parent");
   return ensureGeneratedDefaultWorkspaceImage({
-    force: !innerKintsugi && process.env.ATELIER_WORKSPACE_IMAGE_NO_CACHE === "1",
+    force: !innerKintsugi && kintsugiEnv("WORKSPACE_IMAGE_NO_CACHE") === "1",
     build: async ({ contextDir, dockerfile, metadata }) => {
       if (innerKintsugi) {
         const signature = metadata.tag.slice("kintsugi-workspace:".length);
@@ -264,7 +264,7 @@ export async function resolveWorkspaceImage(options: ResolveWorkspaceImageOption
   if (!(await Bun.file(dockerfile).exists())) return baseImage;
 
   const metadata = await repoWorkspaceImageMetadata(dockerfile, baseImage);
-  if (process.env.ATELIER_WORKSPACE_IMAGE_NO_CACHE !== "1" && await imageExists(metadata.tag)) return metadata.tag;
+  if (kintsugiEnv("WORKSPACE_IMAGE_NO_CACHE") !== "1" && await imageExists(metadata.tag)) return metadata.tag;
   const buildDockerfile = await optimizedRepoDockerfile(options.sourcePath, dockerfile);
   const task = startBuildTask(metadata, { kind: "repository", baseImage }, buildDockerfile, options.sourcePath, options);
   await waitForBuildTask(task, options);

@@ -31,7 +31,7 @@ type ClaudeBlock = Static<typeof blockSchema>;
 type ProjectedToolCall = { name: string; args: unknown };
 /** Claude's file and shell tools render like Kintsugi's own. */
 export function claudeToolCall(block: Pick<ClaudeBlock, "name" | "input">): ProjectedToolCall {
-  // Claude's Bash timeout is in milliseconds and defaults to two minutes; AgentsInTheCloud's is in seconds.
+  // Claude's Bash timeout is in milliseconds and defaults to two minutes; Kintsugi's is in seconds.
   if (block.name === "Bash") return { name: "bash", args: Value.Check(bashInputSchema, block.input) ? { ...block.input, timeout: (block.input.timeout ?? 120_000) / 1000 } : block.input };
   if (block.name === "Read") return { name: "read", args: block.input };
   if (block.name === "Write") return { name: "write", args: block.input };

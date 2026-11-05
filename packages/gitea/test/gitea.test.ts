@@ -10,14 +10,14 @@ const credential = { serverUrl: "https://git.example.test:8443/forge", account: 
 let previousDataDir: string | undefined;
 let dataDir: string;
 beforeEach(async () => {
-  previousDataDir = process.env.ATELIER_DATA_DIR;
+  previousDataDir = process.env.KINTSUGI_DATA_DIR;
   dataDir = await mkdtemp(join(tmpdir(), "kintsugi-gitea-"));
-  process.env.ATELIER_DATA_DIR = dataDir;
+  process.env.KINTSUGI_DATA_DIR = dataDir;
 });
 afterEach(async () => {
   globalThis.fetch = originalFetch;
-  if (previousDataDir === undefined) delete process.env.ATELIER_DATA_DIR;
-  else process.env.ATELIER_DATA_DIR = previousDataDir;
+  if (previousDataDir === undefined) delete process.env.KINTSUGI_DATA_DIR;
+  else process.env.KINTSUGI_DATA_DIR = previousDataDir;
   await rm(dataDir, { recursive: true, force: true });
 });
 function stub(handler: (url: URL, init: RequestInit) => Response) {

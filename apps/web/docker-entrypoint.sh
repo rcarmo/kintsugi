@@ -32,7 +32,12 @@ for socket in /var/run/docker.sock /run/containerd/containerd.sock; do
   usermod -aG "$docker_group" agent
 done
 
-kintsugi_data_dir=/data/app
+# Resolve legacy settings before supplying defaults; never redirect an existing
+# installation to a new data directory or namespace because of image defaults.
+KINTSUGI_DATA_DIR="${KINTSUGI_DATA_DIR:-${ATELIER_DATA_DIR:-/data/app}}"
+KINTSUGI_NAMESPACE="${KINTSUGI_NAMESPACE:-${ATELIER_NAMESPACE:-default}}"
+export KINTSUGI_DATA_DIR KINTSUGI_NAMESPACE
+kintsugi_data_dir=$KINTSUGI_DATA_DIR
 mkdir -p "$kintsugi_data_dir/proxy"
 chown "$agent_uid:$agent_gid" "$kintsugi_data_dir" "$kintsugi_data_dir/proxy" /data/erofs-cache
 

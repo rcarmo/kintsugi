@@ -11,18 +11,18 @@ import { durableWorkspaceOwner, retainedDurableWorkspaceOwner, suspendAllDurable
 import { getWorkspaceAgentController, getWorkspaceAgentPresentation, unloadWorkspaceAgentPresentation, closeWorkspaceAgent, removeWorkspaceAgentRuntimes, suspendWorkspaceAgentRuntimes, allowWorkspaceAgentResume } from "../../src/server/runtime.ts";
 import { removeClosedWorkspaceAgent, ensureDefaultWorkspaceAgent, listWorkspaceAgents, setWorkspaceAgentTitle } from "../../src/server/agent-store.ts";
 
-const originalDataDir = process.env.ATELIER_DATA_DIR;
+const originalDataDir = process.env.KINTSUGI_DATA_DIR;
 let directory: string;
 afterEach(async () => {
   await suspendAllDurableWorkspaceOwners();
-  if (originalDataDir === undefined) delete process.env.ATELIER_DATA_DIR;
-  else process.env.ATELIER_DATA_DIR = originalDataDir;
+  if (originalDataDir === undefined) delete process.env.KINTSUGI_DATA_DIR;
+  else process.env.KINTSUGI_DATA_DIR = originalDataDir;
   if (directory) await rm(directory, { recursive: true, force: true });
 });
 
 test("production dispatch reattaches native journal, deduplicates passively, retains titles and fences close/delete", async () => {
   directory = await mkdtemp(join(tmpdir(), "native-dispatch-"));
-  process.env.ATELIER_DATA_DIR = directory;
+  process.env.KINTSUGI_DATA_DIR = directory;
   const workspaceId = `native-${crypto.randomUUID()}`;
   const agent = await ensureDefaultWorkspaceAgent(workspaceId);
   const models = createModels();
@@ -87,7 +87,7 @@ test("production dispatch reattaches native journal, deduplicates passively, ret
 
 test("unloading the last presentation leaves the owner and its execution running", async () => {
   directory = await mkdtemp(join(tmpdir(), "native-unload-"));
-  process.env.ATELIER_DATA_DIR = directory;
+  process.env.KINTSUGI_DATA_DIR = directory;
   const workspaceId = `native-${crypto.randomUUID()}`;
   const agent = await ensureDefaultWorkspaceAgent(workspaceId);
   const models = createModels();
@@ -122,7 +122,7 @@ test("unloading the last presentation leaves the owner and its execution running
 
 test.each(["close", "suspend", "delete"] as const)("%s drains first controller acquisition before applying its lifecycle fence", async operation => {
   directory = await mkdtemp(join(tmpdir(), `native-acquire-${operation}-`));
-  process.env.ATELIER_DATA_DIR = directory;
+  process.env.KINTSUGI_DATA_DIR = directory;
   const workspaceId = `native-${crypto.randomUUID()}`;
   const agent = await ensureDefaultWorkspaceAgent(workspaceId);
   const models = createModels();

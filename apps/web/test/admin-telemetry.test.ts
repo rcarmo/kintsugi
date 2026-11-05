@@ -15,17 +15,17 @@ import { createWorkspaceRegistry } from "../src/server/workspace-registry.ts";
 import { workspaceModules } from "../src/server/workspace-modules.generated.ts";
 
 async function fixture(run: (value: Awaited<ReturnType<typeof setup>>) => Promise<void>) {
-  const previous = process.env.ATELIER_DATA_DIR, value = await setup();
+  const previous = process.env.KINTSUGI_DATA_DIR, value = await setup();
   try { await run(value); }
   finally {
     await tokenTelemetry().close();
-    if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous;
+    if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR; else process.env.KINTSUGI_DATA_DIR = previous;
     await rm(value.directory, { recursive: true, force: true });
   }
 }
 async function setup() {
   const directory = await mkdtemp(join(tmpdir(), "kintsugi-admin-telemetry-"));
-  process.env.ATELIER_DATA_DIR = directory;
+  process.env.KINTSUGI_DATA_DIR = directory;
   const store = createAdminStore(join(directory, "admin-bindings.json"));
   const issued = await store.issue({ name: "telemetry-admin", scopes: ["security"] });
   const app = createWebApp({ registry: createWorkspaceRegistry(), workspaceModules: workspaceModules.filter(module => module.id === "llm"), events: createKintsugiEventBus(), provisionWorkspace: async () => {}, destroyWorkspace: async () => {}, persistWorkspaceParked: async () => {}, deletionReview: { inspect: async () => ({ status: "clear" }), renderEvidence: () => "" }, logError: () => {} });

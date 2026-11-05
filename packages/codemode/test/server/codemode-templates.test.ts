@@ -248,8 +248,8 @@ test("a message sent while a template runs gets its own turn, as it gets its own
 
 test("an active canonical plan does not turn an offline template into a provider request", async () => {
   const { runtime, faux, echoed, path } = await setup(true);
-  const previous = process.env.ATELIER_DATA_DIR;
-  process.env.ATELIER_DATA_DIR = path;
+  const previous = process.env.KINTSUGI_DATA_DIR;
+  process.env.KINTSUGI_DATA_DIR = path;
   try {
     const agent = await runtime.agent(record);
     agentPlanStore().change("native-workspace", "tab", { action: "write", markdown: "- [ ] Keep working" });
@@ -260,6 +260,6 @@ test("an active canonical plan does not turn an offline template into a provider
     expect(items.find(item => item.type === "working")).toMatchObject({ completedAt: expect.any(Number), stoppedAt: undefined });
     expect(JSON.stringify(items)).not.toContain("Current editable plan for this Agent");
   } finally {
-    if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous;
+    if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR; else process.env.KINTSUGI_DATA_DIR = previous;
   }
 });

@@ -93,8 +93,17 @@ const idPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const rootPattern = /^\/[A-Za-z0-9._/-]+$/;
 
 export function terminalProcessSession(id: string): string {
-  return `aitc-process-${id}`;
+  return `kintsugi-process-${id}`;
 }
+
+// Existing processes keep their tmux session and the channels embedded in their
+// wrapper scripts. Resolve those names without renaming or interrupting them.
+const sessionExistsFunction = `session_exists() {
+  if tmux -N has-session -t "=$session" 2>/dev/null; then return 0; fi
+  session="aitc-process-\${session#kintsugi-process-}"
+  tmux -N has-session -t "=$session" 2>/dev/null
+}
+`;
 
 /**
  * Waits for the session's finish, or `seconds` at most; callers check again
@@ -244,11 +253,11 @@ tmux -N wait-for "$session-running"
 // Reading the exit before and after checking the session tells a process that
 // just finished apart from one whose terminal disappeared.
 const stateScript = `dir=$1 session=$2
-flag() { if [ -f "$dir/$1" ]; then echo 1; else echo 0; fi; }
+${sessionExistsFunction}flag() { if [ -f "$dir/$1" ]; then echo 1; else echo 0; fi; }
 report() { printf 'exited %s %s %s\\n' "$(cat "$dir/exit")" "$(flag aborted)" "$(flag timed-out)"; cat "$dir/output"; exit 0; }
 if [ -f "$dir/exit" ]; then report; fi
 if [ ! -d "$dir" ]; then echo missing; exit 0; fi
-if tmux -N has-session -t "=$session" 2>/dev/null; then echo "running $(flag interactive)"; exit 0; fi
+if session_exists; then echo "running $(flag interactive)"; exit 0; fi
 if [ -f "$dir/exit" ]; then report; fi
 echo lost
 `;
@@ -259,12 +268,12 @@ echo lost
  * waiter only, so the others rely on the timer to look again.
  */
 const waitScript = `dir=$1 session=$2
-${awaitFinishFunction}if [ -f "$dir/exit" ] || ! tmux -N has-session -t "=$session" 2>/dev/null; then exit 0; fi
+${sessionExistsFunction}${awaitFinishFunction}if [ -f "$dir/exit" ] || ! session_exists; then exit 0; fi
 await_finish "$session" 60
 `;
 
 const stopScript = `root=$1 dir=$2 session=$3
-${lockRoot}if [ ! -d "$dir" ]; then
+${sessionExistsFunction}${lockRoot}if [ ! -d "$dir" ]; then
   mkdir "$dir"
   touch "$dir/aborted"
 ${recordNotRun}  exit 0
@@ -272,7 +281,7 @@ fi
 if [ -f "$dir/exit" ]; then exit 0; fi
 touch "$dir/aborted"
 flock -u 9
-if ! tmux -N has-session -t "=$session" 2>/dev/null; then exit 0; fi
+if ! session_exists; then exit 0; fi
 . "$dir/interrupt"
 interrupt "$dir" "$session"
 `;
@@ -280,7 +289,7 @@ interrupt "$dir" "$session"
 // Killing the session first destroys its pane without running the pane-died hook.
 // While the session exists its wrapper is alive, so the recorded pid is still its own.
 const releaseScript = `root=$1 dir=$2 session=$3
-${lockRoot}if tmux -N has-session -t "=$session" 2>/dev/null; then
+${sessionExistsFunction}${lockRoot}if session_exists; then
   pid=$(cat "$dir/pid")
   tmux -N kill-session -t "=$session"
   kill -KILL "-$pid" 2>/dev/null
@@ -394,8 +403,11 @@ export function createTerminalProcesses(options: { run: RunTerminalProcessComman
           if (closed) return;
           if (current.state !== "running") { socket.close(terminalEndedCloseCode, "ended"); return; }
           // Whether viewers can type and resize belongs to the process, not to the viewer.
+          const session = await sh(`session=$1\n${sessionExistsFunction}session_exists || exit 0\nprintf '%s' "$session"`, [terminalProcessSession(id)]);
+          if (closed) return;
+          if (!session) { socket.close(terminalEndedCloseCode, "ended"); return; }
           viewer = createObservableTerminalSocket({
-            start: options.start, session: terminalProcessSession(id), ...size,
+            start: options.start, session, ...size,
             user: "agent", workdir: "/", requireExistingServer: true, readonly: !current.interactive,
           }, { ended });
           await viewer.open(socket);

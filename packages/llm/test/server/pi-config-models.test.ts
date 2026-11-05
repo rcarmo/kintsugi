@@ -8,10 +8,10 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 let dataDir: string;
 beforeEach(async () => {
   dataDir = await mkdtemp(join(tmpdir(), "kintsugi-llm-models-"));
-  process.env.ATELIER_DATA_DIR = dataDir;
+  process.env.KINTSUGI_DATA_DIR = dataDir;
 });
 afterEach(async () => {
-  delete process.env.ATELIER_DATA_DIR;
+  delete process.env.KINTSUGI_DATA_DIR;
   await rm(dataDir, { recursive: true, force: true });
 });
 

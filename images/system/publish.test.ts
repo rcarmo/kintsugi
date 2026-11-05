@@ -11,9 +11,9 @@ const revision = "a".repeat(40);
 const digest = (arch: string) => `sha256:${(arch === "amd64" ? "1" : "2").repeat(64)}`;
 async function scenario(options: { local?: string; sameArch?: boolean; missingHelper?: boolean; check?: boolean; wrongRevision?: boolean; buildFails?: boolean } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "system-publish-test-"));
-  const helper = process.env.ATELIER_RELEASE_HELPER;
+  const helper = process.env.KINTSUGI_RELEASE_HELPER;
   const token = process.env.GH_PACKAGE_TOKEN;
-  process.env.ATELIER_RELEASE_HELPER = options.missingHelper ? "" : "builder@test-helper";
+  process.env.KINTSUGI_RELEASE_HELPER = options.missingHelper ? "" : "builder@test-helper";
   process.env.GH_PACKAGE_TOKEN = "test-package-token";
   const calls: { args: string[]; input?: string }[] = [];
   const run: Run = async (args, settings = {}) => {
@@ -40,7 +40,7 @@ async function scenario(options: { local?: string; sameArch?: boolean; missingHe
   try { await publishSystem(run, directory, options.check); }
   catch (caught) { error = caught; }
   finally {
-    if (helper === undefined) delete process.env.ATELIER_RELEASE_HELPER; else process.env.ATELIER_RELEASE_HELPER = helper;
+    if (helper === undefined) delete process.env.KINTSUGI_RELEASE_HELPER; else process.env.KINTSUGI_RELEASE_HELPER = helper;
     if (token === undefined) delete process.env.GH_PACKAGE_TOKEN; else process.env.GH_PACKAGE_TOKEN = token;
     rmSync(directory, { recursive: true, force: true });
   }

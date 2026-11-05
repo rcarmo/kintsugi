@@ -10,14 +10,14 @@ import { exportCliHistory } from "../src/server/history.ts";
 let directory: string;
 async function setup() {
   directory = await mkdtemp(join(tmpdir(), "cli-history-"));
-  process.env.ATELIER_DATA_DIR = directory;
+  process.env.KINTSUGI_DATA_DIR = directory;
   const metadata = join(directory, "workspaces", "workspace", "metadata");
   await mkdir(metadata, { recursive: true });
   await writeFile(join(metadata, "init.json"), JSON.stringify({ type: "project.git", projectId: "p", name: "repo", gitUrl: "https://example.com/repo.git", branch: null, sessionShareKey: "Team Project" }));
   return directory;
 }
 afterEach(async () => {
-  delete process.env.ATELIER_DATA_DIR;
+  delete process.env.KINTSUGI_DATA_DIR;
   if (directory) await rm(directory, { recursive: true, force: true });
 });
 async function source(path: string, content: string) {

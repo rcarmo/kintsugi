@@ -18,7 +18,7 @@ async function scenario(script: string) {
         { value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus 5.5", description: "", supportedEffortLevels: ["low", "medium", "high", "max"] },
         { value: "haiku", resolvedModel: "claude-haiku-5-5", displayName: "Haiku 5.5", description: "", supportedEffortLevels: ["low", "medium"] },
       ];
-      const sessions = agentId => process.env.ATELIER_DATA_DIR + "/workspaces/workspace/home-local/.local/share/kintsugi-agents/" + agentId + "/claude/projects/-work";
+      const sessions = agentId => process.env.KINTSUGI_DATA_DIR + "/workspaces/workspace/home-local/.local/share/kintsugi-agents/" + agentId + "/claude/projects/-work";
       const record = (agentId, id, rows) => { mkdirSync(sessions(agentId), { recursive: true }); writeFileSync(sessions(agentId) + "/" + id + ".jsonl", rows.map(row => JSON.stringify(row)).join("\\n")); };
       mock.module(${JSON.stringify(join(import.meta.dir, "../src/server/setup.ts"))}, () => ({
         agentTypeId: "claude", label: "Claude Code", requireSetup: async () => {},
@@ -58,7 +58,7 @@ async function scenario(script: string) {
       const input = { text: "hello", images: [], attachmentNotes: [] };
       const result = (extra = {}) => ({ type: "result", subtype: "success", modelUsage: {}, queued_turn_count: 0, uuid: crypto.randomUUID(), session_id: "s", ...extra });
       ${script}
-    `], { cwd: join(import.meta.dir, ".."), env: { ...process.env, ATELIER_DATA_DIR: directory }, stdout: "pipe", stderr: "pipe" });
+    `], { cwd: join(import.meta.dir, ".."), env: { ...process.env, KINTSUGI_DATA_DIR: directory }, stdout: "pipe", stderr: "pipe" });
     const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
     expect({ code, stdout, stderr }).toEqual({ code: 0, stdout: "", stderr: "" });
   } finally { await rm(directory, { recursive: true, force: true }); }
@@ -89,7 +89,7 @@ test("a launch prompt starts a new native session once, and retries of a send ar
 test("a restored Agent presents saved history without waiting for Claude to initialize", () => scenario(`
   const agentId = "restored-agent";
   const sessionId = crypto.randomUUID();
-  const metadata = process.env.ATELIER_DATA_DIR + "/workspaces/workspace/metadata";
+  const metadata = process.env.KINTSUGI_DATA_DIR + "/workspaces/workspace/metadata";
   mkdirSync(metadata, { recursive: true });
   writeFileSync(metadata + "/claude-code-agents.json", JSON.stringify({ agents: [{ id: agentId, title: "Claude Code", sessionId, model: "anthropic::claude-opus-5-5", thinkingLevel: "medium", submissions: [] }] }));
   record(agentId, sessionId, [{ type: "user", uuid: "saved-prompt", timestamp: "2026-10-16T07:00:00.000Z", message: { role: "user", content: "Saved history" } }]);
@@ -302,8 +302,8 @@ test("new, fork and resume switch between the Agent's own native sessions", () =
   expect(connections[3].start.forkSession).toBeUndefined();
   expect(runtime.record.forkedFrom).toBeUndefined();
   // The Claude Code CLI's conversations stay its own.
-  mkdirSync(process.env.ATELIER_DATA_DIR + "/home/.claude/projects/-work", { recursive: true });
-  writeFileSync(process.env.ATELIER_DATA_DIR + "/home/.claude/projects/-work/cli.jsonl", JSON.stringify({ type: "user", uuid: "cli", timestamp: "2026-10-12T12:00:00.000Z", message: { role: "user", content: "From the CLI" } }));
+  mkdirSync(process.env.KINTSUGI_DATA_DIR + "/home/.claude/projects/-work", { recursive: true });
+  writeFileSync(process.env.KINTSUGI_DATA_DIR + "/home/.claude/projects/-work/cli.jsonl", JSON.stringify({ type: "user", uuid: "cli", timestamp: "2026-10-12T12:00:00.000Z", message: { role: "user", content: "From the CLI" } }));
   const listed = await runtime.command({ kind: "resume" }, "list");
   expect(listed).toMatchObject({ kind: "resume", current: forked });
   expect(listed.sessions.map(session => session.title)).toEqual(["Remember this", "Remember this"]);

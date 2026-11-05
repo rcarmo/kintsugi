@@ -83,7 +83,7 @@ if (import.meta.main) {
   const prepareOnly = process.argv.includes("--prepare-only");
   const server = prepareOnly ? undefined : Bun.spawn(["bun", "run", "web"], {
     cwd: repoRoot,
-    env: { ...process.env, ATELIER_NAMESPACE: previewNamespace },
+    env: { ...process.env, KINTSUGI_NAMESPACE: previewNamespace },
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",

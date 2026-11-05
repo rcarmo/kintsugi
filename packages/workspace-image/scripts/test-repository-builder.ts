@@ -213,7 +213,7 @@ async function outside(systemImage: string, base: string) {
     await docker("cp", new URL("../runtime-image", import.meta.url).pathname, `${name}:/runtime-image`);
     await command(["bash", "-o", "pipefail", "-c", `docker save ${shellQuote(base)} | docker exec -i ${shellQuote(name)} docker load`]);
     // Run visibly: package output remains captured by the build, PASS lines stream.
-    const child = Bun.spawn(["docker", "exec", "-e", "ATELIER_DATA_DIR=/data/app", name, "bun", "/audit/test.js", "--inside", base], { stdout: "inherit", stderr: "inherit" });
+    const child = Bun.spawn(["docker", "exec", "-e", "KINTSUGI_DATA_DIR=/data/app", name, "bun", "/audit/test.js", "--inside", base], { stdout: "inherit", stderr: "inherit" });
     assert.equal(await child.exited, 0);
   } finally {
     await docker("rm", "-fv", name, endpoint);

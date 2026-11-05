@@ -13,12 +13,12 @@ import { createWorkspaceSecretContext, forgetWorkspaceSecretContext, getWorkspac
 
 const base = "/global-workspace-settings";
 async function fixture(run: (context: Awaited<ReturnType<typeof setup>>) => Promise<void>) {
-  const previous = process.env.ATELIER_DATA_DIR;
+  const previous = process.env.KINTSUGI_DATA_DIR;
   const context = await setup();
-  process.env.ATELIER_DATA_DIR = context.directory;
+  process.env.KINTSUGI_DATA_DIR = context.directory;
   try { await run(context); }
   finally {
-    if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous;
+    if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR; else process.env.KINTSUGI_DATA_DIR = previous;
     await rm(context.directory, { recursive: true, force: true });
   }
 }
@@ -26,7 +26,7 @@ async function setup() {
   const directory = await mkdtemp(join(tmpdir(), "kintsugi-admin-global-"));
   const store = createAdminStore(join(directory, "admin-bindings.json"));
   const issued = await store.issue({ name: "global-admin-test", scopes: [...adminScopes] });
-  process.env.ATELIER_DATA_DIR = directory;
+  process.env.KINTSUGI_DATA_DIR = directory;
   const app = createWebApp({ registry: createWorkspaceRegistry(), workspaceModules: [], events: createKintsugiEventBus(), provisionWorkspace: async () => {}, destroyWorkspace: async () => {}, persistWorkspaceParked: async () => {}, deletionReview: { inspect: async () => ({ status: "clear" }), renderEvidence: () => "" }, logError: () => {} });
   const handler = createAdminHandler({ store, app, auditPath: join(directory, "audit.jsonl") });
   async function call(path: string, method = "GET", body?: JsonObject, token: string | null = issued.secret) {

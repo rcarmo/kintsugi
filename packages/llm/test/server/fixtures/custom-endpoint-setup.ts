@@ -9,7 +9,7 @@ import { createPiModelRuntime, getCustomModelsJson } from "../../../src/server/p
 const input: CustomOpenAIEndpointInput = { api: "openai-completions", name: "DevBox Ollama", baseUrl: "https://models.example.com/v1/", apiKey: "stub-only-key", ...customOpenAIDefaults };
 
 const directory = await mkdtemp(join(tmpdir(), "endpoint-setup-"));
-process.env.ATELIER_DATA_DIR = directory;
+process.env.KINTSUGI_DATA_DIR = directory;
 const paths: string[] = [];
 const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
   paths.push(new URL(request.url).pathname);

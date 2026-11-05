@@ -60,7 +60,7 @@ if (import.meta.main) {
     console.error("Usage: images/system/publish.sh [--check]");
     process.exitCode = 1;
   } else if (args.includes("--help") || args.includes("-h")) {
-    console.log("Publish System's commit image using two native Docker daemons and move latest to it.\nRequires ATELIER_RELEASE_HELPER=[user@]hostname and GH_PACKAGE_TOKEN.\n--check validates both native builders without publishing.");
+    console.log("Publish System's commit image using two native Docker daemons and move latest to it.\nRequires KINTSUGI_RELEASE_HELPER=[user@]hostname and GH_PACKAGE_TOKEN.\n--check validates both native builders without publishing.");
   } else {
     const directory = mkdtempSync(join(tmpdir(), "kintsugi-system-publish-"));
     const commands = commandRunner(root, text => process.stdout.write(text));

@@ -8,20 +8,20 @@ import { createRegistry } from "@earendil-works/pi-durable";
 import { durableJournalDirectory, durableJournalMountPath, workspaceDurableJournalDirectory } from "../../src/server/durable-storage.ts";
 import { openDurableAgentRuntime, type DurableAgentRuntime } from "../../src/server/durable-runtime.ts";
 
-const previousDataDir = process.env.ATELIER_DATA_DIR;
+const previousDataDir = process.env.KINTSUGI_DATA_DIR;
 const paths: string[] = [];
 const runtimes: DurableAgentRuntime[] = [];
 afterEach(async () => {
   await Promise.all(runtimes.splice(0).map((runtime) => runtime.suspend()));
-  if (previousDataDir === undefined) delete process.env.ATELIER_DATA_DIR;
-  else process.env.ATELIER_DATA_DIR = previousDataDir;
+  if (previousDataDir === undefined) delete process.env.KINTSUGI_DATA_DIR;
+  else process.env.KINTSUGI_DATA_DIR = previousDataDir;
   await Promise.all(paths.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
 async function dataDirectory() {
   const path = await mkdtemp(join(tmpdir(), "kintsugi-durable-storage-"));
   paths.push(path);
-  process.env.ATELIER_DATA_DIR = path;
+  process.env.KINTSUGI_DATA_DIR = path;
   return path;
 }
 

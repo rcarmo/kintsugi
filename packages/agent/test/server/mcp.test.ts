@@ -122,8 +122,8 @@ test("native-prompt credentials omit MCP guidance while preserving tools and sur
 });
 
 test("plan tools use authenticated MCP Agent identity and reject cross-Agent target fields", async () => {
-  const previous = process.env.ATELIER_DATA_DIR;
-  const f = await fixture(); process.env.ATELIER_DATA_DIR = f.directory;
+  const previous = process.env.KINTSUGI_DATA_DIR;
+  const f = await fixture(); process.env.KINTSUGI_DATA_DIR = f.directory;
   const { createAgentPlanTool, agentPlanStore } = await import("../../src/server/plan.ts");
   const endpoint = createAgentMcpServer({ authenticate: f.credentials.authenticate, instructions: () => "Plan fixture", tools: identity => [createAgentPlanTool(identity.workspaceId, identity.agentId)] });
   const server = Bun.serve({ port: 0, fetch: request => endpoint.fetch(request) });
@@ -147,6 +147,6 @@ test("plan tools use authenticated MCP Agent identity and reject cross-Agent tar
     expect(agentPlanStore().read(f.identity.workspaceId, f.identity.agentId).markdown).toBe("- [-] Agent A only");
   } finally {
     await Promise.all(clients.map(client => client.close())); await endpoint.revoke({ workspaceId: f.identity.workspaceId }); server.stop(true);
-    if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous;
+    if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR; else process.env.KINTSUGI_DATA_DIR = previous;
   }
 });

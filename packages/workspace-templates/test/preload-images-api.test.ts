@@ -6,9 +6,9 @@ import { createWorkspaceTemplateRoutes } from "../../../apps/web/src/server/work
 import { addWorkspaceTemplate, getWorkspaceTemplateConfiguration } from "../src/workspace-template.ts";
 
 test("project preload API updates future creation settings and rejects malformed requests without mutation", async () => {
-  const previous = process.env.ATELIER_DATA_DIR;
+  const previous = process.env.KINTSUGI_DATA_DIR;
   const dir = await mkdtemp(join(tmpdir(), "workspace-template-preload-api-"));
-  process.env.ATELIER_DATA_DIR = dir;
+  process.env.KINTSUGI_DATA_DIR = dir;
   try {
     const { workspaceTemplate } = await addWorkspaceTemplate("/tmp/example");
     const routes = createWorkspaceTemplateRoutes({
@@ -29,8 +29,8 @@ test("project preload API updates future creation settings and rejects malformed
     }
     expect((await getWorkspaceTemplateConfiguration(workspaceTemplate.id)).preloadImages).toEqual(["postgres:17"]);
   } finally {
-    if (previous === undefined) delete process.env.ATELIER_DATA_DIR;
-    else process.env.ATELIER_DATA_DIR = previous;
+    if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR;
+    else process.env.KINTSUGI_DATA_DIR = previous;
     await rm(dir, { recursive: true, force: true });
   }
 });

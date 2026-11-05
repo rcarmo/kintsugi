@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { kintsugiDataPath, getKintsugiRuntimeContext, isNotFoundError } from "@kintsugi/core";
+import { kintsugiEnv, kintsugiDataPath, getKintsugiRuntimeContext, isNotFoundError } from "@kintsugi/core";
 import { updateJsonSettings } from "@kintsugi/core/json-settings";
 import { parseThemeSettings, type KintsugiTheme } from "./theme.ts";
 
@@ -19,7 +19,7 @@ export function readThemeSetting(): KintsugiTheme {
     if (!isNotFoundError(error)) throw error;
   }
   // An Kintsugi running inside a workspace looks different from the host by default.
-  return parseThemeSettings(text, process.env.ATELIER_HOST_UID ? "cappuccino" : "nord");
+  return parseThemeSettings(text, kintsugiEnv("HOST_UID") ? "cappuccino" : "nord");
 }
 
 export async function writeThemeSetting(theme: KintsugiTheme): Promise<void> {

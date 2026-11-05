@@ -201,7 +201,7 @@ func (s *helper) WriteFile(stream pb.WorkspaceHelper_WriteFileServer) error {
 		if target, mode, err = writeTarget(start.Path); err != nil {
 			return err
 		}
-		temporary, err = os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".aitc-*")
+		temporary, err = os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".kintsugi-*")
 		return err
 	})
 	if err != nil {

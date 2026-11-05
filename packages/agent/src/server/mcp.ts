@@ -43,7 +43,7 @@ export async function revokeAgentMcp(workspaceId: string, agentId: string): Prom
 export interface CliAgentConnection {
   url: string;
   token: string;
-  /** Full guidance for the CLI's native prompt, with .agents-in-the-cloud/AGENTS.md; deliberately omitted from its MCP response. */
+  /** Full guidance for the CLI's native prompt, with .kintsugi/AGENTS.md and legacy project instructions; deliberately omitted from its MCP response. */
   instructions: string;
 }
 

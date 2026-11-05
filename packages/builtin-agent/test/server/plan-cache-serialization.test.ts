@@ -40,8 +40,8 @@ function boundaries(payload: JsonObject) {
 }
 
 test("real Anthropic serialization caches the committed plan boundary and reuses it on the next request", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "plan-cache-wire-")), previous = process.env.ATELIER_DATA_DIR;
-  process.env.ATELIER_DATA_DIR = dir;
+  const dir = await mkdtemp(join(tmpdir(), "plan-cache-wire-")), previous = process.env.KINTSUGI_DATA_DIR;
+  process.env.KINTSUGI_DATA_DIR = dir;
   const model: Model<"anthropic-messages"> = { id: "claude-sonnet-4-20250514", name: "Offline", provider: "fixture", api: "anthropic-messages", baseUrl: "https://never-contact.invalid", reasoning: false, input: ["text"], contextWindow: 200000, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
   const models = createModels(), registry = createRegistry(), captured: JsonObject[] = [];
   let networkCalls = 0;
@@ -73,7 +73,7 @@ test("real Anthropic serialization caches the committed plan boundary and reuses
     expect(JSON.stringify(history)).toContain(planContextPrefix);
   } finally {
     await workspace.close();
-    if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous;
+    if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR; else process.env.KINTSUGI_DATA_DIR = previous;
     await rm(dir, { recursive: true, force: true });
   }
 });

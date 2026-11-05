@@ -63,7 +63,7 @@ test("clearing forgets every process and stops those still running", async () =>
   await processes.start({ id, command: "sleep 30", cwd: directory });
   await clearLocalTerminalProcesses(directory);
   expect(await processes.state(id)).toEqual({ state: "missing" });
-  expect((await tmux("has-session", "-t", `=aitc-process-${id}`)).exitCode).not.toBe(0);
+  expect((await tmux("has-session", "-t", `=${terminalProcessSession(id)}`)).exitCode).not.toBe(0);
 });
 
 test("a run already cancelled when it starts the tmux server doesn't break later runs", async () => {

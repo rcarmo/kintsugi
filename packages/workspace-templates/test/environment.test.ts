@@ -11,14 +11,14 @@ describe("Workspace template environment", () => {
   let dataDir: string;
 
   beforeEach(async () => {
-    previousDataDir = process.env.ATELIER_DATA_DIR;
+    previousDataDir = process.env.KINTSUGI_DATA_DIR;
     dataDir = await mkdtemp(`${tmpdir()}/kintsugi-workspace-template-environment-`);
-    process.env.ATELIER_DATA_DIR = dataDir;
+    process.env.KINTSUGI_DATA_DIR = dataDir;
   });
 
   afterEach(async () => {
-    if (previousDataDir === undefined) delete process.env.ATELIER_DATA_DIR;
-    else process.env.ATELIER_DATA_DIR = previousDataDir;
+    if (previousDataDir === undefined) delete process.env.KINTSUGI_DATA_DIR;
+    else process.env.KINTSUGI_DATA_DIR = previousDataDir;
     await rm(dataDir, { recursive: true, force: true });
   });
 

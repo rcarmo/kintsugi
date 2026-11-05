@@ -56,7 +56,7 @@ const pinned=await request(hostsRequest);assert.deepEqual(pinned.cidrs,[]);asser
 await probe('one','192.168.10.20','yes',4545);await probe('one','192.168.10.20','no',4546);await probe('one','192.168.10.21','no',4545);await probe('off','192.168.10.20','no',4545);
 console.log('PASS listed host resolves through System fallback and grants only its owning workspace TCP tuple');
 // Real app-owned policy, proxy lookup, policy hooks and HTTP forwarding. No mock DNS or upstream fetch.
-process.env.ATELIER_DATA_DIR='/tmp/proxy-app';
+process.env.KINTSUGI_DATA_DIR='/tmp/proxy-app';
 const metadata=createWorkspaceMetadataState('network.json',value=>value,()=>({mode:'hosts',applied:pinned}));metadata.write('one',{mode:'hosts',applied:pinned});
 const secretContext=await createWorkspaceSecretContext('one');
 const proxy=await startWorkspaceEgressProxy({socketPath:'/tmp/egress.sock',ca:await ensureMitmCa(),getContext:async()=>secretContext,upstreamDnsLookup:hostname=>lookupWorkspaceHost('one',hostname),upstreamProxyForUrl:()=>''});

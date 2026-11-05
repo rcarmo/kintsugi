@@ -117,7 +117,7 @@ function parseArgs(args: string[]): Options {
       i++;
     } else if (arg === "--build-arg") {
       const value = takeValue(args, i, arg);
-      if (["ATELIER_DEFAULT_WORKSPACE_IMAGE", "ATELIER_EAGERLY_PRELOAD"].includes(value.split("=")[0]!)) {
+      if (["KINTSUGI_DEFAULT_WORKSPACE_IMAGE", "KINTSUGI_EAGERLY_PRELOAD", "ATELIER_DEFAULT_WORKSPACE_IMAGE", "ATELIER_EAGERLY_PRELOAD"].includes(value.split("=")[0]!)) {
         fail("The release script owns the default workspace reference and preload label");
       }
       options.buildArgs.push(value);
@@ -298,9 +298,9 @@ if (options.push) {
 }
 
 const defaultBuildArgs = [
-  `ATELIER_COMMIT_ID=${gitCommitId()}`,
-  `ATELIER_DEFAULT_WORKSPACE_IMAGE=${publishedWorkspaceRef}`,
-  `ATELIER_EAGERLY_PRELOAD=${JSON.stringify([publishedWorkspaceRef])}`,
+  `KINTSUGI_COMMIT_ID=${gitCommitId()}`,
+  `KINTSUGI_DEFAULT_WORKSPACE_IMAGE=${publishedWorkspaceRef}`,
+  `KINTSUGI_EAGERLY_PRELOAD=${JSON.stringify([publishedWorkspaceRef])}`,
 ];
 const allBuildArgs = [...defaultBuildArgs, ...options.buildArgs];
 

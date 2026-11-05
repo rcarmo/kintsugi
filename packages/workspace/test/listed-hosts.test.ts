@@ -9,7 +9,7 @@ async function scenario(version: number) {
     import { tmpdir } from "node:os";
     import { join } from "node:path";
     const directory = await mkdtemp(join(tmpdir(), "listed-host-workspace-"));
-    process.env.ATELIER_DATA_DIR = directory;
+    process.env.KINTSUGI_DATA_DIR = directory;
     const calls = [];
     let entries = [{host:"db.internal",port:5432}];
     mock.module("@kintsugi/host/control", () => ({ hostAvailable: () => true, readSystemVersion: async () => ${version}, hostRequest: async request => {

@@ -58,7 +58,7 @@ function frame(data: Buffer, opcode = 1): Buffer {
   return Buffer.concat([header, Buffer.from(data.map((byte, index) => byte ^ mask[index % 4]!))]);
 }
 
-function handshake(path = "/echo", authorization = "ATELIER_WS_PLACEHOLDER", extra = ""): string {
+function handshake(path = "/echo", authorization = "KINTSUGI_WS_PLACEHOLDER", extra = ""): string {
   return `GET ${path} HTTP/1.1\r\nHost: forged.example\r\nConnection: Upgrade, x-hop\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: ${key}\r\nAuthorization: Bearer ${authorization}\r\nProxy-Authorization: must-not-leak\r\nX-Hop: must-not-leak\r\nX-Workspace-Id: beta\r\n${extra}\r\n`;
 }
 
@@ -94,7 +94,7 @@ async function fixture() {
   cleanup.push(() => { server.stop(true); });
   let upgrades = 0;
   async function proxy(id: string, options: Omit<CreateHttpHooksOptions, "onRequest"> = {}, verifyCertificate = true) {
-    let hooks = createHttpHooks({ allowedInternalHosts: ["localhost"], secrets: { token: { hosts: ["localhost"], value: `${id}-secret`, placeholder: "ATELIER_WS_PLACEHOLDER" } }, ...options });
+    let hooks = createHttpHooks({ allowedInternalHosts: ["localhost"], secrets: { token: { hosts: ["localhost"], value: `${id}-secret`, placeholder: "KINTSUGI_WS_PLACEHOLDER" } }, ...options });
     const socketPath = join(directory, `${id}.sock`);
     const proxy = await startWorkspaceEgressProxy({ socketPath, ca,
       getContext: async () => ({ workspaceId: id, hooks: hooks.httpHooks, env: hooks.env, secrets: hooks.secrets }),
@@ -121,7 +121,7 @@ async function fixture() {
     return {
       connect, socketPath,
       setCredential(value: string) {
-        hooks = createHttpHooks({ allowedInternalHosts: ["localhost"], secrets: { token: { hosts: ["localhost"], value, placeholder: "ATELIER_WS_PLACEHOLDER" } }, ...options });
+        hooks = createHttpHooks({ allowedInternalHosts: ["localhost"], secrets: { token: { hosts: ["localhost"], value, placeholder: "KINTSUGI_WS_PLACEHOLDER" } }, ...options });
       },
       async close() { cleanup.splice(cleanup.indexOf(dispose), 1); await dispose(); },
     };
@@ -136,7 +136,7 @@ test("MITM WebSockets preserve workspace identity, negotiation, head bytes, bina
   for (const [id, proxy] of [["alpha", alpha], ["beta", beta]] as const) {
     const wire = await proxy.connect();
     // A frame arriving with the HTTP headers exercises the parser's client head buffer.
-    wire.socket.write(Buffer.concat([Buffer.from(handshake("/echo", "ATELIER_WS_PLACEHOLDER", "Sec-WebSocket-Protocol: kintsugi-test\r\n")), frame(Buffer.from("early"))]));
+    wire.socket.write(Buffer.concat([Buffer.from(handshake("/echo", "KINTSUGI_WS_PLACEHOLDER", "Sec-WebSocket-Protocol: kintsugi-test\r\n")), frame(Buffer.from("early"))]));
     const headers = await wire.headers();
     expect(headers).toContain("x-echo-authorization: Bearer [REDACTED]");
     expect(headers).toContain("101 Switching Protocols");
@@ -185,7 +185,7 @@ test("WebSocket policy and credential failures are rejected before dialing upstr
   const f = await fixture();
   for (const [id, options, status] of [
     ["denied", { isRequestAllowed: () => false }, 403],
-    ["wrong-host", { secrets: { token: { hosts: ["localhost"], value: "secret", placeholder: "select-mitm" }, other: { hosts: ["example.com"], value: "other-secret", placeholder: "ATELIER_WS_PLACEHOLDER" } } }, 403],
+    ["wrong-host", { secrets: { token: { hosts: ["localhost"], value: "secret", placeholder: "select-mitm" }, other: { hosts: ["example.com"], value: "other-secret", placeholder: "KINTSUGI_WS_PLACEHOLDER" } } }, 403],
     ["policy-error", { isRequestAllowed: () => { throw new Error("Policy lookup failed"); } }, 502],
   ] satisfies Array<[string, Omit<CreateHttpHooksOptions, "onRequest">, number]>) {
     const proxy = await f.proxy(id, options);
@@ -221,7 +221,7 @@ test("WebSocket TLS verification stays enabled", async () => {
 test("invalid client handshakes and blocked network destinations never reach upstream", async () => {
   const f = await fixture();
   const proxy = await f.proxy("alpha");
-  for (const request of [handshake().replace(key, "invalid-key"), handshake().replace("Version: 13", "Version: 12"), handshake("/", "ATELIER_WS_PLACEHOLDER", "Content-Length: 5\r\n")]) {
+  for (const request of [handshake().replace(key, "invalid-key"), handshake().replace("Version: 13", "Version: 12"), handshake("/", "KINTSUGI_WS_PLACEHOLDER", "Content-Length: 5\r\n")]) {
     const wire = await proxy.connect();
     wire.socket.write(request);
     expect(await wire.headers()).toContain("400");
@@ -280,7 +280,7 @@ test("negotiated permessage-deflate survives the bridge unchanged", async () => 
   const f = await fixture();
   const proxy = await f.proxy("compression");
   const wire = await proxy.connect();
-  wire.socket.write(handshake("/echo", "ATELIER_WS_PLACEHOLDER", "Sec-WebSocket-Extensions: permessage-deflate; client_no_context_takeover; server_no_context_takeover\r\n"));
+  wire.socket.write(handshake("/echo", "KINTSUGI_WS_PLACEHOLDER", "Sec-WebSocket-Extensions: permessage-deflate; client_no_context_takeover; server_no_context_takeover\r\n"));
   const headers = await wire.headers();
   expect(headers).toContain("101");
   expect(headers).toContain("sec-websocket-extensions: permessage-deflate");

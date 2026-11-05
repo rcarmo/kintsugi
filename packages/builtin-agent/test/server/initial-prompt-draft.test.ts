@@ -14,14 +14,14 @@ import { ids, type AgentRenderContext } from "@kintsugi/agent/server/render-cont
 let temporaryDataDir: string | undefined;
 
 afterEach(async () => {
-  delete process.env.ATELIER_DATA_DIR;
+  delete process.env.KINTSUGI_DATA_DIR;
   if (temporaryDataDir) await rm(temporaryDataDir, { recursive: true, force: true });
   temporaryDataDir = undefined;
 });
 
 async function useTemporaryDataDir(): Promise<void> {
   temporaryDataDir = await mkdtemp(join(tmpdir(), "kintsugi-initial-agent-draft-"));
-  process.env.ATELIER_DATA_DIR = temporaryDataDir;
+  process.env.KINTSUGI_DATA_DIR = temporaryDataDir;
 }
 
 const emptyPaneState = (ctx: AgentRenderContext) => ({ regions: () => [ids.transcript(ctx), ids.actions(ctx), ids.stats(ctx), ids.completionCatalog(ctx)].map(target => ({ target, html: "" })) });

@@ -29,8 +29,8 @@ test("projects the active Pi branch into the shared readonly transcript", () => 
 
 test("loads native session files and serves only supported embedded images", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-transcript-"));
-  const previous = process.env.ATELIER_DATA_DIR;
-  process.env.ATELIER_DATA_DIR = root;
+  const previous = process.env.KINTSUGI_DATA_DIR;
+  process.env.KINTSUGI_DATA_DIR = root;
   try {
     const directory = join(root, "workspaces/ws/home-local/.local/share/pi/sessions/tab");
     await mkdir(directory, { recursive: true });
@@ -49,8 +49,8 @@ test("loads native session files and serves only supported embedded images", asy
     expect(await image.text()).toBe("hello");
     expect((await loadPiTranscriptImage("ws", "tab", "r", 0)).status).toBe(404);
   } finally {
-    if (previous === undefined) delete process.env.ATELIER_DATA_DIR;
-    else process.env.ATELIER_DATA_DIR = previous;
+    if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR;
+    else process.env.KINTSUGI_DATA_DIR = previous;
     await rm(root, { recursive: true, force: true });
   }
 });

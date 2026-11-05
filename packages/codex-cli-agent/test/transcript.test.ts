@@ -53,8 +53,8 @@ test("recognizes only direct shell invocations inside Codex's JavaScript exec to
 
 test("loads only the tab-local Codex rollout and serves embedded user images", async () => {
   const root = await mkdtemp(join(tmpdir(), "codex-transcript-"));
-  const previous = process.env.ATELIER_DATA_DIR;
-  process.env.ATELIER_DATA_DIR = root;
+  const previous = process.env.KINTSUGI_DATA_DIR;
+  process.env.KINTSUGI_DATA_DIR = root;
   try {
     const dir = join(root, "workspaces/workspace/home-local/.local/share/kintsugi-agents/tab/codex/sessions/2026/01/01");
     await mkdir(dir, { recursive: true });
@@ -70,16 +70,16 @@ test("loads only the tab-local Codex rollout and serves embedded user images", a
     expect(await response.text()).toBe("hello");
     expect(await loadCodexTranscript("workspace", "other-tab")).toBeUndefined();
   } finally {
-    if (previous === undefined) delete process.env.ATELIER_DATA_DIR;
-    else process.env.ATELIER_DATA_DIR = previous;
+    if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR;
+    else process.env.KINTSUGI_DATA_DIR = previous;
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test("shared native rollouts are selected by the private SessionStart record, not another tab's history", async () => {
   const root = await mkdtemp(join(tmpdir(), "codex-shared-transcript-"));
-  const previous = process.env.ATELIER_DATA_DIR;
-  process.env.ATELIER_DATA_DIR = root;
+  const previous = process.env.KINTSUGI_DATA_DIR;
+  process.env.KINTSUGI_DATA_DIR = root;
   try {
     const privateDirectory = join(root, "workspaces/workspace/home-local/.local/share/kintsugi-agents/tab/codex");
     const sharedDirectory = join(root, "home/.codex/sessions/2026/01/01");
@@ -102,8 +102,8 @@ test("shared native rollouts are selected by the private SessionStart record, no
     await writeFile(join(privateDirectory, "native-session.json"), JSON.stringify({ id: "mine", transcript: "../../secret.jsonl" }));
     await expect(loadCodexTranscript("workspace", "tab")).rejects.toThrow("Invalid Codex transcript path");
   } finally {
-    if (previous === undefined) delete process.env.ATELIER_DATA_DIR;
-    else process.env.ATELIER_DATA_DIR = previous;
+    if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR;
+    else process.env.KINTSUGI_DATA_DIR = previous;
     await rm(root, { recursive: true, force: true });
   }
 });

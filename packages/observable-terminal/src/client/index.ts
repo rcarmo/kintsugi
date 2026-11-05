@@ -6,8 +6,8 @@ import { encodeObservableTerminalMessage, terminalEndedCloseCode } from "../shar
 import { terminalLinkAt, type TerminalLink } from "./links.ts";
 import { createTerminalConnection, type TerminalConnectionState } from "./connection.ts";
 
-declare const ATELIER_GHOSTTY_WASM_URL: string;
-declare const ATELIER_GHOSTTY_CALLBACKS_WASM_URL: string;
+declare const KINTSUGI_GHOSTTY_WASM_URL: string;
+declare const KINTSUGI_GHOSTTY_CALLBACKS_WASM_URL: string;
 
 export type ObservableTerminalTheme = TerminalTheme;
 
@@ -286,9 +286,9 @@ async function initializeTerminalViewer(options: ObservableTerminalViewerOptions
   // Other callers retain renderer-first startup: their layout can still change
   // as the renderer mounts (notably CLI agents switching transcript modes).
   const [wasm, callbacksWasm] = options.connectBeforeRender ? await Promise.all([
-    preloadGhostty(ATELIER_GHOSTTY_WASM_URL),
-    preloadGhostty(ATELIER_GHOSTTY_CALLBACKS_WASM_URL),
-  ]) : [ATELIER_GHOSTTY_WASM_URL, ATELIER_GHOSTTY_CALLBACKS_WASM_URL];
+    preloadGhostty(KINTSUGI_GHOSTTY_WASM_URL),
+    preloadGhostty(KINTSUGI_GHOSTTY_CALLBACKS_WASM_URL),
+  ]) : [KINTSUGI_GHOSTTY_WASM_URL, KINTSUGI_GHOSTTY_CALLBACKS_WASM_URL];
   if (signal.aborted) return;
   const term = await createTerminal({
     container: mount,

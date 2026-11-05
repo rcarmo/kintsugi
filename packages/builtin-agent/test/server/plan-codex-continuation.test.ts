@@ -30,8 +30,8 @@ test("Codex sends WebSocket deltas with unchanged and edited canonical plans", a
     socket.send(JSON.stringify({ type: "response.output_item.done", output_index: 0, item }));
     socket.send(JSON.stringify({ type: "response.completed", response: { id, status: "completed", output: [item], usage: { input_tokens: 100, output_tokens: 2, input_tokens_details: { cached_tokens: 90 } } } }));
   } } });
-  const dir = await mkdtemp(join(tmpdir(), "plan-codex-")), previous = process.env.ATELIER_DATA_DIR;
-  process.env.ATELIER_DATA_DIR = dir;
+  const dir = await mkdtemp(join(tmpdir(), "plan-codex-")), previous = process.env.KINTSUGI_DATA_DIR;
+  process.env.KINTSUGI_DATA_DIR = dir;
   const token = `x.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "offline" } })).toString("base64url")}.x`;
   const model: Model<"openai-codex-responses"> = { id: "gpt-5.4", name: "Offline", provider: "offline", api: "openai-codex-responses", baseUrl: server.url.toString(), reasoning: false, input: ["text"], contextWindow: 200000, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
   const models = createModels(), registry = createRegistry();
@@ -61,7 +61,7 @@ test("Codex sends WebSocket deltas with unchanged and edited canonical plans", a
   } finally {
     if (session) closeOpenAICodexWebSocketSessions(session);
     await workspace.close(); await server.stop(true);
-    if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous;
+    if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR; else process.env.KINTSUGI_DATA_DIR = previous;
     await rm(dir, { recursive: true, force: true });
   }
 }, 15000);

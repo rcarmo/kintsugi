@@ -23,7 +23,7 @@ const signal = (name: string, pid: string | number) => Bun.spawn(["sudo", "-n", 
 
 beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), "workspace-files-abort-"));
-  const binary = join(directory, "aitc-workspace-helper");
+  const binary = join(directory, "kintsugi-workspace-helper");
   await buildGoProgram(fileURLToPath(new URL("../../../workspace-helper/helper", import.meta.url)), binary, `linux/${process.arch === "arm64" ? "arm64" : "amd64"}`);
   const workspaceDirectory = kintsugiDataPath(getKintsugiRuntimeContext(), "workspaces", workspaceId);
   await mkdir(workspaceDirectory, { recursive: true });

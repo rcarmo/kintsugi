@@ -21,13 +21,14 @@ seed_file "$defaults_dir/Machine/mcp.json" "$server_data_dir/data/Machine/mcp.js
 
 set -- \
   --accept-server-license-terms \
-  --host "${ATELIER_VSCODE_HOST:-0.0.0.0}" \
-  --port "${ATELIER_VSCODE_PORT:-24800}" \
+  --host "${KINTSUGI_VSCODE_HOST:-${ATELIER_VSCODE_HOST:-0.0.0.0}}" \
+  --port "${KINTSUGI_VSCODE_PORT:-${ATELIER_VSCODE_PORT:-24800}}" \
   --without-connection-token \
   --server-data-dir "$server_data_dir"
 
-if [ -n "${ATELIER_VSCODE_DEFAULT_WORKSPACE:-}" ]; then
-  set -- "$@" --default-workspace "$ATELIER_VSCODE_DEFAULT_WORKSPACE"
+workspace="${KINTSUGI_VSCODE_DEFAULT_WORKSPACE:-${ATELIER_VSCODE_DEFAULT_WORKSPACE:-}}"
+if [ -n "$workspace" ]; then
+  set -- "$@" --default-workspace "$workspace"
 else
   set -- "$@" --default-folder "/work"
 fi

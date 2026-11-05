@@ -1,4 +1,4 @@
-import { readStorageDriver, storageContainerdConfig } from "@kintsugi/core";
+import { kintsugiEnv, readStorageDriver, storageContainerdConfig } from "@kintsugi/core";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -20,7 +20,7 @@ const roleLabel = "com.kintsugi.role=repository-builder";
 export async function buildRepositoryImage(baseImage: string, tag: string, build: (dockerCommand: string[]) => Promise<void>): Promise<void> {
   const buildCommand = await repositoryBuildCommand(["docker"]);
   const runtime = getKintsugiRuntimeContext();
-  const identity = createHash("sha256").update(`${runtime.dockerHostKintsugiDataDir}\0${process.env.ATELIER_NAMESPACE ?? "host"}`).digest("hex").slice(0, 16);
+  const identity = createHash("sha256").update(`${runtime.dockerHostKintsugiDataDir}\0${kintsugiEnv("NAMESPACE") ?? "host"}`).digest("hex").slice(0, 16);
   const name = `kintsugi-builder-${identity}`;
   const directory = kintsugiDataPath(runtime, "repository-builder", identity);
   const hostDirectory = dockerHostKintsugiDataPath(runtime, "repository-builder", identity);

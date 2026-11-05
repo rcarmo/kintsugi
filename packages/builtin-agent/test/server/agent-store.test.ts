@@ -15,20 +15,20 @@ let dir: string | undefined;
 
 async function dataDir(): Promise<string> {
   dir = await mkdtemp(join(tmpdir(), "kintsugi-agent-test-"));
-  process.env.ATELIER_DATA_DIR = dir;
+  process.env.KINTSUGI_DATA_DIR = dir;
   return dir;
 }
 
 const ensureDefaultWorkspaceAgent = ensureNativeAgent;
 
 async function writeWorkspaceTemplateInit(workspaceId: string, workspaceTemplateId: string, sessionShareKey: string): Promise<void> {
-  const path = join(process.env.ATELIER_DATA_DIR!, "workspaces", workspaceId, "metadata");
+  const path = join(process.env.KINTSUGI_DATA_DIR!, "workspaces", workspaceId, "metadata");
   await mkdir(path, { recursive: true });
   await writeFile(join(path, "init.json"), JSON.stringify({ type: "project.git", projectId: workspaceTemplateId, name: "repo", gitUrl: "https://example.com/repo.git", branch: null, sessionShareKey }));
 }
 
 afterEach(async () => {
-  delete process.env.ATELIER_DATA_DIR;
+  delete process.env.KINTSUGI_DATA_DIR;
   if (dir) await rm(dir, { recursive: true, force: true });
   dir = undefined;
 });

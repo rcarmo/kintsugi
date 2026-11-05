@@ -9,7 +9,7 @@ import { disclosureHtml } from "@kintsugi/design-system/disclosure";
 import { destructiveConfirmationHtml } from "@kintsugi/design-system/destructive-confirmation";
 import { Icons } from "@kintsugi/design-system/icons";
 import { createPiModelRuntime, modelsDialogId, popularProviderIds, setEnabledModels } from "@kintsugi/llm/server";
-import { invalidArguments } from "@kintsugi/core";
+import { kintsugiEnv, invalidArguments } from "@kintsugi/core";
 import { errorMessage, escapeHtml, providerBadgeHtml } from "@kintsugi/shared";
 import { clearGitHostingCredential, gitHostingProviders } from "@kintsugi/git-hosting";
 import { kintsugiUrl } from "@kintsugi/proxy-ingress";
@@ -42,7 +42,7 @@ async function renderCommitIdentitySettings(): Promise<string> {
 }
 
 function renderBuildIdentity(): string {
-  const commit = process.env.ATELIER_COMMIT_ID;
+  const commit = kintsugiEnv("COMMIT_ID");
   if (!commit) return `<span class="settings-build-identity">Local development build</span>`;
   const commitUrl = `${imageSource}/commit/${encodeURIComponent(commit)}`;
   return `<a class="settings-build-identity" href="${commitUrl}" target="_blank" rel="noreferrer">${escapeHtml(commit.slice(0, 7))}</a>`;

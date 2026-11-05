@@ -12,15 +12,15 @@ let previousDataDir: string | undefined;
 const { clearDeletionReview, deletionReviewCommitResponse, deletionReviewFileResponse, changesDeletionReview } = createDeletionReview((id, path) => localRepository(join(dataDir, "workspaces", id, "work", path)));
 
 beforeEach(async () => {
-  previousDataDir = process.env.ATELIER_DATA_DIR;
+  previousDataDir = process.env.KINTSUGI_DATA_DIR;
   dataDir = await mkdtemp(join(tmpdir(), "kintsugi-deletion-review-"));
-  process.env.ATELIER_DATA_DIR = dataDir;
+  process.env.KINTSUGI_DATA_DIR = dataDir;
 });
 
 afterEach(async () => {
   clearDeletionReview(workspaceId);
-  if (previousDataDir === undefined) delete process.env.ATELIER_DATA_DIR;
-  else process.env.ATELIER_DATA_DIR = previousDataDir;
+  if (previousDataDir === undefined) delete process.env.KINTSUGI_DATA_DIR;
+  else process.env.KINTSUGI_DATA_DIR = previousDataDir;
   await rm(dataDir, { recursive: true, force: true });
 });
 

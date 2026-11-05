@@ -69,7 +69,7 @@ describe("prompt templates", () => {
   });
 
   test("code mode templates keep their trigger and run their script with the arguments", async () => {
-    const root = await mkdtemp(join(tmpdir(), "agents-in-the-cloud-prompts-"));
+    const root = await mkdtemp(join(tmpdir(), "kintsugi-prompts-"));
     await mkdir(join(root, ".kintsugi/prompts"), { recursive: true });
     await writeFile(join(root, ".kintsugi/prompts/status.md"), "---\ndescription: Show status\ncodemode: true\ncomposer-button: true\n---\nreturn args;\n");
     const templates = await loadPromptTemplatesFromRoot(root);

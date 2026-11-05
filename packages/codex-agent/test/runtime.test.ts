@@ -90,7 +90,7 @@ async function scenario(script: string) {
       const agents = createCodexAgents(() => events);
       const input = { text: "hello", images: [], attachmentNotes: [] };
       ${script}
-    `], { cwd: join(import.meta.dir, ".."), env: { ...process.env, ATELIER_DATA_DIR: directory }, stdout: "pipe", stderr: "pipe" });
+    `], { cwd: join(import.meta.dir, ".."), env: { ...process.env, KINTSUGI_DATA_DIR: directory }, stdout: "pipe", stderr: "pipe" });
     const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
     expect({ code, stdout, stderr }).toEqual({ code: 0, stdout: "", stderr: "" });
   } finally { await rm(directory, { recursive: true, force: true }); }

@@ -11,8 +11,8 @@ import { createWorkspaceRegistry } from "../src/server/workspace-registry.ts";
 
 // Management protocol tests only; no browser, rendered-markup or UI assertions.
 test("instance credentials obey the secrets scope, strict schemas, write-only values and bounded secret-free audit", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "admin-credentials-")), previous = process.env.ATELIER_DATA_DIR;
-  process.env.ATELIER_DATA_DIR = directory;
+  const directory = await mkdtemp(join(tmpdir(), "admin-credentials-")), previous = process.env.KINTSUGI_DATA_DIR;
+  process.env.KINTSUGI_DATA_DIR = directory;
   try {
     const template = (await addWorkspaceTemplate("https://example.com/repo.git")).workspaceTemplate;
     const store = createAdminStore(join(directory, "bindings.json"));
@@ -46,7 +46,7 @@ test("instance credentials obey the secrets scope, strict schemas, write-only va
     expect(spec.paths["/settings/credentials"].post["x-admin-scopes-any-of"]).toEqual(["secrets"]);
     expect(spec.paths["/settings/credentials"].post.requestBody.content["application/json"].schema.properties.secretValue.writeOnly).toBe(true);
   } finally {
-    if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous;
+    if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR; else process.env.KINTSUGI_DATA_DIR = previous;
     await rm(directory, { recursive: true, force: true });
   }
 });

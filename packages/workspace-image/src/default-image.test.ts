@@ -48,7 +48,7 @@ for (const innerKintsugi of [false, true]) for (const scenario of ["cached", "mi
       // must succeed in both, without starting an image build.
       for (let attempt = 0; attempt < (scenario === "cached" ? 2 : 1); attempt++) {
         const child = Bun.spawn([process.execPath, client], {
-          env: { ...process.env, ATELIER_NAMESPACE: namespace, ATELIER_WORKSPACE_IMAGE_NO_CACHE: scenario === "no-cache" ? "1" : "0" },
+          env: { ...process.env, KINTSUGI_NAMESPACE: namespace, KINTSUGI_WORKSPACE_IMAGE_NO_CACHE: scenario === "no-cache" ? "1" : "0" },
           stdout: "pipe", stderr: "pipe", timeout: 15_000,
         });
         const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);

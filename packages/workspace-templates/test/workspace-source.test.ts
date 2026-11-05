@@ -78,11 +78,11 @@ describe("workspace source preparation", () => {
   const tempRoots: string[] = [];
 
   beforeEach(async () => {
-    previousDataDir = process.env.ATELIER_DATA_DIR;
+    previousDataDir = process.env.KINTSUGI_DATA_DIR;
     previousGitHubToken = process.env.GH_TOKEN;
     dataDir = await mkdtemp(join(tmpdir(), "kintsugi-data-test-"));
     tempRoots.push(dataDir);
-    process.env.ATELIER_DATA_DIR = dataDir;
+    process.env.KINTSUGI_DATA_DIR = dataDir;
     delete process.env.GH_TOKEN;
   });
 
@@ -90,8 +90,8 @@ describe("workspace source preparation", () => {
     await clearAppTerminalProcesses();
     await stopWorkspaceTemplateSshAgents();
     for (const provider of gitHostingProviders) clearGitHostingCredential(provider);
-    if (previousDataDir === undefined) delete process.env.ATELIER_DATA_DIR;
-    else process.env.ATELIER_DATA_DIR = previousDataDir;
+    if (previousDataDir === undefined) delete process.env.KINTSUGI_DATA_DIR;
+    else process.env.KINTSUGI_DATA_DIR = previousDataDir;
     if (previousGitHubToken === undefined) delete process.env.GH_TOKEN;
     else process.env.GH_TOKEN = previousGitHubToken;
     await Promise.all(tempRoots.splice(0).map((path) => rm(path, { recursive: true, force: true })));

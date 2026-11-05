@@ -9,10 +9,10 @@ import { listWorkspaceAgents } from "../../src/server/agent-store.ts";
 let directory: string;
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "kintsugi-agent-launch-"));
-  process.env.ATELIER_DATA_DIR = directory;
+  process.env.KINTSUGI_DATA_DIR = directory;
 });
 afterEach(async () => {
-  delete process.env.ATELIER_DATA_DIR;
+  delete process.env.KINTSUGI_DATA_DIR;
   await rm(directory, { recursive: true, force: true });
 });
 

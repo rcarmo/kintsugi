@@ -156,9 +156,9 @@ test("offline journal rollback invalidates stale indexed entries", async () => {
   expect((await searchCommittedHistory(reopened.harness, f.path, "workspace", { query: "preservedopal" })).results).toHaveLength(1);
 });
 test("native Harness executes the search tool without deadlock, inference beyond the fixture or history mutation", async () => {
-  const previous = process.env.ATELIER_DATA_DIR;
+  const previous = process.env.KINTSUGI_DATA_DIR;
   const dataDir = await mkdtemp(join(tmpdir(), "search-native-tool-")); directories.push(dataDir);
-  process.env.ATELIER_DATA_DIR = dataDir;
+  process.env.KINTSUGI_DATA_DIR = dataDir;
   try {
     const directory = await workspaceDurableJournalDirectory("tool-workspace");
     const models = createModels(), faux = fauxProvider({ tokensPerSecond: 100_000 }); models.setProvider(faux.provider);
@@ -175,5 +175,5 @@ test("native Harness executes the search tool without deadlock, inference beyond
     expect(result.isError).toBe(false);
     expect(JSON.stringify(result.content)).toContain("celestite");
     expect(faux.state.callCount).toBe(2);
-  } finally { if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous; }
+  } finally { if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR; else process.env.KINTSUGI_DATA_DIR = previous; }
 });

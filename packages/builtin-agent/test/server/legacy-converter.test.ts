@@ -13,15 +13,15 @@ import { historyNote } from "@kintsugi/legacy-converter/entries";
 
 let root: string;
 let workspace: string;
-const previous = process.env.ATELIER_DATA_DIR;
+const previous = process.env.KINTSUGI_DATA_DIR;
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "legacy-converter-"));
   workspace = `import-${crypto.randomUUID()}`;
-  process.env.ATELIER_DATA_DIR = root;
+  process.env.KINTSUGI_DATA_DIR = root;
 });
 afterEach(async () => {
   await suspendAllDurableWorkspaceOwners();
-  if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous;
+  if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR; else process.env.KINTSUGI_DATA_DIR = previous;
   await rm(root, { recursive: true, force: true });
 });
 const ctx = BACKGROUND_CONTEXT;

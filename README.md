@@ -120,7 +120,7 @@ bun run check
 bun run web
 ```
 
-Internal packages use `@kintsugi/*`. Container accounts are `agent:agent`, with `/home/agent` as their home. The app uses UID/GID 1000; workspace startup aligns the numeric IDs with the host process to preserve shared-volume ownership. Existing `ATELIER_*` environment variables keep their names for compatibility.
+Internal packages use `@kintsugi/*`. Container accounts are `agent:agent`, with `/home/agent` as their home. The app uses UID/GID 1000; workspace startup aligns the numeric IDs with the host process to preserve shared-volume ownership. Configuration uses `KINTSUGI_*` environment variables. Existing `ATELIER_*` names remain accepted as legacy aliases; an explicitly set Kintsugi name takes precedence. Storage paths, namespaces and saved identities are unchanged.
 
 ## Attribution and licence
 

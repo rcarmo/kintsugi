@@ -7,7 +7,7 @@ import { join } from "node:path";
 // changing the running host firewall or concurrent tests' process environment.
 for (const scenario of ["supported", "missing-socket", "permission-error", "install-error"] as const) {
   test(`firewall capability preflight: ${scenario}`, async () => {
-    const directory = await mkdtemp(join(tmpdir(), "aitc-nft-test-"));
+    const directory = await mkdtemp(join(tmpdir(), "kintsugi-nft-test-"));
     try {
       const probeError = scenario === "missing-socket" ? "Error: Could not process rule: No such file or directory"
         : scenario === "permission-error" ? "Operation not permitted" : "";
@@ -26,7 +26,10 @@ await installWorkspaceFirewall('/system/workloads/build-clients', ['127.0.0.53']
         env: { ...process.env, PATH: `${directory}:${process.env.PATH}` }, stdout: "pipe", stderr: "pipe",
       });
       const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
-      expect(await readFile(join(directory, "probe"), "utf8")).toContain("socket cgroupv2");
+      const probe = await readFile(join(directory, "probe"), "utf8");
+      expect(probe).toContain("socket cgroupv2");
+      expect(probe).toContain("add table inet kintsugi_socket_preflight");
+      expect(probe).not.toContain("aitc");
       if (scenario === "permission-error" || scenario === "install-error") {
         expect(code).not.toBe(0);
         expect(stderr).toContain("Could not install workspace firewall");

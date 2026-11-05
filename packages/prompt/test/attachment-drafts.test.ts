@@ -18,11 +18,11 @@ let dir: string | undefined;
 
 async function dataDir(): Promise<void> {
   dir = await mkdtemp(join(tmpdir(), "kintsugi-agent-attachments-"));
-  process.env.ATELIER_DATA_DIR = dir;
+  process.env.KINTSUGI_DATA_DIR = dir;
 }
 
 afterEach(async () => {
-  delete process.env.ATELIER_DATA_DIR;
+  delete process.env.KINTSUGI_DATA_DIR;
   if (dir) await rm(dir, { recursive: true, force: true });
   dir = undefined;
 });

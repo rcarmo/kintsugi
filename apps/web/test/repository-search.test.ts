@@ -13,10 +13,10 @@ let dataDir: string;
 let requests: URL[];
 
 beforeEach(async () => {
-  previousDataDir = process.env.ATELIER_DATA_DIR;
+  previousDataDir = process.env.KINTSUGI_DATA_DIR;
   previousToken = process.env.GH_TOKEN;
   dataDir = await mkdtemp(join(tmpdir(), "kintsugi-repository-search-"));
-  process.env.ATELIER_DATA_DIR = dataDir;
+  process.env.KINTSUGI_DATA_DIR = dataDir;
   delete process.env.GH_TOKEN;
   requests = [];
   globalThis.fetch = Object.assign(async (input: Parameters<typeof fetch>[0]) => {
@@ -34,8 +34,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   globalThis.fetch = originalFetch;
-  if (previousDataDir === undefined) delete process.env.ATELIER_DATA_DIR;
-  else process.env.ATELIER_DATA_DIR = previousDataDir;
+  if (previousDataDir === undefined) delete process.env.KINTSUGI_DATA_DIR;
+  else process.env.KINTSUGI_DATA_DIR = previousDataDir;
   if (previousToken === undefined) delete process.env.GH_TOKEN;
   else process.env.GH_TOKEN = previousToken;
   await rm(dataDir, { recursive: true, force: true });

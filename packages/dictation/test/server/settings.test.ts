@@ -9,12 +9,12 @@ let directory: string | undefined;
 
 async function useTemporaryDataDirectory(): Promise<string> {
   directory = await mkdtemp(join(tmpdir(), "kintsugi-transcription-settings-"));
-  process.env.ATELIER_DATA_DIR = directory;
+  process.env.KINTSUGI_DATA_DIR = directory;
   return directory;
 }
 
 afterEach(async () => {
-  delete process.env.ATELIER_DATA_DIR;
+  delete process.env.KINTSUGI_DATA_DIR;
   if (directory) await rm(directory, { recursive: true, force: true });
   directory = undefined;
 });
