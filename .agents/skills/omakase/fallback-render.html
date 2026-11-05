@@ -1,0 +1,188 @@
+<!doctype html>
+<!--
+  Omakase fallback template.
+
+  Copy this file to a temporary location, then:
+  - Replace every {{PLACEHOLDER}}.
+  - Repeat the <section class="proposal"> block once per proposal, in order.
+    Its id must be "p" followed by the proposal number (p1, p2, …): the links in
+    your reply point at file:///…/round.html#p3.
+  - Repeat the <li> inside .alternatives once per alternative, lettered A, B, C.
+  - Leave the <style> and <script> as they are. Background sections start
+    collapsed; the script opens the one a link points at.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TASK}} — proposals</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --page: #f7f5f0;
+    --card: #fffdf9;
+    --ink: #2b2a27;
+    --soft: #6f6b63;
+    --faint: #a29d93;
+    --line: #e7e2d8;
+    --accent: #5f7f6a;
+    --accent-soft: #e6eee7;
+    --glow: rgba(95, 127, 106, .14);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --page: #1b1c1a;
+      --card: #222420;
+      --ink: #e9e6de;
+      --soft: #aaa69c;
+      --faint: #77736b;
+      --line: #33352f;
+      --accent: #9dbba6;
+      --accent-soft: #2b332d;
+      --glow: rgba(157, 187, 166, .12);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin: 0;
+    padding: 72px 24px 120px;
+    background: var(--page);
+    color: var(--ink);
+    font: 17px/1.65 ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 680px; margin: 0 auto; }
+
+  header { margin-bottom: 48px; }
+  .eyebrow {
+    margin: 0 0 10px;
+    color: var(--faint);
+    font: 600 12px/1 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+  }
+  h1 { margin: 0; font-size: 30px; font-weight: 500; line-height: 1.25; letter-spacing: -.01em; }
+  header p { margin: 14px 0 0; color: var(--soft); }
+
+  .proposal {
+    position: relative;
+    margin: 0 0 18px;
+    padding: 26px 30px 22px 76px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    scroll-margin-top: 32px;
+    transition: border-color .3s, box-shadow .3s;
+  }
+  .proposal:target { border-color: var(--accent); box-shadow: 0 0 0 5px var(--glow); }
+  .number {
+    position: absolute;
+    left: 26px;
+    top: 26px;
+    width: 32px;
+    height: 32px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font: 600 14px/1 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .statement { margin: 2px 0 0; }
+
+  details { margin-top: 14px; }
+  summary {
+    display: inline-flex;
+    align-items: flex-start;
+    gap: 10px;
+    color: var(--faint);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    cursor: pointer;
+    list-style: none;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    flex: none;
+    margin-top: .6em;
+    transform: rotate(-45deg);
+    transition: transform .2s;
+  }
+  details[open] > summary::before { transform: rotate(45deg) translate(-1px, -1px); }
+  details[open] > summary { color: var(--soft); }
+  summary:hover { color: var(--ink); }
+  summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+
+  .background {
+    margin: 12px 0 4px 3px;
+    padding-left: 20px;
+    border-left: 1.5px solid var(--line);
+    color: var(--soft);
+  }
+  .background p { margin: 0 0 12px; }
+  .label {
+    margin: 18px 0 8px;
+    color: var(--faint);
+    font: 600 11px/1 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+  }
+  .alternatives { margin: 0; padding: 0; list-style: none; }
+  .alternatives li { display: grid; grid-template-columns: 28px 1fr; margin: 0 0 8px; }
+  .letter { color: var(--accent); font: 600 14px/1.9 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  code {
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: var(--accent-soft);
+    font: .85em ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (max-width: 520px) {
+    body { padding: 40px 14px 80px; font-size: 16px; }
+    .proposal { padding: 22px 20px 18px 60px; }
+    .number { left: 16px; top: 22px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="eyebrow">Omakase · round {{ROUND}}</p>
+    <h1>{{TASK}}</h1>
+    <p>{{ONE_SENTENCE_CONTEXT}}</p>
+  </header>
+
+  <!-- Repeat this section once per proposal. -->
+  <section class="proposal" id="p{{N}}">
+    <span class="number">{{N}}</span>
+    <p class="statement">{{PROPOSAL}}</p>
+    <details>
+      <summary>{{BACKGROUND_TITLE}}</summary>
+      <div class="background">
+        <p>{{RATIONALE}}</p>
+        <p class="label">Alternatives</p>
+        <ul class="alternatives">
+          <!-- Repeat once per alternative: A, B, C, … -->
+          <li><span class="letter">{{LETTER}}</span><span>{{ALTERNATIVE}}</span></li>
+        </ul>
+      </div>
+    </details>
+  </section>
+</main>
+<script>
+  // Open the background section a link points at, and keep it open as the anchor changes.
+  function openTarget() {
+    const section = location.hash && document.getElementById(location.hash.slice(1));
+    const details = section && section.querySelector("details");
+    if (details) details.open = true;
+  }
+  addEventListener("hashchange", openTarget);
+  openTarget();
+</script>
+</body>
+</html>
