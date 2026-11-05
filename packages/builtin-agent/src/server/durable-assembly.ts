@@ -1,4 +1,5 @@
 import { createNativePlanExtension } from "./durable-plan.ts";
+import { durablePromptCache } from "./durable-prompt-cache.ts";
 import { createNativeAgentIdentityResolver } from "./durable-agent-identity.ts";
 import { createHistorySearchTool } from "./history-search.ts";
 import { agentDelegation } from "./delegation.ts";
@@ -37,6 +38,7 @@ export async function createDurableHarnessOptions(workspaceId: string, options: 
   const models = await createPiModelRuntime();
   const registry = createDurableWorkspaceRegistry(workspaceId, options, createNativeAgentIdentityResolver(workspaceId, harness));
   registry.install(defineExtension({ name: "kintsugi.history-search", tools: [createHistorySearchTool(workspaceId, harness)] }));
+  registry.install(durablePromptCache);
   registry.install(createNativePlanExtension(workspaceId, harness));
   const delegation = agentDelegation?.create(models, harness);
   if (delegation) registry.install(delegation.extension);

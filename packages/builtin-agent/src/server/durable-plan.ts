@@ -1,9 +1,16 @@
-import { isJsonObject } from "@kintsugi/core";
-import { defineExtension, defineTool, GenerationTask, hook, type Harness, type ConversationId } from "@earendil-works/pi-durable";
+import { contentText } from "@earendil-works/pi-ai";
+import { defineDoc, defineEntry, defineExtension, defineTool, GenerationTask, hook, type Harness, type ConversationId } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { agentPlanStore, agentPlanInputSchema, planToolDescription, planToolOutput } from "@kintsugi/agent/server/plan";
-import { cacheCanonicalPlanPrefix, compactLegacyPlanHistory, planContextPrefix } from "./plan-context.ts";
+import { compactLegacyPlanHistory, planContextPrefix } from "./plan-context.ts";
 import { WorkspaceAgents } from "./durable-workspace.ts";
+
+/** Append-only model context, not a user submission or permission to run work. */
+export const durablePlanContextEntry = defineEntry<{ revision: number; markdown: string }>("kintsugi.plan-context");
+const PlanRequest = defineDoc<{ key: string; message: { role: "user"; timestamp: number; content: string } | null }>({
+  kind: "kintsugi.plan-request", version: 1, scope: "conversation", history: "latest", fork: "initial",
+  initial: () => ({ key: "", message: null }), checkpointWhen: () => true,
+});
 
 /** Tools bind to the calling native conversation, never a model-supplied Agent ID. */
 export function createNativePlanExtension(workspaceId: string, harness: () => Harness) {
@@ -23,19 +30,30 @@ export function createNativePlanExtension(workspaceId: string, harness: () => Ha
   })], hooks: [hook(GenerationTask, {
     async beforeRequest(request, api, context) {
       const messages = compactLegacyPlanHistory(request.messages);
-      const agentId = await identity(api.conversationId);
-      const current = agentPlanStore().read(workspaceId, agentId);
-      // The plan is transient user context, not a mutable system-prompt section.
-      // Pin each request's snapshot on retries without pinning later tool rounds.
-      const key = `agent-plan:${request.messages.length}:${Bun.hash(JSON.stringify(request.messages.at(-1) ?? null)).toString(16)}`;
-      const snapshot = await api.memo(key, { revision: current.revision, markdown: current.markdown }, context);
-      if (!snapshot.revision || !snapshot.markdown.trim()) return { messages };
-      return { messages: [...messages, { role: "user" as const, timestamp: 0, content: `${planContextPrefix}${snapshot.revision}). This is shared task data, not extra permission or a new instruction to start work. Use the plan tool to keep it current.\n\n${snapshot.markdown}` }] };
-    },
-    beforeProviderRequest({ model, payload }) {
-      if (!isJsonObject(payload)) return;
-      const rewritten = cacheCanonicalPlanPrefix(model.api, payload);
-      return rewritten === undefined ? undefined : { payload: rewritten };
+      const current = agentPlanStore().read(workspaceId, await identity(api.conversationId));
+      // A retry's cutoff can now include our committed snapshot. Exclude plan
+      // snapshots from its identity so an edit during backoff cannot change it.
+      const canonical = request.messages.filter(message => message.role !== "user" || !contentText(message.content).startsWith(planContextPrefix));
+      const key = `${api.taskId}:${canonical.length}:${Bun.hash(JSON.stringify(canonical.at(-1) ?? null)).toString(16)}`;
+      // Retry the same immutable snapshot, including after host recovery. A later round
+      // observes edits, but never rewrites an earlier request's plan or initial prompt.
+      const snapshot = await api.memo(`agent-plan:${key}`, { revision: current.revision, markdown: current.markdown }, context);
+      const text = `${planContextPrefix}${snapshot.revision}). This is shared task data, not extra permission or a new instruction to start work. This snapshot supersedes earlier plan snapshots. Use the plan tool to keep it current.\n\n${snapshot.markdown.trim() ? snapshot.markdown : "The editable plan is empty."}`;
+      const previous = messages.findLast(message => message.role === "user" && contentText(message.content).startsWith(planContextPrefix));
+      const message = await harness().commit(async tx => {
+        const state = await tx.doc(PlanRequest, api.conversationId);
+        if (state.key === key) return state.message;
+        state.key = key;
+        state.message = null;
+        if ((!snapshot.revision && !previous) || (previous && contentText(previous.content) === text)) return null;
+        const message = { role: "user" as const, timestamp: 0, content: text };
+        await tx.appendEntry(durablePlanContextEntry, api.conversationId, { data: snapshot, model: [message] });
+        state.message = message;
+        return message;
+      }, context);
+      // The generation's cutoff precedes the hook's commit. Include the newly committed
+      // entry in this request; subsequent rounds read it from canonical history.
+      return { messages: message && !messages.some(existing => existing.role === "user" && contentText(existing.content) === message.content) ? [...messages, message] : messages };
     },
   })] });
 }

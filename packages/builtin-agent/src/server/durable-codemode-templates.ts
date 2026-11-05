@@ -5,6 +5,7 @@ import type { Context } from "@earendil-works/chord";
 import { KintsugiCoreError } from "@kintsugi/core";
 import { codemodeTemplateScript, type PromptTemplate } from "@kintsugi/agent/server/prompt-templates";
 import { withStreamSimple } from "./durable-models.ts";
+import { durablePlanContextEntry } from "./durable-plan.ts";
 
 /** Code mode calls a template made start with this, so the code mode tool can tell them from the model's own. */
 const callIdPrefix = "codemode_template_";
@@ -61,6 +62,8 @@ async function answeredEntries(tx: Tx, conversationId: ConversationId, callId: s
         continue;
       }
       if (CompactionEntry.is(entry) || ResetEntry.is(entry)) return { calls, users };
+      // Plan snapshots are context, not submitted slash commands or steering.
+      if (durablePlanContextEntry.is(entry)) continue;
       // Bookkeeping and system prompt entries can sit between the messages and their response.
       if (!entry.model?.some(message => message.role !== "system")) continue;
       if (entry.model.some(message => message.role !== "user")) return { calls, users };

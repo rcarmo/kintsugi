@@ -3,6 +3,7 @@ import { integrationTranscript } from "./integrations.ts";
 import { applyTranscriptContributions } from "@kintsugi/agent/server/transcript-contributions";
 import { durableTimingEntry, DurableTurnTiming } from "./durable-timing.ts";
 import { durableStopEntry } from "./durable-lifecycle.ts";
+import { durablePlanContextEntry } from "./durable-plan.ts";
 import { historyNote } from "@kintsugi/legacy-converter/entries";
 import { contentText, type Message } from "@earendil-works/pi-ai";
 import { AgentDoc, CompactionEntry, InboxDoc, LiveDoc, ResetEntry, ToolResultEntry, UsageDoc, type AgentState, type ConversationView, type InboxState, type LiveState, type ToolDiagnostic, type ToolSlot, type UsageState, type EntryId, type EntryRecord } from "@earendil-works/pi-durable";
@@ -140,6 +141,8 @@ export function projectDurableTranscript(view: ConversationView): TranscriptItem
   // Entries are shown in the order given: an active context (activeConversationView)
   // starts with its head marker, which sorting by ID would move after the entries it keeps.
   for (const entry of view.entries) {
+    // Model context snapshots are not user submissions or turn boundaries.
+    if (durablePlanContextEntry.is(entry)) continue;
     if (codemodeTemplateRunEndEntry.is(entry)) {
       runEndingCalls.add(entry.data.callId);
       continue;

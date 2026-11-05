@@ -15,6 +15,8 @@ import { durableViewState, projectDurableTranscript } from "@kintsugi/builtin-ag
 import { createWorkspaceCodemodeExtension } from "../../src/server/extension.ts";
 // Importing support also makes transcripts show each script's calls as code mode records them.
 import { localScriptFiles } from "./support.ts";
+import { createNativePlanExtension } from "../../../builtin-agent/src/server/durable-plan.ts";
+import { agentPlanStore } from "@kintsugi/agent/server/plan";
 
 const context = BACKGROUND_CONTEXT;
 const paths: string[] = [];
@@ -31,7 +33,7 @@ const templates: PromptTemplate[] = [
   { name: "review", trigger: "/review", description: "A prompt", prompt: "Review this" },
 ];
 
-async function setup() {
+async function setup(withPlan = false) {
   const path = await mkdtemp(join(tmpdir(), "kintsugi-codemode-templates-"));
   paths.push(path);
   const models = createModels();
@@ -60,6 +62,7 @@ async function setup() {
     }),
   ] }));
   let current: DurableAgentRuntime | undefined;
+  if (withPlan) registry.install(createNativePlanExtension("native-workspace", () => current!.harness));
   const codemodeTemplates = createCodemodeTemplates(async () => templates, () => current!.harness);
   registry.install(codemodeTemplates.extension);
   const load = {
@@ -75,7 +78,7 @@ async function setup() {
     current = runtime;
     return runtime;
   };
-  return { faux, echoed, held: () => held.promise, release: () => released.resolve(), open, runtime: await open() };
+  return { path, faux, echoed, held: () => held.promise, release: () => released.resolve(), open, runtime: await open() };
 }
 
 type Agent = Awaited<ReturnType<DurableAgentRuntime["agent"]>>;
@@ -241,4 +244,22 @@ test("a message sent while a template runs gets its own turn, as it gets its own
   const items = await transcript(agent);
   expect(items.map(item => item.type)).toEqual(["user", "working", "user", "working", "text"]);
   expect(items[1]).toMatchObject({ completedAt: expect.any(Number), stoppedAt: undefined });
+});
+
+test("an active canonical plan does not turn an offline template into a provider request", async () => {
+  const { runtime, faux, echoed, path } = await setup(true);
+  const previous = process.env.ATELIER_DATA_DIR;
+  process.env.ATELIER_DATA_DIR = path;
+  try {
+    const agent = await runtime.agent(record);
+    agentPlanStore().change("native-workspace", "tab", { action: "write", markdown: "- [ ] Keep working" });
+    expect((await (await agent.submit({ requestId: "template-with-plan", text: "/echo cached" })).wait(context)).status).toBe("done");
+    expect(echoed).toEqual(["cached"]);
+    expect(faux.state.callCount).toBe(0);
+    const items = await transcript(agent);
+    expect(items.find(item => item.type === "working")).toMatchObject({ completedAt: expect.any(Number), stoppedAt: undefined });
+    expect(JSON.stringify(items)).not.toContain("Current editable plan for this Agent");
+  } finally {
+    if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous;
+  }
 });

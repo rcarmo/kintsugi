@@ -39,7 +39,7 @@ function boundaries(payload: JsonObject) {
   return { all, conversation, markers, cachedPlan };
 }
 
-test("real Anthropic serialization reuses canonical history ahead of the transient plan, with no added breakpoint or inference", async () => {
+test("real Anthropic serialization caches the committed plan boundary and reuses it on the next request", async () => {
   const dir = await mkdtemp(join(tmpdir(), "plan-cache-wire-")), previous = process.env.ATELIER_DATA_DIR;
   process.env.ATELIER_DATA_DIR = dir;
   const model: Model<"anthropic-messages"> = { id: "claude-sonnet-4-20250514", name: "Offline", provider: "fixture", api: "anthropic-messages", baseUrl: "https://never-contact.invalid", reasoning: false, input: ["text"], contextWindow: 200000, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
@@ -64,12 +64,13 @@ test("real Anthropic serialization reuses canonical history ahead of the transie
     for (const text of ["First request", "Second request"]) await (await agent.submit({ type: "input", content: text }, ctx)).wait(ctx);
     expect(captured).toHaveLength(2); expect(networkCalls).toBe(0);
     const first = boundaries(captured[0]!), second = boundaries(captured[1]!);
-    expect(first.cachedPlan).toBe(false);
+    expect(first.cachedPlan).toBe(true);
     expect(first.conversation).toHaveLength(1);
     expect(second.all.has(first.conversation[0]!)).toBe(true);
     expect(first.markers).toBeLessThanOrEqual(3);
     const history = (await agent.entries({}, 100, undefined, ctx)).items;
-    expect(JSON.stringify(history)).not.toContain(planContextPrefix);
+    expect(history.filter(entry => entry.kind === "kintsugi.plan-context")).toHaveLength(1);
+    expect(JSON.stringify(history)).toContain(planContextPrefix);
   } finally {
     await workspace.close();
     if (previous === undefined) delete process.env.ATELIER_DATA_DIR; else process.env.ATELIER_DATA_DIR = previous;

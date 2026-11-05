@@ -40,6 +40,7 @@ Kintsugi adds the following to upstream AgentsInTheCloud:
 - Code mode slash templates, bounded one-shot agents and a unified Background view for delegated work and Claude workflows.
 - CSV/TSV table previews with filtering and source editing.
 - Read-only Work panes for DOCX, Excel/ODS and PPTX files.
+- Token-cache optimisations for Builtin agents across provider APIs: stable shared prompt prefixes, append-only plan context and Codex WebSocket delta reuse, with token-weighted cache-hit reporting. Actual reuse depends on provider support and cache policy.
 - Extended Copilot quota reporting and corrected Copilot/Codex calendar-month pacing, plus OpenCode Go five-hour/weekly usage and monthly-exhaustion availability checks.
 - Opt-in [Graphite token-consumption telemetry](#token-consumption-telemetry) with per-provider/model counts, cache percentages and available cost estimates, using PiClaw-compatible metric paths.
 - Classifier-only provider credentials for code mode and Pi, and microphone release when dictation stops, adapted from Larry Hudson’s fork.
@@ -50,7 +51,7 @@ The name comes from **金継ぎ**, the Japanese art of repairing pottery with go
 
 ## Installation
 
-The current release is [v0.4.17](https://github.com/rcarmo/kintsugi/releases/tag/v0.4.17); see the [release notes](release_notes/v0.4.17.md). Releases publish app, System and workspace images and advance `latest`; `stable` is promoted separately. Publishing does not update or restart an installation.
+The current release is [v0.4.18](https://github.com/rcarmo/kintsugi/releases/tag/v0.4.18); see the [release notes](release_notes/v0.4.18.md). Releases publish app, System and workspace images and advance `latest`; `stable` is promoted separately. Publishing does not update or restart an installation.
 
 Use a dedicated Linux server with Docker. The installer defaults to `ghcr.io/rcarmo/kintsugi` and `ghcr.io/rcarmo/kintsugi-system`; matching images must be available before installation.
 
