@@ -20,8 +20,9 @@ jobs:
   check:
     name: Select / check / test (AMD64)
     runs-on: ubuntu-24.04
-    # Package mirrors can take over 12 minutes before the full runtime suite starts.
-    timeout-minutes: 30
+    # Cold package-mirror downloads can consume 30 minutes before checks finish.
+    # Keep every verification gate, with a separate bounded test step below.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -124,6 +125,7 @@ jobs:
           sudo make install
           test "$(tmux -V)" = 'tmux 3.8'
       - name: Run the full test suite
+        timeout-minutes: 15
         run: |
           bun run generate:workspace-modules
           # Existing installer fixtures require root; helper integration fixtures
