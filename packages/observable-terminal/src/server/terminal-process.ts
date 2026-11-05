@@ -176,7 +176,8 @@ flock 9
 /** A process that never ran, recorded the way the finish script records one that did. */
 const recordNotRun = `touch "$dir/output"
 if [ -f "$dir/keep-text" ]; then : > "$dir.txt"; fi
-printf 'none\\n' > "$dir/exit"
+printf 'none\\n' > "$dir/exit.tmp"
+mv "$dir/exit.tmp" "$dir/exit"
 `;
 
 const startScript = `root=$1 dir=$2 session=$3 digest=$4 cwd=$5 cols=$6 rows=$7 history=$8 deadline=$9

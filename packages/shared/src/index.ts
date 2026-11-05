@@ -229,7 +229,7 @@ export interface WorkspaceSocketConnection {
 }
 
 export interface WorkspaceServerSocketSession {
-  open?(socket: WorkspaceSocketConnection): void;
+  open?(socket: WorkspaceSocketConnection): void | Promise<void>;
   message?(socket: WorkspaceSocketConnection, message: string | Uint8Array): void;
   close?(socket: WorkspaceSocketConnection): void;
 }

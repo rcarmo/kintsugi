@@ -32,6 +32,7 @@ import { createWebApp, type WebApp } from "./app.ts";
 import { parseAssetManifest } from "./asset-manifest.ts";
 import { createCableServer, type CableSocketData } from "./cable.ts";
 import { createCableSseTransport } from "./cable-sse.ts";
+import { openWorkspaceSocket } from "./workspace-socket.ts";
 import { clientEntrypoints, legacyStaticFiles } from "./static-files.ts";
 import { workspaceModules } from "./workspace-modules.generated.ts";
 import { prepareWorkspaceForUse, reprovisionWorkspaces } from "./workspace-preparation.ts";
@@ -338,7 +339,7 @@ const server = Bun.serve<SocketData>({
     perMessageDeflate: true,
     open(ws) {
       if (ws.data.kind === "cable") cableServer.open(ws, ws.data);
-      else ws.data.open?.(ws);
+      else void openWorkspaceSocket(ws.data, ws);
     },
     message(ws, message) {
       if (ws.data.kind === "workspace-module") ws.data.message?.(ws, message);
