@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
-import { createRegistry, defineExtension, defineTool, type AgentChange } from "@earendil-works/pi-durable";
+import { createRegistry, defineExtension, defineTool, configure, type AgentChange } from "@earendil-works/pi-durable";
 import { Type } from "typebox";
 import { KintsugiCoreError, createKintsugiEventBus } from "@kintsugi/core";
 import type { WorkspaceAgentToolOptions } from "@kintsugi/agent/server/tools";
@@ -13,6 +13,7 @@ import { currentNotificationTurn } from "../../src/server/turn-notifications.ts"
 import { openDurableAgentRuntime, type DurableAgentRuntime } from "../../src/server/durable-runtime.ts";
 import { durableEntryContent } from "../../src/server/durable-images.ts";
 import { activeConversationView, projectDurableTranscript } from "../../src/server/durable-transcript.ts";
+import { WorkspaceAgents } from "../../src/server/durable-workspace.ts";
 import { onValues } from "../../src/server/durable-watch.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -1267,3 +1268,92 @@ test("work cut off by repeated crashes ends with an error instead of keeping the
   expect(messages.find(message => message.role === "toolResult")).toMatchObject({ toolName: "probe", isError: true });
   expect(JSON.stringify(messages.at(-1))).toContain("Recovered");
 }, 30_000);
+
+test("individual Stop does not depend on workspace readiness while a tool is already running", async () => {
+  const { runtime, faux, registry, load } = await setup();
+  const started = Promise.withResolvers<void>();
+  let cancelled = false;
+  registry.install(defineExtension({ name: "cancel-without-ready", tools: [defineTool({
+    name: "wait_for_stop", description: "Disposable wait", parameters: Type.Object({}),
+    async execute(_args, _api, invocation) {
+      started.resolve();
+      return new Promise<never>((_resolve, reject) => invocation.abortSignal!.addEventListener("abort", () => { cancelled = true; reject(invocation.abortSignal!.reason); }, { once: true }));
+    },
+  })] }));
+  const call = fauxToolCall("wait_for_stop", {});
+  faux.setResponses([fauxAssistantMessage([call], { stopReason: "toolUse" }), fauxAssistantMessage("Continued after cancellation")]);
+  const agent = await runtime.agent(record);
+  const submission = await agent.submit({ requestId: "no-ready-stop", text: "Run the disposable wait" });
+  await started.promise;
+  load.ready = async () => { throw new Error("Workspace readiness must not gate cancellation"); };
+  expect(await agent.abortTool(call.id)).toBe(true);
+  expect(cancelled).toBe(true);
+  expect((await submission.wait(context)).status).toBe("done");
+});
+
+test("individual Stop bypasses an admission queued on a stalled readiness check", async () => {
+  const { runtime, faux, registry, load } = await setup();
+  const started = Promise.withResolvers<void>(), checking = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  let cancelled = false;
+  registry.install(defineExtension({ name: "cancel-during-admission", tools: [defineTool({
+    name: "wait_for_stop", description: "Disposable wait", parameters: Type.Object({}),
+    async execute(_args, _api, invocation) {
+      started.resolve();
+      return new Promise<never>((_resolve, reject) => invocation.abortSignal!.addEventListener("abort", () => { cancelled = true; reject(invocation.abortSignal!.reason); }, { once: true }));
+    },
+  })] }));
+  const call = fauxToolCall("wait_for_stop", {});
+  faux.setResponses([fauxAssistantMessage([call], { stopReason: "toolUse" }), fauxAssistantMessage("Current turn continued")]);
+  const agent = await runtime.agent(record);
+  const original = await agent.submit({ requestId: "current", text: "Run the disposable wait" });
+  await started.promise;
+  load.ready = async () => { checking.resolve(); await release.promise; throw new Error("Readiness request failed"); };
+  const queued = agent.submit({ requestId: "blocked", text: "Not admitted" }); queued.catch(() => {});
+  await checking.promise;
+  const stopping = agent.abortTool(call.id); stopping.catch(() => {});
+  try {
+    const result = await Promise.race([stopping, Bun.sleep(1000).then(() => "blocked")]);
+    expect(result).toBe(true);
+    expect(cancelled).toBe(true);
+    expect((await original.wait(context)).status).toBe("done");
+  } finally { release.resolve(); await Promise.allSettled([queued, stopping]); }
+});
+
+test("individual Stop can cancel a one-shot's active tool without making its conversation editable", async () => {
+  const { runtime, faux, registry } = await setup();
+  const started = Promise.withResolvers<void>();
+  const childRecord = { agentId: "one-shot-child", parentId: "tab", rootId: "tab", oneShotCallId: "fixture-one-shot", readOnly: true, label: "Child", title: "Child" };
+  let cancelled = false;
+  const childCall = fauxToolCall("child_wait", {});
+  const childWait = defineTool({ name: "child_wait", description: "Disposable child wait", parameters: Type.Object({}),
+    async execute(_args, _api, invocation) {
+      started.resolve();
+      return new Promise<never>((_resolve, reject) => invocation.abortSignal!.addEventListener("abort", () => { cancelled = true; reject(invocation.abortSignal!.reason); }, { once: true }));
+    },
+  });
+  registry.install(defineExtension({ name: "one-shot-cancel-fixture", tools: [childWait, defineTool({ name: "own_child", description: "Own the disposable child", parameters: Type.Object({}),
+    async execute(_args, api, ctx) {
+      const id = await api.commit(async tx => {
+        const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
+        await configure(tx, created.id, { model: { provider: "faux", modelId: "small" }, tools: [childWait] });
+        (await tx.doc(WorkspaceAgents)).agents.push({ ...childRecord, durableId: created.id });
+        return created.id;
+      }, ctx);
+      const child = (await api.conversation(id, ctx))!;
+      await (await child.submit({ type: "input", content: "Wait", requestId: "child-input" }, ctx)).wait(ctx);
+      return { output: [{ type: "text" as const, text: "Child finished" }] };
+    },
+  })] }));
+  faux.setResponses([fauxAssistantMessage([fauxToolCall("own_child", {})], { stopReason: "toolUse" }), fauxAssistantMessage([childCall], { stopReason: "toolUse" }), fauxAssistantMessage("Child continued"), fauxAssistantMessage("Parent continued")]);
+  const root = await runtime.agent(record);
+  const input = await root.submit({ requestId: "owned-child", text: "Start the fixture" });
+  await started.promise;
+  const child = await runtime.agent(childRecord);
+  expect(child.readOnly).toBe(true);
+  expect(await root.abortTool(childCall.id)).toBe(false);
+  expect(await child.abortTool(childCall.id)).toBe(true);
+  expect(cancelled).toBe(true);
+  expect((await input.wait(context)).status).toBe("done");
+  await expect(child.submit({ requestId: "forbidden-edit", text: "Not editable" })).rejects.toThrow("read-only");
+  expect(faux.state.callCount).toBe(4);
+});

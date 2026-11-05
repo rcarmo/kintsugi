@@ -442,26 +442,29 @@ export async function openDurableAgentRuntime(
         });
       },
       /** Cancel one live tool and its owned work, without withdrawing the turn or queued input. */
-      abortTool(callId: string, note?: string) {
-        return command(async () => {
-          const live = await harness.snapshot(LiveDoc, conversation.id, context);
-          const slot = live?.tools?.find(tool => tool.callId === callId);
-          if (!slot?.taskId || slot.status === "done") return false;
-          await readyForExecution();
+      async abortTool(callId: string, note?: string) {
+        // Cancellation must not queue behind admission or depend on Docker/image
+        // readiness. The native abort mark owns cleanup and survives recovery.
+        assertOpen();
+        assertAdmission();
+        if (identity.readOnly && !identity.oneShotCallId) throw new KintsugiCoreError("invalid_arguments", "This conversation is read-only. Start a new Agent to continue.");
+        const selected = conversation.id;
+        const taskId = await harness.commit(async tx => {
+          assertAdmission();
+          const slot = (await tx.doc(LiveDoc, selected)).tools?.find(tool => tool.callId === callId);
+          if (!slot?.taskId || slot.status === "done") return;
+          const task = await tx.task(slot.taskId);
+          if (!task || task.conversationId !== selected || task.state.status === "terminal") return;
           const message = note?.trim();
           if (message) {
-            await harness.commit(async tx => {
-              const current = (await tx.doc(LiveDoc, conversation.id)).tools?.find(tool => tool.callId === callId);
-              // Upstream rebuilds an aborted tool's result from the slot, keeping its diagnostics.
-              if (current && current.status !== "done") {
-                current.diagnostics ??= [];
-                current.diagnostics.push({ severity: "error", code: "cancelled_by_user", message: `The user manually cancelled this tool with the following note:\n${message}` });
-              }
-            }, context);
+            slot.diagnostics ??= [];
+            slot.diagnostics.push({ severity: "error", code: "cancelled_by_user", message: `The user manually cancelled this tool with the following note:\n${message}` });
           }
-          await harness.abortTask(slot.taskId, context);
-          return true;
-        });
+          return slot.taskId;
+        }, context);
+        if (taskId === undefined) return false;
+        await harness.abortTask(taskId, context);
+        return true;
       },
       /** Explicit Stop withdraws queued input and cancels owned work. */
       stop() {

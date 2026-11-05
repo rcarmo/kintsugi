@@ -6,7 +6,7 @@ import { shellQuote } from "@kintsugi/core";
 import { terminalProcessSession, type TerminalProcesses } from "@kintsugi/observable-terminal/server";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
-import { createRegistry } from "@earendil-works/pi-durable";
+import { createRegistry, LiveDoc } from "@earendil-works/pi-durable";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { createDurableBashExtension } from "../../src/server/durable-bash.ts";
@@ -221,3 +221,27 @@ test("stopping while the command is starting stops it without an unhandled rejec
   const submission = await h.conversation.submit({ type: "input", content: "Run", requestId: "one" }, context);
   expect((await submission.wait(context)).status).toBe("unanswered");
 }, 20_000);
+
+test.each([false, true])("cancelling only a real long-running bash tool kills its owned command (ignores TERM: %p)", async ignoresTerm => {
+  const f = await fixture(), released = Promise.withResolvers<void>();
+  const tracked = observed({ ...f.processes, async release(id) { await f.processes.release(id); released.resolve(); } });
+  const pidFile = join(f.path, "command.pid");
+  const command = `${ignoresTerm ? "trap '' TERM; " : ""}echo $$ > ${shellQuote(pidFile)}; echo running; while :; do sleep 0.1; done`;
+  const h = await harness(f.path, tracked.processes, command, 60);
+  const submission = await h.conversation.submit({ type: "input", content: "Disposable cancellation fixture", requestId: "stop-one-bash" }, context);
+  const id = await tracked.started;
+  while (!await Bun.file(pidFile).exists()) await Bun.sleep(10);
+  const pid = Number(await readFile(pidFile, "utf8"));
+  const live = await h.workspace.harness.snapshot(LiveDoc, h.conversation.id, context);
+  const slot = live?.tools?.find(tool => tool.name === "bash");
+  expect(slot?.taskId).toBeDefined();
+  await h.workspace.harness.abortTask(slot!.taskId!, context);
+  expect((await submission.wait(context)).status).toBe("done");
+  await released.promise;
+  expect(await f.processes.state(id)).toEqual({ state: "missing" });
+  try { expect(await readFile(`/proc/${pid}/status`, "utf8")).toMatch(/^State:\s+Z/m); }
+  catch (error) { if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error; }
+  const result = (await toolResults(h.workspace))[0]!;
+  expect(result.isError).toBe(true);
+  expect(JSON.stringify(result.content)).toContain("was aborted");
+}, 10000);
