@@ -20,6 +20,9 @@ const cableIdentifierSchema = Type.Union([
   Type.Object({ channel: Type.Literal("agent-turn"), workspaceId: Type.String({ minLength: 1 }), agentId: Type.String({ minLength: 1 }), turnId: Type.String({ minLength: 1 }), branchId: Type.String({ minLength: 1 }) }),
 ]);
 
+export const cableCommandBodyLimit = 64 * 1024;
+export const cableCommandBatchLimit = 256;
+
 const subscriptionIdSchema = Type.String({ minLength: 1 });
 
 const workspaceVisibilitySchema = Type.Object({ workspaceId: Type.Optional(Type.String({ minLength: 1 })), surfaceKeys: Type.Array(Type.String({ minLength: 1 })) });
@@ -31,6 +34,8 @@ const cableClientMessageSchema = Type.Union([
   Type.Object({ command: Type.Literal("unsubscribe"), identifier: cableIdentifierSchema, subscriptionId: subscriptionIdSchema }),
   Type.Object({ command: Type.Literal("pong"), time: Type.Optional(Type.Number()) }),
 ]);
+
+const cableClientBatchSchema = Type.Array(cableClientMessageSchema, { minItems: 1, maxItems: cableCommandBatchLimit });
 
 const cableServerMessageSchema = Type.Union([
   Type.Object({ type: Type.Literal("welcome"), connectionId: Type.String() }),
@@ -62,6 +67,42 @@ export function decodeCableClientMessage(text: string): CableClientMessage {
   } catch {
     throw new Error("unsupported cable message");
   }
+}
+
+/** Validate the whole batch before any command can change connection state. */
+export function decodeCableClientMessages(text: string): CableClientMessage[] {
+  const encoded = parseJson(text, "cable message must be valid JSON");
+  const schema = Array.isArray(encoded) ? cableClientBatchSchema : cableClientMessageSchema;
+  try {
+    const decoded = Value.Parse(schema, Value.Clean(schema, encoded));
+    return Array.isArray(decoded) ? decoded : [decoded];
+  } catch {
+    throw new Error("unsupported cable message");
+  }
+}
+
+/** Ordered command bodies, bounded by the same byte and count limits as the server. */
+export function encodeCableClientMessages(messages: readonly CableClientMessage[]): string[] {
+  const bodies: string[] = [];
+  const encoder = new TextEncoder();
+  let batch: string[] = [];
+  let bytes = 2; // JSON array brackets.
+  const flush = (): void => {
+    if (!batch.length) return;
+    bodies.push(batch.length === 1 ? batch[0]! : `[${batch.join(",")}]`);
+    batch = [];
+    bytes = 2;
+  };
+  for (const message of messages) {
+    const encoded = JSON.stringify(message);
+    const size = encoder.encode(encoded).byteLength;
+    if (size > cableCommandBodyLimit) throw new Error("Live command exceeds the request size limit");
+    if (batch.length === cableCommandBatchLimit || (batch.length > 0 && bytes + 1 + size > cableCommandBodyLimit)) flush();
+    bytes += size + (batch.length ? 1 : 0);
+    batch.push(encoded);
+  }
+  flush();
+  return bodies;
 }
 
 export function decodeCableServerMessage(text: string): CableServerMessage {

@@ -1,6 +1,6 @@
 import { KintsugiCoreError, type KintsugiEventBus } from "@kintsugi/core";
 import {
-  decodeCableClientMessage,
+  decodeCableClientMessages,
   errorMessage,
   serializeCableIdentifier,
   type CableChannelAdapter,
@@ -173,10 +173,14 @@ export function createCableServer(options: CableServerOptions): CableServer {
   function handleInboundCommand(ws: CableSocket, raw: string | Buffer): void {
     if (!connections.has(ws)) return;
     try {
-      const message: CableClientMessage = decodeCableClientMessage(textMessage(raw));
-      if (message.command === "visibility") options.registry.setVisibility(connections.get(ws)!.id, message.visibility);
-      else if (message.command === "subscribe") subscribe(ws, message.identifier, message.subscriptionId, message.shown);
-      else if (message.command === "unsubscribe") unsubscribe(ws, message.identifier, message.subscriptionId);
+      const messages: CableClientMessage[] = decodeCableClientMessages(textMessage(raw));
+      for (const message of messages) {
+        const connection = connections.get(ws);
+        if (!connection) return;
+        if (message.command === "visibility") options.registry.setVisibility(connection.id, message.visibility);
+        else if (message.command === "subscribe") subscribe(ws, message.identifier, message.subscriptionId, message.shown);
+        else if (message.command === "unsubscribe") unsubscribe(ws, message.identifier, message.subscriptionId);
+      }
     } catch (error) {
       if (!connections.has(ws)) return;
       const reason = errorMessage(error);

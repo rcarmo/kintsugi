@@ -9,6 +9,7 @@ import { Icons } from "@kintsugi/design-system/icons";
 import { popupHtml } from "@kintsugi/design-system/popup";
 import { toggleHtml } from "@kintsugi/design-system/toggle";
 import { domId, escapeHtml, formatBytes, workspaceFileOpenUrl, workspaceProxyUrl, type WorkspaceWorkViewPresentation } from "@kintsugi/shared";
+import { workspaceImageUrl } from "@kintsugi/shared/file-metadata";
 import { workspaceRoot } from "@kintsugi/workspace";
 import { posix } from "node:path";
 import type { FileEntry } from "./files.ts";
@@ -84,7 +85,7 @@ function directoryToggleUrl(workspaceId: string, viewId: string, path: string, e
 function selectedFileActions(workspaceId: string, view: FilesView, readOnly = false): string {
   const path = view.path!;
   const name = posix.basename(path);
-  const contentUrl = workspaceProxyUrl(workspaceId, "file", path);
+  const contentUrl = isImageFile(path) ? workspaceImageUrl(workspaceId, path) : workspaceProxyUrl(workspaceId, "file", path);
   const copyButton = copyButtonHtml({
     label: "Copy file contents",
     copyText: "",
@@ -259,7 +260,7 @@ export function renderFilesEditorFrame(workspaceId: string, view: FilesView, pre
   if (!view.path) return `<turbo-frame id="${frameId}" class="files-editor-frame"><section class="file-editor-pane files-editor-empty"><header class="file-editor-toolbar work-view-toolbar">${editorToolbarLeading(workspaceId, view)}${filesNavigatorToggle("expand")}</header><p>Select a file to view or edit. Drop files into the Files navigator to upload, or create them in Terminal and choose Refresh.</p></section></turbo-frame>`;
   if (previewKind !== "text") {
     const name = posix.basename(view.path);
-    const mediaUrl = escapeHtml(workspaceProxyUrl(workspaceId, "file", view.path));
+    const mediaUrl = escapeHtml(previewKind === "image" ? workspaceImageUrl(workspaceId, view.path) : workspaceProxyUrl(workspaceId, "file", view.path));
     const fullscreen = previewKind === "image" || previewKind === "video";
     const preview = previewError
       ? `<p class="empty-state">${escapeHtml(previewError)}</p>`

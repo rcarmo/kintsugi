@@ -1,5 +1,6 @@
 import { posix } from "node:path";
-import { parseFileReference, workspaceFileOpenUrl, workspaceProxyUrl, type WorkspaceFileTarget } from "@kintsugi/shared";
+import { parseFileReference, workspaceFileOpenUrl, type WorkspaceFileTarget } from "@kintsugi/shared";
+import { workspaceImageUrl } from "@kintsugi/shared/file-metadata";
 
 const workspaceRoot = "/work";
 
@@ -56,5 +57,5 @@ export function inlineCodeFileReference(code: string, sourcePath?: string): Omit
 
 export function workspaceFileImageSrc(workspaceId: string, rawSrc: string, sourcePath?: string): string | undefined {
   const target = workspaceFileTarget(rawSrc, sourcePath);
-  return target ? workspaceProxyUrl(workspaceId, "file", target.path) + target.suffix : undefined;
+  return target ? workspaceImageUrl(workspaceId, target.path) + target.suffix : undefined;
 }

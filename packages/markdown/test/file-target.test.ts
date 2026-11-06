@@ -35,18 +35,18 @@ test("does not treat external URLs, anchors, or invalid paths as local files", (
   }
 });
 
-test("resolves workspace image files to proxy URLs independent of image format", () => {
+test("resolves workspace image files to same-origin image URLs independent of image format", () => {
   for (const extension of ["png", "jpg", "gif", "webp", "svg", "avif", "bmp"]) {
     for (const source of [`/work/image.${extension}`, `image.${extension}`, `file:///work/image.${extension}`, `kintsugi://file/work/image.${extension}`]) {
-      expect(workspaceFileImageSrc("work 1", source)).toBe(`/workspaces/work%201/files/work/image.${extension}`);
+      expect(workspaceFileImageSrc("work 1", source)).toBe(`/workspaces/work%201/images/work/image.${extension}`);
     }
   }
-  expect(workspaceFileImageSrc("workspace", "../image.svg", "/work/docs/README.md")).toBe("/workspaces/workspace/files/work/image.svg");
+  expect(workspaceFileImageSrc("workspace", "../image.svg", "/work/docs/README.md")).toBe("/workspaces/workspace/images/work/image.svg");
 });
 
-test("image proxy paths encode filenames and preserve query strings and SVG fragments", () => {
+test("image paths encode filenames and preserve query strings and SVG fragments", () => {
   for (const source of ["/work/a%20b%23c.svg?v=2#diagram", "file:///work/a%20b%23c.svg?v=2#diagram", "kintsugi://file/work/a%20b%23c.svg?v=2#diagram"]) {
-    expect(workspaceFileImageSrc("workspace", source)).toBe("/workspaces/workspace/files/work/a%20b%23c.svg?v=2#diagram");
+    expect(workspaceFileImageSrc("workspace", source)).toBe("/workspaces/workspace/images/work/a%20b%23c.svg?v=2#diagram");
   }
 });
 

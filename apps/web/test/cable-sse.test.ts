@@ -16,7 +16,7 @@ function fixture(channels: CableChannelAdapter[] = []) {
     },
   });
   const url = `http://127.0.0.1:${server.port}`;
-  const command = (id: string, message: CableClientMessage | { padding: string }) => fetch(`${url}/cable/${id}`, {
+  const command = (id: string, message: CableClientMessage | CableClientMessage[] | { padding: string }) => fetch(`${url}/cable/${id}`, {
     method: "POST", headers: { origin: url, "content-type": "application/json" }, body: JSON.stringify(message),
   });
   return { cable, handle, server, url, command };
@@ -182,5 +182,45 @@ test("slow SSE consumers are closed instead of accumulating event history", asyn
     expect(released).toBe(1);
     expect((await next()).type).toBe("turbo_stream");
     expect((await reader.read()).done).toBe(true);
+  } finally { f.server.stop(true); }
+});
+
+test("one HTTP batch restores ordered subscriptions, with fresh snapshots after reconnect", async () => {
+  const received: Array<{ channel: string; shown: unknown }> = [];
+  let released = 0;
+  let revision = 1;
+  const channels = ["shell", "agent"].map<CableChannelAdapter>(name => ({ name, subscribe(_identifier, listener, _events, shown) {
+    received.push({ channel: name, shown });
+    listener(`${name}-${revision}`);
+    return { unsubscribe() { released++; } };
+  } }));
+  const f = fixture(channels);
+  const batch: CableClientMessage[] = [
+    { command: "visibility", visibility: { surfaceKeys: [] } },
+    { command: "subscribe", identifier: CableTopics.shell(), subscriptionId: "shell", shown: { sidebar: "digest" } },
+    { command: "subscribe", identifier: CableTopics.agent("workspace", "conversation"), subscriptionId: "agent" },
+  ];
+  try {
+    const first = await open(f);
+    expect((await f.command(first.id, batch)).status).toBe(204);
+    expect(await first.next()).toMatchObject({ type: "confirm_subscription", subscriptionId: "shell", html: "shell-1" });
+    expect(await first.next()).toMatchObject({ type: "confirm_subscription", subscriptionId: "agent", html: "agent-1" });
+    expect(received).toEqual([{ channel: "shell", shown: { sidebar: "digest" } }, { channel: "agent", shown: undefined }]);
+    first.abort.abort();
+    await waitClosed(f);
+    expect(released).toBe(2);
+    revision++;
+    const second = await open(f);
+    expect((await f.command(first.id, batch)).status).toBe(410);
+    expect((await fetch(`${f.url}/cable/${second.id}`, {
+      method: "POST", headers: { origin: "https://untrusted.example", "content-type": "application/json" }, body: JSON.stringify(batch),
+    })).status).toBe(403);
+    expect(received).toHaveLength(2);
+    expect((await f.command(second.id, batch)).status).toBe(204);
+    expect(await second.next()).toMatchObject({ type: "confirm_subscription", subscriptionId: "shell", html: "shell-2" });
+    expect(await second.next()).toMatchObject({ type: "confirm_subscription", subscriptionId: "agent", html: "agent-2" });
+    second.abort.abort();
+    await waitClosed(f);
+    expect(released).toBe(4);
   } finally { f.server.stop(true); }
 });

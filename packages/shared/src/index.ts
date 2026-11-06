@@ -501,6 +501,10 @@ export interface WorkspaceClientModule {
 export {
   CableTopics,
   decodeCableClientMessage,
+  decodeCableClientMessages,
+  encodeCableClientMessages,
+  cableCommandBodyLimit,
+  cableCommandBatchLimit,
   decodeCableServerMessage,
   serializeCableIdentifier,
   type KintsugiCableClient, type CableClientMessage,

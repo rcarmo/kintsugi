@@ -1,3 +1,4 @@
+import { cableCommandBodyLimit } from "@kintsugi/shared";
 import type { CableServer, CableSocket } from "./cable.ts";
 
 const capacity = 1024 * 1024;
@@ -25,7 +26,7 @@ export function createCableSseTransport(cable: CableServer) {
             const { value, done } = await reader.read();
             if (done) break;
             length += value.byteLength;
-            if (length > 64 * 1024) {
+            if (length > cableCommandBodyLimit) {
               await reader.cancel();
               return new Response("Live command too large", { status: 413 });
             }

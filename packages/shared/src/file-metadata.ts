@@ -16,3 +16,10 @@ export const imageMimeByExtension: ImageMimeTypeRegistry = {
 export function extensionOf(path: string): string {
   return (path.split(".").pop() ?? "").toLowerCase();
 }
+
+/** Passive image responses stay on the management connection; arbitrary files do not. */
+export function workspaceImageUrl(workspaceId: string, path: string): string {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const encodedPath = normalizedPath.split("/").map(part => encodeURIComponent(part)).join("/");
+  return `/workspaces/${encodeURIComponent(workspaceId)}/images${encodedPath}`;
+}

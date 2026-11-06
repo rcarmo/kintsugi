@@ -1,6 +1,6 @@
 import { posix } from "node:path";
 import { shellQuote } from "@kintsugi/core";
-import { workspaceContainerName } from "@kintsugi/workspace";
+import { resolveWorkspace, workspaceContainerName } from "@kintsugi/workspace";
 import { extensionOf, imageMimeByExtension } from "@kintsugi/shared/file-metadata";
 
 interface WorkspaceFileMimeRegistry {
@@ -35,6 +35,28 @@ function parseRange(header: string | null, size: number): { start: number; end: 
   const end = match[2] === "" ? size - 1 : Math.min(Number(match[2]), size - 1);
   if (!Number.isFinite(start) || start > end) return undefined;
   return { start, end };
+}
+
+/** Image-only management route: no preview port, scripts, or active-document privileges. */
+export async function handleWorkspaceImageRequest(request: Request, url: URL): Promise<Response | undefined> {
+  const match = url.pathname.match(/^\/workspaces\/([^/]+)\/images(\/.*)$/);
+  if (!match) return;
+  if (request.method !== "GET" && request.method !== "HEAD") return new Response("Method not allowed", { status: 405, headers: { allow: "GET, HEAD" } });
+  let workspaceId: string;
+  let path: string;
+  try {
+    workspaceId = decodeURIComponent(match[1]!);
+    path = decodeURIComponent(match[2]!);
+  } catch {
+    return new Response("bad path", { status: 400 });
+  }
+  if (path.includes("..") || path.includes("\0")) return new Response("bad path", { status: 400 });
+  if (!Object.hasOwn(imageMimeByExtension, extensionOf(path))) return new Response("Only image files are supported", { status: 415 });
+  await resolveWorkspace(workspaceId);
+  const response = await workspaceFileEndpoint(workspaceId, path, request);
+  response.headers.set("cache-control", "no-store");
+  response.headers.set("cross-origin-resource-policy", "same-origin");
+  return response;
 }
 
 export async function workspaceFileEndpoint(workspaceId: string, path: string, request: Request): Promise<Response> {

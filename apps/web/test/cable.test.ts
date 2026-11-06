@@ -131,3 +131,62 @@ test("a subscription hands the regions its page shows to the channel", async () 
   expect(received).toEqual([{ transcript: "digest" }, undefined]);
   cable.close(ws);
 });
+
+test("ordered batches preserve replacement and late-initialization cancellation", async () => {
+  const gate = Promise.withResolvers<void>();
+  let calls = 0;
+  let releases = 0;
+  const cable = server([{ name: "agent", async subscribe(_identifier, listener) {
+    if (++calls === 1) await gate.promise;
+    listener("current");
+    return { unsubscribe() { releases++; } };
+  } }]);
+  const ws = socket();
+  cable.open(ws, { kind: "cable", connectionId: "connection" });
+  cable.message(ws, JSON.stringify([
+    { command: "visibility", visibility: { surfaceKeys: [] } },
+    { command: "subscribe", identifier, subscriptionId: "old" },
+    { command: "subscribe", identifier, subscriptionId: "new" },
+    { command: "unsubscribe", identifier, subscriptionId: "old" },
+  ]));
+  await Bun.sleep(0);
+  gate.resolve();
+  await Bun.sleep(0);
+  expect(ws.sent.filter(message => message.type === "confirm_subscription").map(message => message.subscriptionId)).toEqual(["new"]);
+  expect(releases).toBe(1);
+  cable.close(ws);
+  expect(releases).toBe(2);
+});
+
+test("an invalid batch applies no commands before reporting the protocol error", () => {
+  let subscriptions = 0;
+  const cable = server([{ name: "agent", subscribe() { subscriptions++; return { unsubscribe() {} }; } }]);
+  const ws = socket();
+  cable.open(ws, { kind: "cable", connectionId: "connection" });
+  cable.message(ws, JSON.stringify([
+    { command: "subscribe", identifier, subscriptionId: "must-not-start" },
+    { command: "invalid" },
+  ]));
+  expect(subscriptions).toBe(0);
+  expect(cable.stats().subscriptions).toEqual({});
+  expect(ws.sent.map(message => message.type)).toEqual(["welcome", "error"]);
+  cable.close(ws);
+});
+
+test("a batch stops dispatching when snapshot backpressure closes its connection", () => {
+  let subscriptions = 0;
+  const cable = server([{ name: "agent", subscribe(_identifier, listener) {
+    subscriptions++;
+    listener("snapshot");
+    return { unsubscribe() {} };
+  } }]);
+  const ws = { send: () => 1, getBufferedAmount: () => 0, close() { cable.close(ws); } };
+  cable.open(ws, { kind: "cable", connectionId: "connection" });
+  ws.getBufferedAmount = () => 2 * 1024 * 1024;
+  cable.message(ws, JSON.stringify([
+    { command: "subscribe", identifier, subscriptionId: "first" },
+    { command: "subscribe", identifier, subscriptionId: "must-not-start" },
+  ]));
+  expect(subscriptions).toBe(1);
+  expect(cable.stats().sockets).toBe(0);
+});

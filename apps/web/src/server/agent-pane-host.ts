@@ -1,7 +1,7 @@
 import { KintsugiCoreError, kintsugiDataPath, createKeyedOperationQueue, getKintsugiRuntimeContext, readTextIfExists, writeJsonAtomic } from "@kintsugi/core";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import type { WorkspaceAgentType, WorkspaceAgentTabSummary } from "@kintsugi/shared";
+import { placeLiveRegions, type WorkspaceAgentType, type WorkspaceAgentTabSummary } from "@kintsugi/shared";
 
 const tabOrderSchema = Type.Array(Type.String());
 
@@ -46,7 +46,12 @@ export function createAgentPaneHost(agentTypes: readonly WorkspaceAgentType[]) {
   return {
     list,
     async render(context: { workspaceId: string; agentId: string }) {
-      return (await owner(context)).tabs.render(context);
+      const pane = await (await owner(context)).tabs.render(context);
+      if (!pane.live) return pane;
+      // Mount the committed state with its shell: controls must not stay empty
+      // while the Agent's live subscription connects. Digests let that subscription
+      // skip unchanged regions without dropping the first paint.
+      return { ...pane, html: placeLiveRegions(pane.html, pane.live.regions(), pane.live.subscriberId) };
     },
     async close(context: { workspaceId: string; agentId: string }) {
       return (await owner(context)).tabs.close(context);

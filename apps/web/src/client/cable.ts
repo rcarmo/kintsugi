@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 
-import { decodeCableServerMessage, liveRegionDigestsSchema, liveShownAttribute, serializeCableIdentifier, type KintsugiCableClient, type CableClientMessage, type CableIdentifier, type CableSubscription, type CableSubscriptionOptions, type WorkspaceVisibilityReport } from "@kintsugi/shared";
+import { decodeCableServerMessage, encodeCableClientMessages, liveRegionDigestsSchema, liveShownAttribute, serializeCableIdentifier, type KintsugiCableClient, type CableClientMessage, type CableIdentifier, type CableSubscription, type CableSubscriptionOptions, type WorkspaceVisibilityReport } from "@kintsugi/shared";
 import { Value } from "typebox/value";
 
 declare global {
@@ -26,6 +26,7 @@ type DesiredSubscription = {
 type LiveConnection = {
   controller: AbortController;
   commands: Promise<void>;
+  pendingCommands: CableClientMessage[];
   connectionId?: string;
   openingTimer?: ReturnType<typeof setTimeout>;
 };
@@ -51,18 +52,28 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
   function sendRaw(message: CableClientMessage): void {
     const source = connection;
     if (!source?.connectionId) return;
-    source.commands = source.commands.then(async () => {
-      if (connection !== source) return;
-      const response = await fetch(`/cable/${source.connectionId}`, {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify(message), signal: source.controller.signal,
-        credentials: "same-origin", cache: "no-store", redirect: "error",
+    source.pendingCommands.push(message);
+    if (source.pendingCommands.length > 1) return;
+    // Visibility and all initial subscriptions share a turn. Flush them together
+    // rather than paying a network round trip for every mounted view.
+    queueMicrotask(() => {
+      const messages = source.pendingCommands.splice(0);
+      source.commands = source.commands.then(async () => {
+        if (connection !== source) return;
+        for (const body of encodeCableClientMessages(messages)) {
+          if (connection !== source) return;
+          const response = await fetch(`/cable/${source.connectionId}`, {
+            method: "POST", headers: { "content-type": "application/json" },
+            body, signal: source.controller.signal,
+            credentials: "same-origin", cache: "no-store", redirect: "error",
+          });
+          if (!response.ok) throw new Error(`Live command failed: ${response.status}`);
+        }
+      }).catch(error => {
+        if (connection !== source) return;
+        console.error("Live command could not be delivered", error);
+        disconnect(source);
       });
-      if (!response.ok) throw new Error(`Live command failed: ${response.status}`);
-    }).catch(error => {
-      if (connection !== source) return;
-      console.error("Live command could not be delivered", error);
-      disconnect(source);
     });
   }
 
@@ -210,7 +221,7 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
   function connect(): void {
     if (connection || closingForPageHide || document.hidden || desired.size === 0) return;
     lastMessageAt = Date.now();
-    const source: LiveConnection = { controller: new AbortController(), commands: Promise.resolve() };
+    const source: LiveConnection = { controller: new AbortController(), commands: Promise.resolve(), pendingCommands: [] };
     connection = source;
     source.openingTimer = setTimeout(() => disconnect(source), 15_000);
     void receive(source);

@@ -4,6 +4,8 @@
 
 Kintsugi is a single-user application intended to run inside a trusted network, such as a Tailnet. Workspace-app links are not secrets and do not have independent authentication: anyone who can reach one through the deployment network boundary can use it. Operators are responsible for ensuring that Kintsugi and its managed app-origin range are not unintentionally public.
 
+Inline images use the image-only `/workspaces/:id/images/...` endpoint on the management connection. It accepts known image types, sends `nosniff` and `Cross-Origin-Resource-Policy: same-origin`, and sandboxes SVG responses with scripts and external resource loading disabled. These passive previews do not allocate a public preview port. HTML, interactive artifacts and workspace apps still require isolated origins.
+
 Kintsugi uses one networking model for workspace app ports:
 
 ```text

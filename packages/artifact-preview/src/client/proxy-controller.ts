@@ -1,4 +1,5 @@
 import { workspaceProxyUrl, type WorkspaceClientControllerConstructor as StimulusControllerConstructor } from "@kintsugi/shared";
+import { workspaceImageUrl } from "@kintsugi/shared/file-metadata";
 
 export function createArtifactPreviewProxyController(Controller: StimulusControllerConstructor) {
   return class ArtifactPreviewProxyController extends Controller {
@@ -28,7 +29,9 @@ export function createArtifactPreviewProxyController(Controller: StimulusControl
     };
 
     private updateUrl(): void {
-      const url = workspaceProxyUrl(this.workspaceIdValue, this.appKeyValue, this.pathValue || "/");
+      const url = this.element instanceof HTMLImageElement && this.appKeyValue === "file"
+        ? workspaceImageUrl(this.workspaceIdValue, this.pathValue)
+        : workspaceProxyUrl(this.workspaceIdValue, this.appKeyValue, this.pathValue || "/");
       const attribute = this.element instanceof HTMLAnchorElement ? "href" : "src";
       // These URLs belong to the browser; server-owned values still morph and
       // update them when the embed's destination changes.
