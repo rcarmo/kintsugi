@@ -39,6 +39,13 @@ export function hostRequest<Command extends HostCommand>(request: Command, socke
   });
 }
 
+const terminalReplySchema = Type.Union([
+  Type.Object({ type: Type.Literal("output"), data: Type.String() }),
+  Type.Object({ type: Type.Literal("error"), message: Type.String() }),
+  Type.Object({ type: Type.Literal("exit") }),
+  Type.Object({ type: Type.Literal("result"), value: Type.Unknown() }),
+]);
+
 export const hostTerminalSocket: WorkspaceServerSocketHandler = (url) => {
   const match = url.pathname.match(/^\/host\/terminals\/(host-[a-f0-9-]{36})\/ws$/);
   if (!match) return;
@@ -49,17 +56,32 @@ export const hostTerminalSocket: WorkspaceServerSocketHandler = (url) => {
       clientOpen = true;
       upstream = createConnection(hostSocketPath);
       const lines = createInterface({ input: upstream });
+      const close = (code?: number, reason?: string) => {
+        if (!clientOpen) return;
+        clientOpen = false;
+        client.close(code, reason);
+        upstream?.destroy();
+      };
       // Queue the handshake before the browser can send its initial resize.
       upstream.write(`${JSON.stringify({ operation: "attach", id: match[1], cols: terminalSize(url.searchParams.get("cols"), 80), rows: terminalSize(url.searchParams.get("rows"), 24) })}\n`);
       lines.on("line", line => {
         if (!clientOpen) return;
-        const reply: HostReply = JSON.parse(line);
+        let reply: unknown;
+        try {
+          reply = JSON.parse(line);
+          if (!Value.Check(terminalReplySchema, reply)) throw new Error("Invalid host terminal response shape");
+        } catch (error) {
+          // Do not log terminal payloads: they may contain private shell output.
+          console.error("Invalid host terminal response", error instanceof Error ? error.name : "UnknownError");
+          close(1011, "Host terminal protocol error");
+          return;
+        }
         if (reply.type === "output") client.send(Buffer.from(reply.data, "base64"));
-        if (reply.type === "error") { client.send(`\r\n${reply.message}\r\n`); client.close(); }
-        if (reply.type === "exit") client.close();
+        if (reply.type === "error") { client.send(`\r\n${reply.message}\r\n`); close(); }
+        if (reply.type === "exit") close();
       });
-      upstream.on("error", error => { console.error("Host terminal connection failed", error); client.close(1011, "Host terminal connection failed"); });
-      upstream.on("close", () => { lines.close(); client.close(); });
+      upstream.on("error", error => { if (!clientOpen) return; console.error("Host terminal connection failed", error); close(1011, "Host terminal connection failed"); });
+      upstream.on("close", () => { lines.close(); close(); });
     },
     message(_client, message) { upstream!.write(`${JSON.stringify(message instanceof Uint8Array ? new TextDecoder().decode(message) : message)}\n`); },
     close() { clientOpen = false; upstream?.destroy(); },
