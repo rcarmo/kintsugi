@@ -4,7 +4,8 @@ import { createKeyedOperationQueue, withCommandSignal, invalidArguments, type Js
 import { defineWorkspaceTool } from "@kintsugi/agent/server/workspace-tool";
 import { buttonHtml } from "@kintsugi/design-system/button";
 import { actionLinkHtml } from "@kintsugi/design-system/action-link";
-import { domId, escapeHtml as h, workspaceProxyUrl, type WorkspaceModuleRouteContext, type WorkspaceModuleCommandHandler, type WorkspaceCommandContribution } from "@kintsugi/shared";
+import { workspaceDownloadUrl } from "@kintsugi/shared/file-metadata";
+import { domId, escapeHtml as h, type WorkspaceModuleRouteContext, type WorkspaceModuleCommandHandler, type WorkspaceCommandContribution } from "@kintsugi/shared";
 import { stream, update, textResponse } from "@kintsugi/shared/http";
 import { execWorkspaceCommandBuffer } from "@kintsugi/workspace";
 import { maxOfficeFileBytes, officeFileKind } from "../office-format.ts";
@@ -37,7 +38,7 @@ export function openOfficeView(workspaceId: string, input: string, existingId?: 
 export function renderOfficeWorkPane(workspaceId: string, view: FilesView): string {
   if (!view.path) return `<section class="work-view-pane office-empty"><form method="post" action="/workspaces/${encodeURIComponent(workspaceId)}/files-view/office/open" data-turbo-stream="true"><h2>Open an Office file</h2><p>Choose a file from Files, or enter its workspace path.</p><input type="hidden" name="officeView" value="${h(view.id)}"><label>File path <input class="text-field" name="path" required maxlength="4096" placeholder="/work/report.xlsx"></label>${buttonHtml({ type: "submit", variant: "primary", content: { kind: "caption", caption: "Open" } })}<p id="${errorId(workspaceId, view.id)}" role="alert"></p></form></section>`;
   const path = view.path, kind = officeFileKind(path)!;
-  const download = actionLinkHtml({ href: `${workspaceProxyUrl(workspaceId, "file", path)}?download=1`, variant: "secondary", content: { kind: "caption", caption: "Download" }, attributesHtml: `download="${h(posix.basename(path))}" data-turbo="false"` });
+  const download = actionLinkHtml({ href: workspaceDownloadUrl(workspaceId, path), variant: "secondary", content: { kind: "caption", caption: "Download" }, attributesHtml: `download="${h(posix.basename(path))}" data-turbo="false"` });
   const reload = buttonHtml({ type: "button", variant: "secondary", content: { kind: "caption", caption: "Reload" }, attributesHtml: 'data-action="office-pane#reload"' });
   return `<section class="work-view-pane office-pane" id="${domId("office_pane", workspaceId, view.id, Bun.hash(path).toString(16))}" data-turbo-permanent data-controller="office-pane" data-office-pane-kind-value="${kind}" data-office-pane-name-value="${h(posix.basename(path))}" data-office-pane-data-url-value="/workspaces/${encodeURIComponent(workspaceId)}/files-view/office/data?${h(new URLSearchParams({ path }).toString())}" data-office-pane-frame-url-value="/workspaces/${encodeURIComponent(workspaceId)}/files-view/office/frame" data-action="message@window->office-pane#message kintsugi:workspace-pane-visible@document->office-pane#sync visibilitychange@document->office-pane#sync"><header class="work-view-toolbar office-toolbar"><span class="file-editor-path" title="${h(path)}">${h(path)}</span><span>Read only</span>${reload}${download}<a href="/office-licenses.txt" target="_blank" rel="noopener" data-turbo="false">Licenses</a></header><p class="office-status" role="status" data-office-pane-target="status">Select this pane to load the preview.</p><iframe title="${h(posix.basename(path))} Office preview" src="about:blank" sandbox="allow-scripts" referrerpolicy="no-referrer" data-office-pane-target="frame"></iframe></section>`;
 }

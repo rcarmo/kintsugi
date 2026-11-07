@@ -1,7 +1,7 @@
 import { posix } from "node:path";
 import { shellQuote } from "@kintsugi/core";
 import { resolveWorkspace, workspaceContainerName } from "@kintsugi/workspace";
-import { extensionOf, imageMimeByExtension } from "@kintsugi/shared/file-metadata";
+import { extensionOf, imageMimeByExtension, mediaMimeByExtension } from "@kintsugi/shared/file-metadata";
 
 interface WorkspaceFileMimeRegistry {
   [extension: string]: string;
@@ -9,11 +9,7 @@ interface WorkspaceFileMimeRegistry {
 
 const mimeByExtension: WorkspaceFileMimeRegistry = {
   ...imageMimeByExtension,
-  mp4: "video/mp4",
-  webm: "video/webm",
-  mov: "video/quicktime",
-  m4v: "video/x-m4v",
-  ogv: "video/ogg",
+  ...mediaMimeByExtension,
   html: "text/html; charset=utf-8",
   css: "text/css; charset=utf-8",
   js: "text/javascript; charset=utf-8",
@@ -37,23 +33,33 @@ function parseRange(header: string | null, size: number): { start: number; end: 
   return { start, end };
 }
 
-/** Image-only management route: no preview port, scripts, or active-document privileges. */
-export async function handleWorkspaceImageRequest(request: Request, url: URL): Promise<Response | undefined> {
-  const match = url.pathname.match(/^\/workspaces\/([^/]+)\/images(\/.*)$/);
+/** Media and sandboxed SVGs use HTTPS subpaths; arbitrary files are attachment-only. */
+export async function handleWorkspaceResourceRequest(request: Request, url: URL): Promise<Response | undefined> {
+  const match = url.pathname.match(/^\/workspaces\/([^/]+)\/(images|media|downloads)(\/.*)$/);
   if (!match) return;
   if (request.method !== "GET" && request.method !== "HEAD") return new Response("Method not allowed", { status: 405, headers: { allow: "GET, HEAD" } });
   let workspaceId: string;
   let path: string;
   try {
     workspaceId = decodeURIComponent(match[1]!);
-    path = decodeURIComponent(match[2]!);
+    path = decodeURIComponent(match[3]!);
   } catch {
     return new Response("bad path", { status: 400 });
   }
   if (path.includes("..") || path.includes("\0")) return new Response("bad path", { status: 400 });
-  if (!Object.hasOwn(imageMimeByExtension, extensionOf(path))) return new Response("Only image files are supported", { status: 415 });
+  const kind = match[2]!;
+  const mediaType = Object.hasOwn(mediaMimeByExtension, extensionOf(path)) ? mediaMimeByExtension[extensionOf(path)]! : Bun.file(path).type;
+  if ((kind === "images" && !Object.hasOwn(imageMimeByExtension, extensionOf(path))) || (kind === "media" && !mediaType.startsWith("audio/") && !mediaType.startsWith("video/"))) return new Response("Unsupported preview format", { status: 415 });
   await resolveWorkspace(workspaceId);
-  const response = await workspaceFileEndpoint(workspaceId, path, request);
+  const fileUrl = new URL(request.url);
+  if (kind === "downloads") fileUrl.searchParams.set("download", "1");
+  const response = await workspaceFileEndpoint(workspaceId, path, new Request(fileUrl, { method: request.method, headers: request.headers, signal: request.signal }));
+  if (kind === "downloads") {
+    response.headers.set("content-type", "application/octet-stream");
+    response.headers.set("content-security-policy", "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+  } else if (kind === "media") {
+    response.headers.set("content-security-policy", "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'");
+  }
   response.headers.set("cache-control", "no-store");
   response.headers.set("cross-origin-resource-policy", "same-origin");
   return response;
@@ -64,30 +70,34 @@ export async function workspaceFileEndpoint(workspaceId: string, path: string, r
 
   const container = workspaceContainerName(workspaceId);
   const quoted = shellQuote(path);
-  const stat = Bun.spawnSync(["docker", "exec", container, "sh", "-c", `stat -c %s ${quoted} 2>/dev/null || stat -f %z ${quoted}`]);
+  const stat = Bun.spawnSync(["docker", "exec", container, "sh", "-c", `test -f ${quoted} || exit 44; stat -Lc %s ${quoted} 2>/dev/null || stat -Lf %z ${quoted}`]);
   const size = Number(new TextDecoder().decode(stat.stdout).trim());
   if (stat.exitCode !== 0 || !Number.isFinite(size)) return new Response("not found", { status: 404 });
 
-  const range = parseRange(request.headers.get("range"), size);
+  const rangeHeader = request.headers.get("range");
+  const range = parseRange(rangeHeader, size);
+  if (rangeHeader && (!range || size === 0)) return new Response(null, { status: 416, headers: { "content-range": `bytes */${size}`, "accept-ranges": "bytes" } });
   const command = range ? `tail -c +${range.start + 1} ${quoted} | head -c ${range.end - range.start + 1}` : `cat ${quoted}`;
-  const proc = Bun.spawn(["docker", "exec", container, "sh", "-c", command], { stdout: "pipe", stderr: "ignore" });
-  const contentType = mimeByExtension[extensionOf(path)] ?? Bun.file(path).type;
+  const proc = request.method === "HEAD" ? undefined : Bun.spawn(["docker", "exec", container, "sh", "-c", command], { stdout: "pipe", stderr: "ignore" });
+  const contentType = Object.hasOwn(mimeByExtension, extensionOf(path)) ? mimeByExtension[extensionOf(path)]! : Bun.file(path).type;
   const headers = new Headers({ "content-type": contentType, "accept-ranges": "bytes", "x-content-type-options": "nosniff" });
   if (new URL(request.url).searchParams.get("download") === "1") {
     const filename = encodeURIComponent(posix.basename(path)).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
     headers.set("content-disposition", `attachment; filename*=UTF-8''${filename}`);
   }
   if (contentType.startsWith("image/")) {
-    // SVGs are inert in <img>, but can also be navigated to directly. Keep that
-    // document sandboxed, script-free, and unable to load network resources.
-    headers.set("content-security-policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'");
+    // SVG scripts may run when framed or opened directly, but never acquire
+    // the management origin. Network access remains disabled.
+    const scripts = contentType === "image/svg+xml" ? " allow-scripts" : "";
+    const scriptSource = contentType === "image/svg+xml" ? " script-src 'unsafe-inline';" : "";
+    headers.set("content-security-policy", `sandbox${scripts}; default-src 'none';${scriptSource} style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'`);
     headers.set("referrer-policy", "no-referrer");
   }
   if (range) {
     headers.set("content-range", `bytes ${range.start}-${range.end}/${size}`);
     headers.set("content-length", String(range.end - range.start + 1));
-    return new Response(proc.stdout, { status: 206, headers });
+    return new Response(proc?.stdout ?? null, { status: 206, headers });
   }
   headers.set("content-length", String(size));
-  return new Response(proc.stdout, { headers });
+  return new Response(proc?.stdout ?? null, { headers });
 }

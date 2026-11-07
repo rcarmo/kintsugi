@@ -1,3 +1,4 @@
+.agent-media-audio { display: block; width: 100%; margin: var(--markdown-block-spacing, 12px) 0; }
 .agent-media-video { display: block; width: 100%; border-radius: var(--radius-surface); border: 1px solid var(--line); margin: var(--markdown-block-spacing, 12px) 0; background: #000; }
 .agent-media-frame-actions { display: inline-flex; align-items: center; gap: 8px; flex: none; }
 .agent-media-frame-sep { color: var(--text-muted); user-select: none; }

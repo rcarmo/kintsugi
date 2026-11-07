@@ -12,7 +12,7 @@ import { sessionShareDir, sessionShareKeyForInit, sessionShareMountPath } from "
 import { createDeleteCurrentWorkspaceTool, registerWorkspaceAgentTool } from "./tools.ts";
 import { usageOpenApiPaths } from "./usage-openapi.ts";
 import { handleUsageRequest, renderUsagePaneAction } from "./usage-web.ts";
-import { handleWorkspaceImageRequest, workspaceFileEndpoint } from "./workspace-files.ts";
+import { handleWorkspaceResourceRequest, workspaceFileEndpoint } from "./workspace-files.ts";
 import { subscribeWorkspaceAgentBusy } from "./workspace-agent-busy.ts";
 
 type WorkspacePlanEvents = {
@@ -48,7 +48,7 @@ export const agentWorkspaceModule: WorkspaceModule = {
   attachToWorkspace: () => ({ workViews: [planPresentation], commands: [planLauncher] }),
   renderWorkspacePaneActions: renderUsagePaneAction,
   openApiPaths: { ...usageOpenApiPaths, ...planOpenApiPaths },
-  routes: [{ handle: handleUsageRequest }, { handle: handlePlanRequest }, { handle: handleWorkspaceImageRequest }],
+  routes: [{ handle: handleUsageRequest }, { handle: handlePlanRequest }, { handle: handleWorkspaceResourceRequest }],
   initialize(context) {
     registerSessionShareMountEvents(context.events);
     registerWorkspaceAgentTool("code_search", workspaceId => createCodeSearchTool(workspaceId));

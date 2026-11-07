@@ -45,6 +45,16 @@ function removeFullscreenHover(controller: KintsugiFullscreenController): void {
   hoveredFullscreenControllers = hoveredFullscreenControllers.filter((candidate) => candidate !== controller);
 }
 
+function iframeShortcutDocument(frame: HTMLIFrameElement): Document | null {
+  if (frame.hasAttribute("sandbox") && !frame.sandbox.contains("allow-same-origin")) return null;
+  try { return frame.contentDocument; }
+  catch (error) {
+    // Navigations can end at an isolated origin or acquire a CSP sandbox.
+    if (error instanceof DOMException && error.name === "SecurityError") return null;
+    throw error;
+  }
+}
+
 class KintsugiFullscreenController extends Controller<HTMLElement> {
   static values = { mode: String, viewKey: String, title: String, paneHeader: Boolean };
   declare readonly modeValue: FullscreenMode;
@@ -59,8 +69,9 @@ class KintsugiFullscreenController extends Controller<HTMLElement> {
   private readonly iframeLoaded = (event: Event): void => {
     // SAFETY: The server-rendered DOM and connected controller contract establish this element shape.
     const frame = event.currentTarget as HTMLIFrameElement;
-    frame.contentDocument?.removeEventListener("keydown", documentFullscreenKeydown, true);
-    frame.contentDocument?.addEventListener("keydown", documentFullscreenKeydown, true);
+    const doc = iframeShortcutDocument(frame);
+    doc?.removeEventListener("keydown", documentFullscreenKeydown, true);
+    doc?.addEventListener("keydown", documentFullscreenKeydown, true);
   };
 
   connect(): void {
@@ -254,14 +265,14 @@ class KintsugiFullscreenController extends Controller<HTMLElement> {
     this.iframeLoadTargets = [...root.querySelectorAll<HTMLIFrameElement>("iframe")];
     for (const frame of this.iframeLoadTargets) {
       frame.addEventListener("load", this.iframeLoaded);
-      frame.contentDocument?.addEventListener("keydown", documentFullscreenKeydown, true);
+      iframeShortcutDocument(frame)?.addEventListener("keydown", documentFullscreenKeydown, true);
     }
   }
 
   private detachIframeShortcuts(): void {
     for (const frame of this.iframeLoadTargets) {
       frame.removeEventListener("load", this.iframeLoaded);
-      frame.contentDocument?.removeEventListener("keydown", documentFullscreenKeydown, true);
+      iframeShortcutDocument(frame)?.removeEventListener("keydown", documentFullscreenKeydown, true);
     }
     this.iframeLoadTargets = [];
   }

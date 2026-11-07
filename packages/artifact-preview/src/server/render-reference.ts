@@ -1,11 +1,12 @@
-import { extensionOf, imageMimeByExtension } from "@kintsugi/shared/file-metadata";
+import { extensionOf, imageMimeByExtension, mediaMimeByExtension, workspaceImageUrl } from "@kintsugi/shared/file-metadata";
 import { buttonHtml } from "@kintsugi/design-system/button";
 import { escapeHtml } from "@kintsugi/shared";
 
 /** Render standalone artifacts and URL previews referenced in Markdown. */
 
 const imageExtensions = new Set(Object.keys(imageMimeByExtension));
-const videoExtensions = new Set(["mp4", "webm", "mov", "m4v", "ogv"]);
+const videoExtensions = new Set(Object.keys(mediaMimeByExtension).filter(extension => mediaMimeByExtension[extension]!.startsWith("video/")));
+const audioExtensions = new Set(Object.keys(mediaMimeByExtension).filter(extension => mediaMimeByExtension[extension]!.startsWith("audio/")));
 
 function workspaceProxyController(workspaceId: string, appKey: string, path: string): string {
   return [
@@ -36,17 +37,25 @@ function renderFileEmbed(workspaceId: string, path: string): string {
   const name = path.split("/").pop() || path;
   const proxy = workspaceProxyController(workspaceId, "file", path);
 
+  if (ext === "svg") {
+    const src = escapeHtml(workspaceImageUrl(workspaceId, path));
+    const iframe = `<iframe class="agent-media-svg" src="${src}" sandbox="allow-scripts" title="${escapeHtml(name)}" loading="lazy"></iframe>`;
+    return renderFullscreenFrame(path, iframe, `<a href="${src}" target="_blank" rel="noopener" data-turbo="false">in new tab ↗</a>`);
+  }
   if (imageExtensions.has(ext)) {
     return `<img class="agent-media-img" data-controller="artifact-preview-proxy kintsugi-fullscreen" data-kintsugi-fullscreen-mode-value="media" data-kintsugi-fullscreen-title-value="${escapeHtml(name)}" data-artifact-preview-proxy-workspace-id-value="${escapeHtml(workspaceId)}" data-artifact-preview-proxy-app-key-value="file" data-artifact-preview-proxy-path-value="${escapeHtml(path)}" alt="${escapeHtml(name)}" loading="lazy">`;
   }
   if (videoExtensions.has(ext)) {
     return `<video class="agent-media-video" data-controller="artifact-preview-proxy kintsugi-fullscreen" data-kintsugi-fullscreen-mode-value="media" data-kintsugi-fullscreen-title-value="${escapeHtml(name)}" data-artifact-preview-proxy-workspace-id-value="${escapeHtml(workspaceId)}" data-artifact-preview-proxy-app-key-value="file" data-artifact-preview-proxy-path-value="${escapeHtml(path)}" controls preload="metadata"></video>`;
   }
+  if (audioExtensions.has(ext)) {
+    return `<audio class="agent-media-audio" ${proxy} controls preload="metadata"></audio>`;
+  }
   if (ext === "html" || ext === "htm") {
     const iframe = `<iframe data-controller="artifact-preview-proxy artifact-preview-html" data-artifact-preview-proxy-workspace-id-value="${escapeHtml(workspaceId)}" data-artifact-preview-proxy-app-key-value="file" data-artifact-preview-proxy-path-value="${escapeHtml(path)}" loading="lazy" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>`;
     return renderFullscreenFrame(path, iframe, `<a ${proxy} target="_blank" rel="noopener">in new tab ↗</a>`);
   }
-  return `<a class="agent-media-link" ${proxy} target="_blank" rel="noopener">${escapeHtml(name)}</a>`;
+  return `<a class="agent-media-link" ${proxy} download="${escapeHtml(name)}" data-turbo="false">${escapeHtml(name)}</a>`;
 }
 
 function renderUrlEmbed(workspaceId: string, rawTarget: string): string {
