@@ -253,6 +253,12 @@ tmux -N wait-for "$session-running"
 // Reading the exit before and after checking the session tells a process that
 // just finished apart from one whose terminal disappeared.
 const stateScript = `dir=$1 session=$2
+# Release removes the result directory under the root's exclusive lock. Keep
+# the exit marker and captured output alive for the entire snapshot read.
+root=\${dir%/*}
+if [ ! -d "$root" ]; then echo missing; exit 0; fi
+exec 9<"$root" || exit 1
+flock -s 9
 ${sessionExistsFunction}flag() { if [ -f "$dir/$1" ]; then echo 1; else echo 0; fi; }
 report() { printf 'exited %s %s %s\\n' "$(cat "$dir/exit")" "$(flag aborted)" "$(flag timed-out)"; cat "$dir/output"; exit 0; }
 if [ -f "$dir/exit" ]; then report; fi

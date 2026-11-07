@@ -43,9 +43,10 @@ test("stop publishes a complete not-run exit marker to concurrent readers", asyn
     stopping = processes.stop("never-started");
     await ready.promise;
     try {
-      const duringPublication = await processes.state("never-started");
+      const duringPublication = processes.state("never-started");
       expect(await Bun.file(join(root, "never-started", "exit")).exists()).toBe(false);
-      expect(duringPublication).toEqual({ state: "lost" });
+      await writeFile(resume, "");
+      expect(await duringPublication).toMatchObject({ state: "exited", exitCode: null, aborted: true, timedOut: false });
     } finally {
       await writeFile(resume, "");
       await stopping;
@@ -55,6 +56,59 @@ test("stop publishes a complete not-run exit marker to concurrent readers", asyn
     watcher.close();
     await writeFile(resume, "");
     await stopping;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("release cannot remove an exit snapshot while state is reading it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminal-exit-release-"));
+  const dir = join(root, "completed");
+  const resume = join(root, "resume");
+  const reading = Promise.withResolvers<void>();
+  const releasing = Promise.withResolvers<void>();
+  const watcher = watch(root, (_event, file) => {
+    if (file === "reading") reading.resolve();
+    if (file === "releasing") releasing.resolve();
+  });
+  let state: ReturnType<ReturnType<typeof createTerminalProcesses>["state"]> | undefined;
+  let release: Promise<void> | undefined;
+  try {
+    await mkdir(dir);
+    await writeFile(join(dir, "exit"), "0\n");
+    await writeFile(join(dir, "output"), "complete output\n");
+    const bin = join(root, "bin"); await mkdir(bin);
+    await writeFile(join(bin, "tmux"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const hooks = `cat() {
+      if [ "$1" = ${shellQuote(join(dir, "exit"))} ]; then
+        : > ${shellQuote(join(root, "reading"))}
+        while [ ! -f ${shellQuote(resume)} ]; do sleep 0.01; done
+      fi
+      command cat "$@"
+    }
+    flock() {
+      if [ "$1" = 9 ]; then : > ${shellQuote(join(root, "releasing"))}; fi
+      command flock "$@"
+    }
+`;
+    const processes = createTerminalProcesses({
+      root,
+      start() { throw new Error("No process should start"); },
+      async run(start) {
+        const [shell, flag, script, ...args] = start.argv;
+        const child = Bun.spawn([shell!, flag!, hooks + script!, ...args], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+        const [exitCode, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).arrayBuffer(), new Response(child.stderr).text()]);
+        return { exitCode, stdout: Buffer.from(stdout), stderr };
+      },
+    });
+    state = processes.state("completed"); await reading.promise;
+    release = processes.release("completed"); await releasing.promise;
+    expect(await Bun.file(join(dir, "exit")).exists()).toBe(true);
+    await writeFile(resume, "");
+    expect(await state).toMatchObject({ state: "exited", exitCode: 0, output: { text: "complete output" } });
+    await release;
+    expect(await processes.state("completed")).toEqual({ state: "missing" });
+  } finally {
+    watcher.close(); await writeFile(resume, ""); await state; await release;
     await rm(root, { recursive: true, force: true });
   }
 });
