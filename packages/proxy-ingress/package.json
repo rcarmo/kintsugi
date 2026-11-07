@@ -7,9 +7,11 @@
     "./server": "./src/server/index.ts"
   },
   "dependencies": {
+    "@hotwired/stimulus": "github:hotwired/dev-builds#339df548999c34d440e04c24b59ad9dc57ce3eb1",
     "@kintsugi/core": "workspace:*",
+    "@kintsugi/design-system": "workspace:*",
     "@kintsugi/shared": "workspace:*",
-    "typebox": "^1.0.57",
-    "@kintsugi/design-system": "workspace:*"
+    "fake-indexeddb": "6.2.7",
+    "typebox": "^1.0.57"
   }
 }
