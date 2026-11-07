@@ -6,6 +6,7 @@ import { createWorkspaceVSCodeView, deleteWorkspaceVSCodeState, deleteWorkspaceV
 import { patchVSCodeWorkspaceAppResponse, resolveVSCodeWorkspaceAppBackend, vscodeAppKey } from "./proxy.ts";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
+import { handleVSCodePublicResource } from "./public-resources.ts";
 
 function vscodeWorkViewPresentation(view: WorkspaceVSCodeView): WorkspaceWorkViewPresentation {
   return {
@@ -55,6 +56,7 @@ export const vscodeWorkspaceModule: WorkspaceModule = {
     close: ({ workspaceId, reference }: { workspaceId: string; reference: { type: "vscode"; title: string } }) => deleteWorkspaceVSCodeView(workspaceId, reference.title),
   }],
   staticFiles: { "/vscode.css": { url: new URL("../client/style.css", import.meta.url), contentType: "text/css; charset=utf-8" } },
+  routes: [{ handle: (request, url) => handleVSCodePublicResource(request, url) }],
   initialize(context) {
     context.registerWorkspaceAppResolver(async (app, requestUrl) => app.appKey === vscodeAppKey
       ? {

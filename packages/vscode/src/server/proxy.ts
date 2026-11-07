@@ -6,6 +6,7 @@ import { isJsonObject } from "@kintsugi/core";
 import { workspacePortBackend, workspaceVSCodePort } from "@kintsugi/workspace";
 import { publicWorkspaceAppOrigin, type WorkspaceAppHost } from "@kintsugi/proxy-ingress/server";
 import { ensureWorkspaceVSCodeServer } from "./workspace-vscode.ts";
+import { vscodePublicResourcePrefix } from "./public-resources.ts";
 
 const gallerySchema = Type.Object({ resourceUrlTemplate: Type.Optional(Type.String()) });
 const remoteAuthoritySchema = Type.String();
@@ -149,7 +150,7 @@ async function ensureVSCodeServer(workspaceId: string): Promise<void> {
   await pending;
 }
 
-export async function patchVSCodeWorkspaceAppResponse(app: WorkspaceAppHost, response: Response, request: Request): Promise<Response> {
+export async function patchVSCodeWorkspaceAppResponse(app: WorkspaceAppHost, response: Response, request: Request, resourceOrigin?: URL): Promise<Response> {
   if (app.appKey !== vscodeAppKey || !response.ok) return response;
   if (!response.headers.get("content-type")?.includes("text/html")) return response;
   const requestUrl = new URL(request.url);
@@ -187,6 +188,13 @@ export async function patchVSCodeWorkspaceAppResponse(app: WorkspaceAppHost, res
     }
     const product = settings.productConfiguration;
     const gallery = isJsonObject(product) ? product.extensionsGallery : undefined;
+    if (resourceOrigin && isJsonObject(product)) {
+      product.chatParticipantRegistry = new URL(`${vscodePublicResourcePrefix}chat.json`, resourceOrigin).href;
+      if (isJsonObject(gallery)) {
+        gallery.controlUrl = new URL(`${vscodePublicResourcePrefix}marketplace.json`, resourceOrigin).href;
+        gallery.mcpUrl = new URL(`${vscodePublicResourcePrefix}mcp.json`, resourceOrigin).href;
+      }
+    }
     if (isJsonObject(gallery)) {
       const { resourceUrlTemplate } = Value.Parse(gallerySchema, gallery);
       const localPrefix = `http://${localAuthority}/`;
