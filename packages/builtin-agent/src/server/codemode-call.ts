@@ -1,7 +1,7 @@
 import type { JsonValue } from "@earendil-works/chord";
 import { defineEntry, type JsonObject } from "@earendil-works/pi-durable";
 
-export type CallStart = { phase: "start"; name: string; arguments?: JsonValue };
+export type CallStart = { phase: "start"; name: string; arguments?: JsonValue; issuedAt?: number };
 export type CallEnd = { phase: "end"; isError: boolean; cancelled: boolean; durationMs?: number; output?: string; error?: string; details?: JsonObject };
 
 /**

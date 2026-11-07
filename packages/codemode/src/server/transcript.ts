@@ -36,7 +36,7 @@ export function codemodeTranscript(view: Pick<ConversationView, "entries">): Par
   const nested = [...scripts].map(([toolCallId, calls]) => ({ toolCallId, calls: [...calls].flatMap(([key, { start, end }]): ToolView[] => {
     if (!start) return [];
     const callId = `${toolCallId}/${key}`;
-    const call: ToolView = { callId, name: start.name, args: start.arguments, status: "running" };
+    const call: ToolView = { callId, name: start.name, args: start.arguments, status: "running", issuedAt: start.issuedAt };
     const childAgentId = childAgents.get(callId);
     if (childAgentId) call.childAgentId = childAgentId;
     if (end) {

@@ -87,9 +87,12 @@ test("code mode records each call a script makes, with its arguments and result"
     fauxAssistantMessage([fauxToolCall("codemode", { code: "return await tools.echo({ text: 'echoed' });" })], { stopReason: "toolUse" }),
     fauxAssistantMessage("Done"),
   ]);
+  const startedAt = Date.now();
   expect((await (await agent.submit({ requestId: "script", text: "Run it" })).wait(context)).status).toBe("done");
   const [echo] = (await scriptTool(agent))!.nested!;
   expect(echo).toMatchObject({ name: "echo", args: { text: "echoed" }, status: "ok", resultText: "echoed" });
+  expect(echo!.issuedAt).toBeGreaterThanOrEqual(startedAt);
+  expect(echo!.issuedAt).toBeLessThanOrEqual(Date.now());
 });
 
 test("a stopped script keeps the calls it made, for the transcript and the model", async () => {
@@ -119,6 +122,8 @@ test("a script can name a file to run, which a call runs as it was when the call
   ]);
   await agent.submit({ requestId: "script", text: "Run it" });
   await held.promise;
+  const issuedAt = (await scriptTool(agent))!.nested![0]!.issuedAt;
+  expect(issuedAt).toBeNumber();
   await runtime.suspend();
   await writeFile(file, "return await tools.echo({ text: 'second version' });\n");
   const reopened = await setup(path);
@@ -131,6 +136,7 @@ test("a script can name a file to run, which a call runs as it was when the call
     tool = (await scriptTool(reopened.agent))!;
   }
   expect(tool.nested!.map(call => call.resultText)).toEqual(["released", "first version"]);
+  expect(tool.nested![0]!.issuedAt).toBe(issuedAt);
   expect(tool.scriptFile).toMatchObject({ path: file, code: expect.stringContaining("first version") });
   expect(tool.resultText).toContain("first version");
 });

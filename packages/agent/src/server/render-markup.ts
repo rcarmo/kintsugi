@@ -8,6 +8,13 @@ export function markdown(ctx: AgentRenderContext, text: string): string {
   return renderMarkdown(ctx.workspaceId, text);
 }
 
+/** Native hover text, localised in the browser without changing message contents. */
+export function transcriptTimestampAttributes(timestamp?: number): string {
+  if (timestamp === undefined || !Number.isFinite(timestamp) || timestamp <= 0 || timestamp > 8.64e15) return "";
+  const iso = new Date(timestamp).toISOString();
+  return ` title="${iso}" data-controller="agent-message-time" data-agent-message-time-timestamp-value="${timestamp}" data-agent-message-time-tooltip-only-value="true"`;
+}
+
 export function transcriptRow(html: string): string {
   return `<div class="agent-row">${html}</div>`;
 }

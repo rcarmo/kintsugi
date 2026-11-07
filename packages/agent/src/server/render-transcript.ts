@@ -6,7 +6,7 @@ import { renderStreamingMarkdownSnapshot } from "@kintsugi/markdown";
 import type { ModelRef } from "@kintsugi/llm/server";
 import { domId, escapeHtml } from "@kintsugi/shared";
 import { agentPath, commentaryContext, ids, sessionImageUrl, transcriptItemPath, type AgentRenderContext } from "./render-context.ts";
-import { codeBlockHtml, detailFullscreen, fullscreenAttributes, markdown, renderMarkdownRow, transcriptRowContent, transcriptRow } from "./render-markup.ts";
+import { codeBlockHtml, detailFullscreen, fullscreenAttributes, markdown, renderMarkdownRow, transcriptRowContent, transcriptRow, transcriptTimestampAttributes } from "./render-markup.ts";
 import { renderToolCard, renderToolDetail } from "./render-tool.ts";
 import { formatDuration, formatTokens, unfencedJson, type QueuedInput, type TranscriptItem, type WorkingTranscriptItem } from "./transcript.ts";
 
@@ -112,7 +112,7 @@ export function renderTranscriptItem(ctx: AgentRenderContext, item: TranscriptIt
     body = item.live
       ? transcriptRow(renderStreamingTextBody(ctx, item.key, item.text, className))
       : renderMarkdownRow(ctx, item.text, className);
-  } else if (item.type === "tool") body = transcriptRow(renderToolCard(ctx, item.key, item.tool, { ...options, open: options.open || Boolean(ctx.revealTarget && (item.anchor === ctx.revealTarget || item.key === ctx.revealTarget)) }));
+  } else if (item.type === "tool") body = transcriptRow(renderToolCard(ctx, item.key, item.tool, { ...options, timestamp: item.timestamp, open: options.open || Boolean(ctx.revealTarget && (item.anchor === ctx.revealTarget || item.key === ctx.revealTarget)) }));
   else if (item.type === "extension") body = item.render(ctx);
   else if (item.type === "note") {
     body = item.tone === "summary"
@@ -120,7 +120,7 @@ export function renderTranscriptItem(ctx: AgentRenderContext, item: TranscriptIt
       : renderMarkdownRow(ctx, item.text, `markdown agent-note ${escapeHtml(item.tone)}`);
   }
   else body = transcriptRow(`<div class="agent-error">${escapeHtml(item.text)}</div>`);
-  return `<div class="agent-item" id="${id}" data-transcript-key="${escapeHtml(item.key)}" data-quote-source="${escapeHtml(quoteSource(item))}"${item.anchor ? ` data-transcript-anchor="${escapeHtml(item.anchor)}"` : ""}${item.type === "tool" ? ` data-tool-call-id="${escapeHtml(item.tool.callId)}"` : ""}>${body}</div>`;
+  return `<div class="agent-item" id="${id}"${item.type === "tool" ? "" : transcriptTimestampAttributes(item.timestamp)} data-transcript-key="${escapeHtml(item.key)}" data-quote-source="${escapeHtml(quoteSource(item))}"${item.anchor ? ` data-transcript-anchor="${escapeHtml(item.anchor)}"` : ""}${item.type === "tool" ? ` data-tool-call-id="${escapeHtml(item.tool.callId)}"` : ""}>${body}</div>`;
 }
 
 /** The Comment button for selected transcript text; the pane's `transcript-quote` controller places it. */

@@ -18,7 +18,7 @@ import { terminalProcessSocketPath } from "@kintsugi/observable-terminal/shared"
 import { terminalOutputHtml } from "@kintsugi/observable-terminal/server";
 import { isBashTool, formatCost, formatDuration, formatTokens, toolOutcomeLabel, type ScriptFileView, type ToolView } from "./transcript.ts";
 import { agentPath, ids, sessionImageUrl, transcriptItemPath, type AgentRenderContext } from "./render-context.ts";
-import { codeBlockHtml, detailFullscreen, fullscreenAttributes, transcriptRowContent } from "./render-markup.ts";
+import { codeBlockHtml, detailFullscreen, fullscreenAttributes, transcriptRowContent, transcriptTimestampAttributes } from "./render-markup.ts";
 
 type ToolArgumentKey = "code" | "command" | "path" | "file_path" | "content" | "offset" | "limit" | "timeout" | "edits" | "oldText" | "newText";
 
@@ -122,7 +122,7 @@ function lazyTranscriptItemFrame(ctx: AgentRenderContext, key: string): string {
  * A tool call's row, opening to its detail. A `nested` call, such as a script's, has no detail route: its detail is
  * inline and never paginated.
  */
-export function renderToolCard(ctx: AgentRenderContext, key: string, tool: ToolView, options: { open?: boolean; live?: boolean; nested?: boolean } = {}): string {
+export function renderToolCard(ctx: AgentRenderContext, key: string, tool: ToolView, options: { open?: boolean; live?: boolean; nested?: boolean; timestamp?: number } = {}): string {
   const liveDuration = isBashTool(tool.name) && tool.status === "running" && tool.issuedAt !== undefined && !ctx.readOnly;
   const timeout = numberArg(toolArgs(tool), "timeout") ?? 600;
   const label = {
@@ -138,14 +138,15 @@ export function renderToolCard(ctx: AgentRenderContext, key: string, tool: ToolV
   };
   const active = tool.status === "streaming" || tool.status === "running";
   const content = transcriptRowContent(label, labelOptions);
+  const timestamp = transcriptTimestampAttributes(tool.issuedAt ?? options.timestamp);
   if (!toolPresentation(tool).showsDetail) {
-    return `<div class="agent-tool agent-tool-summary-only ${toolClass(tool.name)} active">${contentRowHtml({ ...content, element: { tag: "div" }, primary: false })}</div>`;
+    return `<div class="agent-tool agent-tool-summary-only ${toolClass(tool.name)} active">${contentRowHtml({ ...content, element: { tag: "div", attributesHtml: timestamp }, primary: false })}</div>`;
   }
   const open = Boolean(options.open || active);
   const lazy = !options.nested && !options.live && !active && !options.open;
   return `<div class="agent-tool ${toolClass(tool.name)}${active ? " active" : ""}${tool.status === "error" ? " error" : ""}">${disclosureHtml({
     element: lazy ? { attributesHtml: 'data-controller="agent-lazy-detail" data-action="toggle->agent-lazy-detail#load"' } : undefined,
-    summary: content, open,
+    summary: { ...content, attributesHtml: timestamp }, open,
     bodyHtml: options.nested ? renderToolDetail(ctx, key, tool, Number.MAX_SAFE_INTEGER)
       : lazy ? lazyTranscriptItemFrame(ctx, key) : `<turbo-frame ${tailFrameAttributes(ctx, key)} class="agent-tool-detail-host">${renderToolDetail(ctx, key, tool, 100)}</turbo-frame>`,
   })}</div>`;

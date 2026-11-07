@@ -37,7 +37,9 @@ function outputText(structuredOutput: NestedToolExecutionResult["structuredOutpu
 }
 
 function callStart(name: string, argumentsJson: string): CallStart {
-  return argumentsJson.length <= maxRecordedArgumentsChars ? { phase: "start", name, arguments: JSON.parse(argumentsJson) } : { phase: "start", name };
+  const start: CallStart = { phase: "start", name, issuedAt: Date.now() };
+  if (argumentsJson.length <= maxRecordedArgumentsChars) start.arguments = JSON.parse(argumentsJson);
+  return start;
 }
 
 function callEnd(result: NestedToolExecutionResult): CallEnd {
