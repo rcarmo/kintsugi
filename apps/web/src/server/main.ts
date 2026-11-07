@@ -1,5 +1,6 @@
 import { assertSystemCompatible, requiredSystemVersion } from "@kintsugi/shared/system-version";
 import { readSystemVersion } from "../../../../packages/update/src/server/supervisor.ts";
+import { handleVSCodePublicResource } from "@kintsugi/vscode/server";
 import { configureAgentMcp, handleAgentMcpRequest } from "@kintsugi/agent/server";
 import { createKintsugiEventBus, getKintsugiRuntimeContext, withCommandSignal, waitForCommand } from "@kintsugi/core";
 import { designSystemCatalogueHtml } from "@kintsugi/design-system/catalogue";
@@ -12,7 +13,8 @@ import {
   detectParentOriginPublisher,
   defaultPublicOriginPortRange,
   managementOriginRejection,
-  handleCanonicalWorkspaceRequest,
+  createWorkspacePathPreviews,
+  kintsugiUrl,
   StoppedWorkspaceError,
 } from "@kintsugi/proxy-ingress/server";
 import { proxyAccessSchema, validateProxyAccess, kintsugiName, errorMessage, type WorkspaceAppBackend, type WorkspaceAppRef, type WorkspaceServerAppResolver, type WorkspaceServerProvisioningHook, type WorkspaceServerSocketHandler, type WorkspaceServerSocketSession } from "@kintsugi/shared";
@@ -139,8 +141,8 @@ for (const module of workspaceModules) {
     invalidateWorkspace: workspaceId => app.invalidateWorkspace(workspaceId),
     deleteCurrentWorkspace: (workspaceId, force) => app.deleteCurrentWorkspaceFromAgent(workspaceId, force),
     registerSocketHandler: (handler) => socketHandlers.push(handler),
-    publishWorkspacePort: (workspaceId, port, protocol, hostname) => workspaceIngress.publishPort(workspaceId, port, protocol, hostname),
-    publishWorkspaceFiles: (workspaceId) => workspaceIngress.publishFiles(workspaceId),
+    publishWorkspacePort: (workspaceId, port, protocol, hostname) => pathPreviews.publishPort(workspaceId, port, protocol, hostname),
+    publishWorkspaceFiles: (workspaceId) => pathPreviews.publishFiles(workspaceId),
     registerWorkspaceAppResolver: (resolver) => workspaceAppResolvers.push(resolver),
     registerProvisioningHook: (hook) => provisioningHooks.push(hook),
     onWorkspaceRemoved: (handler) => workspaceRemovedHandlers.push(handler),
@@ -261,6 +263,20 @@ const workspaceIngress = createWorkspaceIngress({
   originIdentityStore: createFileOriginIdentityStore(),
 });
 
+const pathPreviews = createWorkspacePathPreviews({
+  publicOrigin: kintsugiUrl,
+  resolveWorkspace: async workspaceId => {
+    await resolveWorkspace(workspaceId);
+    if (!await isWorkspaceRunning(workspaceId)) throw new StoppedWorkspaceError(workspaceId);
+  },
+  resolveApp: resolveWorkspaceApp,
+  async resolvePort(workspaceId, port, protocol, url, host) {
+    const backend = await workspacePortBackend(workspaceId, port, url.pathname + url.search, `${protocol}:`);
+    if (host) backend.appHost = host;
+    return backend;
+  },
+});
+
 const ingressSockets = createWorkspaceIngressSockets(workspaceIngress, join(runtimeContext.kintsugiDataDir, "workspace-sockets"), async (request, workspaceId) => {
   if (new URL(request.url).pathname === "/ssh/host-keys" && request.method === "POST") {
     const form = await request.formData();
@@ -278,7 +294,8 @@ const ingressSockets = createWorkspaceIngressSockets(workspaceIngress, join(runt
   return handleAgentMcpRequest(request, workspaceId);
 });
 kintsugiEvents.on("workspace_plan_prepare", ({ workspaceId }) => ingressSockets.ensure(workspaceId));
-kintsugiEvents.on("workspace_deleted", ({ workspaceId }) => ingressSockets.remove(workspaceId));
+kintsugiEvents.on("workspace_deleted", ({ workspaceId }) => { pathPreviews.removeWorkspace(workspaceId); return ingressSockets.remove(workspaceId); });
+kintsugiEvents.on("workspace_suspending", ({ workspaceId }) => pathPreviews.removeWorkspace(workspaceId));
 
 async function validateSocket(request: Request, url: URL): Promise<SocketData | undefined> {
 
@@ -306,10 +323,30 @@ const server = Bun.serve<SocketData>({
     const mcpResponse = await handleAgentMcpRequest(request);
     if (mcpResponse) return mcpResponse;
 
+    // Opaque previews authenticate with workspace-scoped capabilities, never
+    // management cookies or a blanket Origin:null management exemption.
+    if (url.pathname.startsWith("/~preview/")) {
+      if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+        const prepared = await pathPreviews.websocket(request);
+        if (prepared instanceof Response) return prepared;
+        if (!prepared) return textResponse("not found", { status: 404 });
+        if (server.upgrade(request, { data: { kind: "workspace-module", ...prepared.session }, headers: prepared.headers })) return;
+        prepared.cancel();
+        return textResponse("websocket upgrade failed", { status: 400 });
+      }
+      return await pathPreviews.resource(request) ?? textResponse("not found", { status: 404 });
+    }
+    // This allowlisted relay contains only public catalogs and public extension
+    // searches; it forwards no ambient identity and performs no management action.
+    const publicCatalog = await handleVSCodePublicResource(request, url);
+    if (publicCatalog) return publicCatalog;
+    const previewAsset = await pathPreviews.asset(request);
+    if (previewAsset) return previewAsset;
+
     const originRejection = managementOriginRejection(request, server.requestIP(request)?.address);
     if (originRejection) return originRejection;
 
-    const canonical = await handleCanonicalWorkspaceRequest(request, workspaceIngress);
+    const canonical = await pathPreviews.canonical(request);
     if (canonical) return canonical;
 
     if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {

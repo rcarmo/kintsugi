@@ -7,6 +7,7 @@ import { workspacePortBackend, workspaceVSCodePort } from "@kintsugi/workspace";
 import { publicWorkspaceAppOrigin, type WorkspaceAppHost } from "@kintsugi/proxy-ingress/server";
 import { ensureWorkspaceVSCodeServer } from "./workspace-vscode.ts";
 import { vscodePublicResourcePrefix } from "./public-resources.ts";
+import { patchNativeWebviewResponse } from "./native-webview.ts";
 
 const gallerySchema = Type.Object({ resourceUrlTemplate: Type.Optional(Type.String()) });
 const remoteAuthoritySchema = Type.String();
@@ -150,8 +151,10 @@ async function ensureVSCodeServer(workspaceId: string): Promise<void> {
   await pending;
 }
 
-export async function patchVSCodeWorkspaceAppResponse(app: WorkspaceAppHost, response: Response, request: Request, resourceOrigin?: URL): Promise<Response> {
-  if (app.appKey !== vscodeAppKey || !response.ok) return response;
+export async function patchVSCodeWorkspaceAppResponse(app: WorkspaceAppHost, response: Response, request: Request, resourceOrigin?: URL, previewBase?: string): Promise<Response> {
+  if (app.appKey !== vscodeAppKey) return response;
+  if (previewBase) response = await patchNativeWebviewResponse(response, request);
+  if (!response.ok) return response;
   if (!response.headers.get("content-type")?.includes("text/html")) return response;
   const requestUrl = new URL(request.url);
   const file = requestUrl.searchParams.get("kintsugiOpenFile");
@@ -182,6 +185,14 @@ export async function patchVSCodeWorkspaceAppResponse(app: WorkspaceAppHost, res
     const publicOrigin = new URL(publicWorkspaceAppOrigin(request));
     const localAuthority = Value.Parse(remoteAuthoritySchema, settings.remoteAuthority);
     settings.remoteAuthority = publicOrigin.host;
+    if (previewBase) {
+      settings.serverBasePath = previewBase;
+      const webBase = text.match(/<meta id="vscode-workbench-web-base-url" data-settings="([^"]+)"/);
+      if (!webBase) throw new Error("VS Code did not provide its native web asset root");
+      settings.webviewEndpoint = `${publicOrigin.origin}${previewBase}${unescapeHtmlAttribute(webBase[1]!)}/out/vs/workbench/contrib/webview/browser/pre/`;
+      const callback = settings.callbackRoute;
+      if (Value.Check(Type.String(), callback) && callback.startsWith("/")) settings.callbackRoute = `${previewBase}${callback}`;
+    }
     for (const name of ["workspaceUri", "folderUri"]) {
       const uri = settings[name];
       if (isJsonObject(uri) && uri.scheme === "vscode-remote" && uri.authority === localAuthority) uri.authority = publicOrigin.host;
@@ -191,6 +202,7 @@ export async function patchVSCodeWorkspaceAppResponse(app: WorkspaceAppHost, res
     if (resourceOrigin && isJsonObject(product)) {
       product.chatParticipantRegistry = new URL(`${vscodePublicResourcePrefix}chat.json`, resourceOrigin).href;
       if (isJsonObject(gallery)) {
+        gallery.serviceUrl = new URL(`${vscodePublicResourcePrefix}gallery`, resourceOrigin).href;
         gallery.controlUrl = new URL(`${vscodePublicResourcePrefix}marketplace.json`, resourceOrigin).href;
         gallery.mcpUrl = new URL(`${vscodePublicResourcePrefix}mcp.json`, resourceOrigin).href;
       }
@@ -198,7 +210,7 @@ export async function patchVSCodeWorkspaceAppResponse(app: WorkspaceAppHost, res
     if (isJsonObject(gallery)) {
       const { resourceUrlTemplate } = Value.Parse(gallerySchema, gallery);
       const localPrefix = `http://${localAuthority}/`;
-      if (resourceUrlTemplate?.startsWith(localPrefix)) gallery.resourceUrlTemplate = `${publicOrigin.origin}/${resourceUrlTemplate.slice(localPrefix.length)}`;
+      if (resourceUrlTemplate?.startsWith(localPrefix)) gallery.resourceUrlTemplate = `${publicOrigin.origin}${previewBase ?? ""}/${resourceUrlTemplate.slice(localPrefix.length)}`;
     }
     settings.enableWorkspaceTrust = false;
     const configurationDefaults = isJsonObject(settings.configurationDefaults) ? settings.configurationDefaults : {};
@@ -219,6 +231,7 @@ export async function patchVSCodeWorkspaceAppResponse(app: WorkspaceAppHost, res
       configurationDefaults["editor.tokenColorCustomizations"] = { [scope]: { textMateRules: themeDefaults.tokenColors } };
       configurationDefaults["editor.semanticTokenColorCustomizations"] = { [scope]: { rules: themeDefaults.semanticColors } };
     }
+    if (previewBase) configurationDefaults["workbench.enableExperiments"] = false;
     settings.configurationDefaults = configurationDefaults;
     return `${prefix}${escapeHtmlAttribute(JSON.stringify(settings))}${suffix}`;
   });

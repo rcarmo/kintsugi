@@ -1,6 +1,8 @@
 import { registerWorkspacePresenter } from "@kintsugi/agent/server/tools";
 import { invalidArguments, readJsonObject, requestAcceptsJson, type JsonObject, type JsonValue } from "@kintsugi/core";
 import { Icons } from "@kintsugi/design-system/icons";
+import { qrCodeContentHtml } from "@kintsugi/design-system/qr-code";
+import { kintsugiUrl } from "@kintsugi/proxy-ingress/server";
 import { textResponse } from "@kintsugi/shared/http";
 import { isWorkspaceLoopbackHost, turboStreamResponse, type WorkspaceCommandContribution, type WorkspaceModule, type WorkspaceModuleCommandHandler, type WorkspaceModuleRouteContext, type WorkspaceServerModuleContext } from "@kintsugi/shared";
 import { Type, type Static } from "typebox";
@@ -89,6 +91,16 @@ export const browserWorkspaceModule: WorkspaceModule = {
   commands: [browserCreateCommand, browserOpenCommand],
   routes: [{
     async handle(request, url) {
+      const qr = url.pathname.match(/^\/workspaces\/([^/]+)\/browser\/([^/]+)\/qr$/);
+      if (qr && request.method === "GET") {
+        const workspaceId = decodeURIComponent(qr[1]!);
+        const view = getWorkspaceBrowserView(workspaceId, decodeURIComponent(qr[2]!));
+        const frame = request.headers.get("turbo-frame") ?? "";
+        if (!/^[a-zA-Z0-9_-]{1,256}$/.test(frame)) return textResponse("Invalid QR frame", { status: 400 });
+        if (!view?.targetUrl) return textResponse("Browser view not found", { status: 404 });
+        const target = new URL(await previewUrl(workspaceId, view), kintsugiUrl(request));
+        return new Response(`<turbo-frame id="${frame}">${qrCodeContentHtml(target.href)}</turbo-frame>`, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+      }
       const match = url.pathname.match(/^\/workspaces\/([^/]+)\/browser\/([^/]+)\/navigate$/);
       if (!match || request.method !== "POST") return undefined;
       return await browserNavigateEndpoint(decodeURIComponent(match[1]!), decodeURIComponent(match[2]!), request);

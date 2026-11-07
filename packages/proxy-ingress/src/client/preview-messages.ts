@@ -30,7 +30,13 @@ export function installPreviewMessages(): void {
     if (![...document.querySelectorAll("iframe")].some(frame => frameWindow.get!.call(frame) === source)) event.stopImmediatePropagation();
   }, { capture: true });
   Object.defineProperty(HTMLIFrameElement.prototype, "contentWindow", { configurable: true, get() { return wrap(frameWindow.get!.call(this)); } });
-  Object.defineProperty(MessageEvent.prototype, "source", { configurable: true, get() { const source = messageSource.get!.call(this); return source ? proxies.get(source) ?? source : source; } });
+  Object.defineProperty(MessageEvent.prototype, "source", { configurable: true, get() {
+    const source = messageSource.get!.call(this);
+    if (!source || source === window) return source;
+    if (proxies.has(source)) return proxies.get(source);
+    if (source === nativeParent || [...document.querySelectorAll("iframe")].some(frame => frameWindow.get!.call(frame) === source)) return wrap(source);
+    return source;
+  } });
   for (const name of ["parent", "top", "opener"] as const) {
     const descriptor = Object.getOwnPropertyDescriptor(window, name);
     if (!descriptor?.configurable) continue;

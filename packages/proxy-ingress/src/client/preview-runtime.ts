@@ -1,17 +1,20 @@
 import { installPreviewMessages } from "./preview-messages.ts";
-import { installPreviewStorage } from "./preview-storage.ts";
+import { installPreviewStorage, installPreviewIndexedDB } from "./preview-storage.ts";
 import { installPreviewWorkers } from "./preview-worker.ts";
 import { restorePreviewDatabases, snapshotPreviewDatabases } from "./preview-database.ts";
 import { parsePreviewState, type PreviewState } from "../preview-state.ts";
+import { installPreviewNetwork } from "./preview-network.ts";
 
-// EXPERIMENTAL: not imported by production routes. Scoped transport and webviews
-// still need acceptance. Never load this entrypoint into a management document.
+// Workspace documents only. Never load this entrypoint into a management document.
+if (globalThis.origin !== "null") throw new Error("The preview runtime requires an opaque sandbox");
+installPreviewIndexedDB();
 installPreviewMessages();
-installPreviewWorkers();
+const network = installPreviewNetwork();
+installPreviewWorkers(network);
 
 async function connectHost(): Promise<{ port: MessagePort; state: PreviewState }> {
   const nonce = crypto.randomUUID();
-  const ready = () => window.parent.postMessage({ type: "kintsugi:preview-ready", nonce }, new URL(location.href).origin);
+  const ready = () => window.parent.postMessage({ type: "kintsugi:preview-ready", nonce }, "*");
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { window.removeEventListener("message", receive); reject(new Error("Preview storage host did not connect")); }, 10000);
     function receive(event: MessageEvent) {
@@ -38,6 +41,8 @@ async function resumeScripts(): Promise<void> {
     for (const attribute of source.attributes) {
       if (!["type", "data-kintsugi-script-type"].includes(attribute.name)) script.setAttribute(attribute.name, attribute.value);
     }
+    // Browsers hide nonce values through getAttribute/attributes; the nonce IDL property retains them.
+    if (source.nonce) script.nonce = source.nonce;
     script.type = source.dataset.kintsugiScriptType!;
     script.async = false;
     script.textContent = source.textContent;
@@ -50,7 +55,7 @@ async function resumeScripts(): Promise<void> {
 }
 
 async function start(): Promise<void> {
-  if (!document.querySelector('meta[name="kintsugi-preview-persistence"]')) { installPreviewStorage(); return; }
+  if (!document.querySelector('meta[name="kintsugi-preview-persistence"]')) { installPreviewStorage(new Map(), () => {}, network?.cookies); return; }
   const { port, state } = await connectHost();
   const local = new Map(state.local);
   await restorePreviewDatabases(indexedDB, state.databases);
@@ -77,7 +82,7 @@ async function start(): Promise<void> {
     });
     return writes;
   }
-  installPreviewStorage(local, changed);
+  installPreviewStorage(local, changed, network?.cookies);
   const transaction = IDBDatabase.prototype.transaction;
   IDBDatabase.prototype.transaction = function(...args: Parameters<typeof transaction>) {
     const result = transaction.apply(this, args);

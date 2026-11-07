@@ -1,5 +1,7 @@
+import { mapPreviewUrl, type PreviewUrlContext } from "../preview-url.ts";
+
 /** Data-URL workers retain native worker semantics without acquiring management origin. */
-export function installPreviewWorkers(): void {
+export function installPreviewWorkers(context?: PreviewUrlContext): void {
   const blobs = new Map<string, Blob>();
   const create = URL.createObjectURL.bind(URL);
   const revoke = URL.revokeObjectURL.bind(URL);
@@ -8,7 +10,8 @@ export function installPreviewWorkers(): void {
   const NativeWorker = Worker;
   class PreviewWorker extends NativeWorker {
     constructor(source: string | URL, options: WorkerOptions = {}) {
-      const url = new URL(String(source), document.baseURI).href;
+      const raw = new URL(String(source), document.baseURI).href;
+      const url = context ? mapPreviewUrl(raw, context) : raw;
       const nonce = crypto.randomUUID();
       const module = options.type === "module";
       const program = `

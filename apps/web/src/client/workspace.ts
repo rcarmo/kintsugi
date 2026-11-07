@@ -72,6 +72,8 @@ registerWorkspaceControllers({
   "provision-terminal": createProvisionTerminalController(Controller),
 });
 
-if ("serviceWorker" in navigator) {
+// Nested workspace previews are deliberately opaque; offline/PWA workers
+// require an ordinary origin and are not part of that browsing context.
+if (globalThis.origin !== "null" && "serviceWorker" in navigator) {
   void navigator.serviceWorker.register("/service-worker.js");
 }

@@ -253,6 +253,8 @@ export interface WorkspaceHttpAppBackend {
   gateway?: WorkspaceGateway;
   adaptRequestHeaders?(headers: Headers, request: Request): Promise<Headers> | Headers;
   adaptResponse?(response: Response, request: Request): Promise<Response> | Response;
+  /** Adapter-owned configuration for an opaque subpath client, not a workspace-controlled base URL. */
+  adaptPreviewResponse?(response: Response, request: Request, basePath: string): Promise<Response> | Response;
 }
 
 interface WorkspaceFetchAppBackend {

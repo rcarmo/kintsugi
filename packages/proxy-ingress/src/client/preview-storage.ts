@@ -1,7 +1,23 @@
-import "fake-indexeddb/auto";
+import { IDBCursor, IDBCursorWithValue, IDBDatabase, IDBFactory, IDBIndex, IDBKeyRange, IDBObjectStore, IDBOpenDBRequest, IDBRequest, IDBTransaction, IDBVersionChangeEvent } from "fake-indexeddb";
+
+export function installPreviewIndexedDB(): void {
+  const constructors = { IDBCursor, IDBCursorWithValue, IDBDatabase, IDBFactory, IDBIndex, IDBKeyRange, IDBObjectStore, IDBOpenDBRequest, IDBRequest, IDBTransaction, IDBVersionChangeEvent };
+  for (const [name, value] of Object.entries(constructors)) Object.defineProperty(window, name, { configurable: true, writable: true, value });
+  Object.defineProperty(window, "indexedDB", { configurable: true, writable: true, value: new IDBFactory() });
+}
+
+const cookies = new Map<string, string>();
+export function replacePreviewCookies(value: string): void {
+  cookies.clear();
+  for (const pair of value.split(";")) {
+    const split = pair.indexOf("=");
+    if (split > 0) cookies.set(pair.slice(0, split).trim(), pair.slice(split + 1));
+  }
+}
 
 /** Origin-bound browser storage is replaced only inside the opaque preview. */
-export function installPreviewStorage(local = new Map<string, string>(), changed: () => void = () => {}): void {
+export function installPreviewStorage(local = new Map<string, string>(), changed: () => void = () => {}, initialCookies = ""): void {
+  replacePreviewCookies(initialCookies);
   function storage(values: Map<string, string>, notify: () => void): Storage {
     const methods = {
       get length() { return values.size; },
@@ -27,7 +43,6 @@ export function installPreviewStorage(local = new Map<string, string>(), changed
   }
   Object.defineProperty(window, "localStorage", { configurable: true, value: storage(local, changed) });
   Object.defineProperty(window, "sessionStorage", { configurable: true, value: storage(new Map(), () => {}) });
-  const cookies = new Map<string, string>();
   Object.defineProperty(Document.prototype, "cookie", {
     configurable: true,
     get() { return [...cookies].map(([name, value]) => `${name}=${value}`).join("; "); },

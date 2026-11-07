@@ -64,7 +64,8 @@ export function renderBrowserFrame(workspaceId: string, view: WorkspaceBrowserVi
     : buttonHtml({ type: "button", variant: "secondary", content: externalLinkContent, disabled: true });
   const qrDialogId = `${navigationKey}_qr`;
   const qrButton = qrCodeButtonHtml(qrDialogId, "Open page on your phone", !target);
-  const qrDialog = target ? qrCodeDialogHtml(qrDialogId, previewUrl) : "";
+  const qrContentUrl = previewUrl.startsWith("/") ? `/workspaces/${encodeURIComponent(workspaceId)}/browser/${encodeURIComponent(browserId)}/qr` : undefined;
+  const qrDialog = target ? qrCodeDialogHtml(qrDialogId, previewUrl, qrContentUrl) : "";
   const reloadButton = buttonHtml({
     type: "button",
     variant: "secondary",

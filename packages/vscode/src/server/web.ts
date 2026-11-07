@@ -7,6 +7,7 @@ import { patchVSCodeWorkspaceAppResponse, resolveVSCodeWorkspaceAppBackend, vsco
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 import { handleVSCodePublicResource } from "./public-resources.ts";
+import { publicWorkspaceAppOrigin } from "@kintsugi/proxy-ingress/server";
 
 function vscodeWorkViewPresentation(view: WorkspaceVSCodeView): WorkspaceWorkViewPresentation {
   return {
@@ -62,6 +63,7 @@ export const vscodeWorkspaceModule: WorkspaceModule = {
       ? {
           ...await resolveVSCodeWorkspaceAppBackend(app, requestUrl),
           adaptResponse: (response, request) => patchVSCodeWorkspaceAppResponse(app, response, request),
+          adaptPreviewResponse: (response, request, basePath) => patchVSCodeWorkspaceAppResponse(app, response, request, new URL(publicWorkspaceAppOrigin(request)), basePath),
         }
       : undefined);
     context.onWorkspaceRemoved(deleteWorkspaceVSCodeState);
