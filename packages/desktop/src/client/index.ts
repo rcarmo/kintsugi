@@ -46,7 +46,7 @@ export const kintsugiClientModule: WorkspaceClientModule = {
 
       loaded(): void {
         this.reset();
-        // The canonical iframe URL redirects to an assigned ingress origin.
+        // The viewer uses a management subpath (or a retained legacy origin).
         // This non-sensitive request discovers it; replies must prove possession
         // of the per-frame token before we pin and check that origin.
         this.frameTarget.contentWindow?.postMessage({ type: "kintsugi:desktop:status-request" }, "*");

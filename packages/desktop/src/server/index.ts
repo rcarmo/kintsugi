@@ -3,7 +3,8 @@ import { buttonHtml } from "@kintsugi/design-system/button";
 import { copyButtonHtml } from "@kintsugi/design-system/copy-button";
 import { Icons } from "@kintsugi/design-system/icons";
 import { domId, escapeHtml, type WorkspaceModule, type WorkspaceWorkViewPresentation } from "@kintsugi/shared";
-import { createWorkspaceMetadataState, workspacePortBackend } from "@kintsugi/workspace";
+import { createWorkspaceMetadataState, workspacePortBackend, resolveWorkspace } from "@kintsugi/workspace";
+import { createWorkspaceSocketSession } from "@kintsugi/proxy-ingress/server";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { createDesktopPresenter } from "./agent-tool.ts";
@@ -63,7 +64,27 @@ export const kintsugiServerModule: WorkspaceModule = {
       return { createdWorkView: reference };
     },
   }],
+  routes: [{ async handle(request, url) {
+    const match = url.pathname.match(/^\/workspaces\/([^/]+)\/apps\/desktop(\/.*)?$/);
+    if (!match) return;
+    if (request.method !== "GET") return new Response("Method not allowed", { status: 405, headers: { allow: "GET" } });
+    const workspaceId = decodeURIComponent(match[1]!);
+    await resolveWorkspace(workspaceId);
+    if (!match[2]) return new Response(null, { status: 308, headers: { location: `${url.pathname}/${url.search}`, "cache-control": "no-store" } });
+    const local = new URL(url); local.pathname = match[2];
+    const result = await desktopViewerResponse(local, () => desktopRuntime.status(workspaceId));
+    result.headers.set("cache-control", "no-store");
+    result.headers.set("x-content-type-options", "nosniff");
+    if (result.headers.get("content-type")?.includes("text/html")) result.headers.set("content-security-policy", "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'");
+    return result;
+  } }],
   initialize(context) {
+    context.registerSocketHandler(url => {
+      const match = url.pathname.match(/^\/workspaces\/([^/]+)\/apps\/desktop\/websockify$/);
+      if (!match) return;
+      const workspaceId = decodeURIComponent(match[1]!);
+      return createWorkspaceSocketSession(async () => { await resolveWorkspace(workspaceId); return workspacePortBackend(workspaceId, 6080, "/"); });
+    });
     context.registerWorkspaceAppResolver(async (app, url) => {
       if (app.appKey !== "desktop") return undefined;
       // Only the remote-display transport is exposed. Never proxy CDP or VNC.

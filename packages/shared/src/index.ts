@@ -224,7 +224,8 @@ export interface WorkspaceDeletionReview {
 }
 
 export interface WorkspaceSocketConnection {
-  send(message: string | Uint8Array): void;
+  getBufferedAmount?(): number;
+  send(message: string | Uint8Array): number | void;
   close(code?: number, reason?: string): void;
 }
 

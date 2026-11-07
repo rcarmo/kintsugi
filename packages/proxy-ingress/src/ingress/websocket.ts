@@ -27,8 +27,8 @@ export function forwardToUpstream(
 }
 
 /** Listen before awaiting upstream upgrade: VNC sends its greeting immediately. */
-export function bufferUpstreamSocket(upstream: WebSocket): (socket: Pick<import("bun").ServerWebSocket<unknown>, "send" | "close">) => void {
-  type Socket = Pick<import("bun").ServerWebSocket<unknown>, "send" | "close">;
+export function bufferUpstreamSocket(upstream: WebSocket): (socket: { send(data: string | ArrayBuffer): number; close(code?: number, reason?: string): void }) => void {
+  type Socket = { send(data: string | ArrayBuffer): number; close(code?: number, reason?: string): void };
   let downstream: Socket | undefined;
   const pending: (string | ArrayBuffer)[] = [];
   let bytes = 0;

@@ -620,6 +620,9 @@ export async function handleCanonicalWorkspaceRequest(request: Request, ingress:
     return;
   }
 
+  // Desktop serves management-owned viewer code, not workspace HTML. Its HTTP
+  // and display socket routes are handled directly by the Desktop module.
+  if (app.appKey === "desktop") return;
   const response = await ingress.openCanonical(app, path);
   if (response.status !== 302) return response;
   const destination = new URL(response.headers.get("location")!);

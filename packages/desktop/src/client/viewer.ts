@@ -58,7 +58,7 @@ class DesktopController extends Controller {
   }
 
   private open(): void {
-    const url = new URL("/websockify", window.location.href);
+    const url = new URL("websockify", window.location.href);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     const rfb = new RFB(this.screenTarget, url.toString());
     this.rfb = rfb;
@@ -91,7 +91,7 @@ class DesktopController extends Controller {
   private async refresh(): Promise<void> {
     this.request = new AbortController();
     try {
-      const response = await fetch("/status", { signal: this.request.signal });
+      const response = await fetch(new URL("status", window.location.href), { signal: this.request.signal });
       if (!response.ok) throw new Error(`Desktop status: HTTP ${response.status}`);
       const html = await response.text();
       if (!this.active) return;

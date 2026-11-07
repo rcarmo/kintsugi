@@ -261,6 +261,7 @@
         "@kintsugi/agent": "workspace:*",
         "@kintsugi/core": "workspace:*",
         "@kintsugi/design-system": "workspace:*",
+        "@kintsugi/proxy-ingress": "workspace:*",
         "@kintsugi/shared": "workspace:*",
         "@kintsugi/workspace": "workspace:*",
         "@novnc/novnc": "1.7.0",

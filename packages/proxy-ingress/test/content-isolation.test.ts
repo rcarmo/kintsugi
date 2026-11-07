@@ -45,6 +45,18 @@ for (const [path, appKey, target] of paths) {
   });
 }
 
+test("management-owned Desktop routes do not allocate or redirect to a public preview port", async () => {
+  const ingress = createWorkspaceIngress({ hostname: "127.0.0.1",
+    resolveWorkspace() { throw new Error("Desktop module must resolve its own workspace"); },
+    resolveApp() { throw new Error("Desktop module must resolve its fixed display transport"); },
+  });
+  try {
+    for (const path of ["/", "/status", "/desktop-client.js", "/websockify"]) {
+      expect(await handleCanonicalWorkspaceRequest(new Request(`https://management.example/workspaces/one/apps/desktop${path}`), ingress)).toBeUndefined();
+    }
+  } finally { await ingress.stopAll(); }
+});
+
 test("publication failures and refreshed management-origin collisions fail closed", async () => {
   const port = freePort();
   let published = "http://localhost:3000";
