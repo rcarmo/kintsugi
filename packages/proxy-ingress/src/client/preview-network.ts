@@ -1,9 +1,12 @@
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { mapPreviewUrl, mapPreviewSrcset, rewritePreviewCss, type PreviewUrlContext } from "../preview-url.ts";
+import { mapPreviewUrl, mapPreviewScriptUrl, mapPreviewModuleUrl, previewUrlContextSchema, mapPreviewSrcset, rewritePreviewCss, type PreviewUrlContext } from "../preview-url.ts";
 import { replacePreviewCookies } from "./preview-storage.ts";
+import { installPreviewRequests } from "./preview-requests.ts";
+import { previewImportSpecifier } from "./preview-imports.ts";
+import { installPreviewGlobals } from "./preview-globals.ts";
 
-const contextSchema = Type.Object({ publicOrigin: Type.String(), root: Type.String(), app: Type.String(), upstream: Type.String(), cookies: Type.Optional(Type.String()) });
+const contextSchema = previewUrlContextSchema;
 
 export function installPreviewNetwork(): PreviewUrlContext | undefined {
   const configuration = document.querySelector<HTMLMetaElement>('meta[name="kintsugi-preview-context"]');
@@ -11,6 +14,7 @@ export function installPreviewNetwork(): PreviewUrlContext | undefined {
   const input: unknown = JSON.parse(configuration.content);
   if (!Value.Check(contextSchema, input)) throw new Error("Invalid workspace preview context");
   const context = input;
+  globalThis.__kintsugiPreviewImportSpecifier = (value, module) => previewImportSpecifier(value, module, context);
   const map = (url: string) => mapPreviewUrl(url, { ...context, upstream: currentUpstream() });
   function currentUpstream(): string {
     const current = new URL(document.baseURI);
@@ -25,74 +29,47 @@ export function installPreviewNetwork(): PreviewUrlContext | undefined {
     const native = History.prototype[method];
     History.prototype[method] = function(data, unused, url) { native.call(this, data, unused, url === undefined || url === null ? url : map(String(url))); };
   }
+  installPreviewGlobals(context, map);
   const nativeOpenWindow = window.open.bind(window);
   window.open = (url, target, features) => nativeOpenWindow(url === undefined || url === "" ? url : map(String(url)), target, features);
-  const NativeRequest = Request;
-  window.Request = new Proxy(NativeRequest, { construct(target, [input, init], newTarget) {
-    return Reflect.construct(target, [input instanceof NativeRequest ? input : map(String(input)), init], newTarget);
-  } });
-  const nativeFetch = window.fetch.bind(window);
-  window.fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const request = new Request(input instanceof Request ? input : map(String(input)), init);
-    const destination = map(request.url);
-    const headers = new Headers(request.headers);
-    if (new URL(destination).pathname.startsWith(context.root)) {
-      const authorization = headers.get("authorization");
-      if (authorization) { headers.set("x-kintsugi-preview-authorization", authorization); headers.delete("authorization"); }
-      headers.set("x-kintsugi-preview-cookie", document.cookie);
-      // Cloning a Request preserves its native body source (FormData, files,
-      // JSON, etc.), unlike rebuilding it from its exposed ReadableStream.
-      // Only a preexisting, unmapped Request needs a retargeted body.
-      const routed = destination === request.url ? request : new NativeRequest(destination, { method: request.method, headers: request.headers, body: ["GET", "HEAD"].includes(request.method) ? undefined : await request.blob(), signal: request.signal, redirect: request.redirect, cache: request.cache, keepalive: request.keepalive, integrity: request.integrity });
-      return nativeFetch(new NativeRequest(routed, { headers, mode: "cors", credentials: "omit", referrerPolicy: "no-referrer" })).then(response => {
-        const cookies = response.headers.get("x-kintsugi-preview-cookie");
-        if (cookies !== null) replacePreviewCookies(cookies);
-        return response;
-      });
-    }
-    return nativeFetch(request);
-  }, window.fetch);
-  const NativeSocket = WebSocket;
-  window.WebSocket = class extends NativeSocket {
-    constructor(url: string | URL, protocols?: string | string[]) { super(map(String(url)), protocols); }
-  };
-  const NativeEventSource = EventSource;
-  window.EventSource = class extends NativeEventSource {
-    constructor(url: string | URL, init?: EventSourceInit) { super(map(String(url)), { ...init, withCredentials: false }); }
-  };
-  const scopedRequests = new WeakSet<XMLHttpRequest>();
-  const nativeOpen = XMLHttpRequest.prototype.open;
-  XMLHttpRequest.prototype.open = function(method: string, url: string | URL, async: boolean = true, username?: string | null, password?: string | null) {
-    const destination = map(String(url));
-    if (new URL(destination).origin === context.publicOrigin && new URL(destination).pathname.startsWith(context.root)) scopedRequests.add(this);
-    else scopedRequests.delete(this);
-    nativeOpen.call(this, method, destination, async, username, password);
-  };
-  const nativeHeader = XMLHttpRequest.prototype.setRequestHeader;
-  XMLHttpRequest.prototype.setRequestHeader = function(name, value) { nativeHeader.call(this, scopedRequests.has(this) && name.toLowerCase() === "authorization" ? "x-kintsugi-preview-authorization" : name, value); };
-  const nativeSend = XMLHttpRequest.prototype.send;
-  XMLHttpRequest.prototype.send = function(body) {
-    if (scopedRequests.has(this)) {
-      nativeHeader.call(this, "x-kintsugi-preview-cookie", document.cookie);
-      this.addEventListener("load", () => { const cookies = this.getResponseHeader("x-kintsugi-preview-cookie"); if (cookies !== null) replacePreviewCookies(cookies); }, { once: true });
-    }
-    nativeSend.call(this, body);
-  };
+  installPreviewRequests(context, currentUpstream, { read: () => document.cookie, write: replacePreviewCookies });
   const nativeSetAttribute = Element.prototype.setAttribute;
   Element.prototype.setAttribute = function(name, value) {
     const attribute = String(name).toLowerCase();
     const text = String(value);
-    nativeSetAttribute.call(this, name, attribute === "srcset" ? mapPreviewSrcset(text, context) : ["src", "href", "action", "formaction", "poster", "data"].includes(attribute) ? map(text) : text);
+    if (this instanceof HTMLScriptElement && attribute === "src" && this.type.toLowerCase() === "module") { nativeSetAttribute.call(this, name, mapPreviewModuleUrl(text, { ...context, upstream: currentUpstream() })); return; }
+    nativeSetAttribute.call(this, name, this instanceof HTMLScriptElement && attribute === "src" ? mapPreviewScriptUrl(text, { ...context, upstream: currentUpstream() }) : attribute === "srcset" ? mapPreviewSrcset(text, context) : ["src", "href", "action", "formaction", "poster", "data"].includes(attribute) ? map(text) : text);
   };
   for (const [prototype, property] of [[HTMLScriptElement.prototype, "src"], [HTMLImageElement.prototype, "src"], [HTMLImageElement.prototype, "srcset"], [HTMLSourceElement.prototype, "src"], [HTMLSourceElement.prototype, "srcset"], [HTMLIFrameElement.prototype, "src"], [HTMLLinkElement.prototype, "href"], [HTMLAnchorElement.prototype, "href"], [HTMLMediaElement.prototype, "src"], [HTMLFormElement.prototype, "action"]] as const) {
     const descriptor = Object.getOwnPropertyDescriptor(prototype, property)!;
-    Object.defineProperty(prototype, property, { ...descriptor, set(value: string) { descriptor.set!.call(this, property === "srcset" ? mapPreviewSrcset(String(value), context) : map(String(value))); } });
+    Object.defineProperty(prototype, property, { ...descriptor, set(value: string) { descriptor.set!.call(this, this instanceof HTMLScriptElement && this.type.toLowerCase() === "module" ? mapPreviewModuleUrl(String(value), { ...context, upstream: currentUpstream() }) : this instanceof HTMLScriptElement ? mapPreviewScriptUrl(String(value), { ...context, upstream: currentUpstream() }) : property === "srcset" ? mapPreviewSrcset(String(value), context) : map(String(value))); } });
   }
   const css = (text: string, upstream = currentUpstream()) => rewritePreviewCss(String(text), { ...context, upstream });
   const setProperty = CSSStyleDeclaration.prototype.setProperty;
   CSSStyleDeclaration.prototype.setProperty = function(property, value, priority) { setProperty.call(this, property, css(value ?? ""), priority); };
-  for (const [property, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(CSSStyleDeclaration.prototype))) {
-    if (descriptor.set) Object.defineProperty(CSSStyleDeclaration.prototype, property, { ...descriptor, set(value: string | null) { descriptor.set!.call(this, css(value ?? "")); } });
+  // Chromium exposes CSS names as exotic own properties; WebKit puts them on
+  // CSSStyleProperties. Prototype setters alone do not cover direct assignments.
+  const styles = new WeakMap<CSSStyleDeclaration, CSSStyleDeclaration>();
+  for (const prototype of [HTMLElement.prototype, SVGElement.prototype, CSSStyleRule.prototype, CSSKeyframeRule.prototype, CSSPageRule.prototype, CSSFontFaceRule.prototype]) {
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, "style")!;
+    const mappedDescriptor: PropertyDescriptor = { ...descriptor, get() {
+      const style: CSSStyleDeclaration = descriptor.get!.call(this);
+      let mapped = styles.get(style);
+      if (!mapped) {
+        mapped = new Proxy(style, {
+          get(target, property) {
+            // SAFETY: Proxy keys are requested native CSS declaration properties; access uses the real DOM receiver.
+            const value = target[property as keyof CSSStyleDeclaration];
+            return Value.Check(Type.Function([], Type.Unknown()), value) && property !== "constructor" ? value.bind(target) : value;
+          },
+          set(target, property, value) { return Reflect.set(target, property, Value.Check(Type.String(), property) && property in target ? css(String(value ?? ""), target.parentRule?.parentStyleSheet?.href ?? currentUpstream()) : value, target); },
+        });
+        styles.set(style, mapped);
+      }
+      return mapped;
+    } };
+    if (descriptor.set) mappedDescriptor.set = function(value: string) { descriptor.set!.call(this, css(value)); };
+    Object.defineProperty(prototype, "style", mappedDescriptor);
   }
   const nativeText = Object.getOwnPropertyDescriptor(Node.prototype, "textContent")!;
   Object.defineProperty(Node.prototype, "textContent", { ...nativeText, set(value: string | null) { nativeText.set!.call(this, this instanceof HTMLStyleElement ? css(value ?? "") : value); } });

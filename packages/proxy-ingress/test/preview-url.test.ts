@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mapPreviewUrl, type PreviewUrlContext } from "../src/preview-url.ts";
+import { mapPreviewUrl, previewWorkerContext, type PreviewUrlContext } from "../src/preview-url.ts";
 
 const context: PreviewUrlContext = { publicOrigin: "https://dynamic-tailnet.example", root: "/~preview/unpredictable/", app: "port-3152", upstream: "http://localhost:3152/pages/index.html" };
 const prefix = "https://dynamic-tailnet.example/~preview/unpredictable/";
@@ -28,4 +28,20 @@ test("nested capabilities compose older HTTP and HTTPS authorities without publi
   expect(mapPreviewUrl("http://localhost:4915/vscode-public-resources/chat.json", nested)).toBe(`${nested.publicOrigin}/vscode-public-resources/chat.json`);
   expect(mapPreviewUrl("https://localhost:4915/~preview-assets/runtime.js", nested)).toBe(`${nested.publicOrigin}/~preview-assets/runtime.js`);
   expect(mapPreviewUrl("https://unrelated.example/~preview/inner/vscode/", nested)).toBe("https://unrelated.example/~preview/inner/vscode/");
+});
+
+test("worker transport resolves script-relative requests and never forwards another app's script cookies", () => {
+  const parent = { ...context, cookies: "parent=visible" };
+  const worker = previewWorkerContext(`${prefix}port-3152/workers/job.js?version=2`, parent);
+  expect(worker.upstream).toBe("http://localhost:3152/workers/job.js?version=2");
+  expect(worker.cookies).toBe(parent.cookies);
+  expect(mapPreviewUrl("./data.json", worker)).toBe(`${prefix}port-3152/workers/data.json`);
+  const other = previewWorkerContext(`${prefix}https~port-8443%40app.localhost/workers/job.js`, parent);
+  expect(other.app).toBe("https~port-8443@app.localhost");
+  expect(other.upstream).toBe("https://app.localhost:8443/workers/job.js");
+  expect(other.cookies).toBe("");
+  expect(mapPreviewUrl("/api", other)).toBe(`${prefix}https~port-8443%40app.localhost/api`);
+  const file = previewWorkerContext(`${prefix}file/work/worker.js`, parent);
+  expect(file.upstream).toBe("file:///work/worker.js"); expect(file.cookies).toBe("");
+  expect(previewWorkerContext("blob:null/opaque-worker", parent)).toBe(parent);
 });

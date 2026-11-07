@@ -5,6 +5,8 @@ import { backendTransport } from "./backend-transport.ts";
 import { localAppHost } from "./local-app.ts";
 import { bufferUpstreamSocket, closeWebSocket, forwardToUpstream, maxSocketBufferedBytes } from "./websocket.ts";
 import { mapPreviewUrl, previewAppPath, previewProtocolHeader, previewProtocolVersion, type PreviewUrlContext } from "../preview-url.ts";
+import { rewritePreviewGlobals } from "./preview-globals.ts";
+import { previewWindowParameter } from "../preview-url.ts";
 import { previewContentPolicy, previewSandbox, rewritePreviewCss, rewritePreviewHtml, rewritePreviewJavaScript, readNestedPreviewContext } from "./preview-rewrite.ts";
 
 export const previewResourcePrefix = "/~preview/";
@@ -35,14 +37,15 @@ export interface PreparedPreviewSocket {
   cancel(): void;
 }
 
-let assets: Promise<{ runtime: string; host: string }> | undefined;
+let assets: Promise<{ runtime: string; host: string; worker: string }> | undefined;
 async function previewAssets() {
   return assets ??= (async () => {
-    const build = await Bun.build({ entrypoints: [new URL("../client/preview-runtime.ts", import.meta.url).pathname, new URL("../client/preview-host.ts", import.meta.url).pathname], target: "browser", format: "iife", minify: true, naming: "[name].[ext]" });
+    const build = await Bun.build({ entrypoints: [new URL("../client/preview-runtime.ts", import.meta.url).pathname, new URL("../client/preview-host.ts", import.meta.url).pathname, new URL("../client/preview-worker-network.ts", import.meta.url).pathname], target: "browser", format: "iife", minify: true, naming: "[name].[ext]" });
     if (!build.success) throw new AggregateError(build.logs, "Could not build isolated preview runtime");
     const runtime = build.outputs.find(output => output.path.endsWith("preview-runtime.js"))!;
     const host = build.outputs.find(output => output.path.endsWith("preview-host.js"))!;
-    return { runtime: await runtime.text(), host: await host.text() };
+    const worker = build.outputs.find(output => output.path.endsWith("preview-worker-network.js"))!;
+    return { runtime: await runtime.text(), host: await host.text(), worker: await worker.text() };
   })();
 }
 
@@ -85,11 +88,11 @@ export function createWorkspacePathPreviews(options: WorkspacePathPreviewOptions
     if (port ? !isWorkspaceAppPort(port.port) : !["vscode", "file"].includes(key)) return;
     if (session.scope && (app !== session.scope.app || !match[3]!.startsWith(session.scope.prefix))) return;
     const query = new URLSearchParams(url.search);
-    if (!nestedPreviewPath.test(match[3]!)) query.delete("__kintsugi_persist");
+    if (!nestedPreviewPath.test(match[3]!)) { query.delete("__kintsugi_persist"); query.delete(previewWindowParameter); }
     return { session, app, path: `${match[3]}${query.size ? `?${query}` : ""}` };
   }
   function contextFor(request: Request, resource: PreviewResource, upstream: URL): PreviewUrlContext {
-    return { publicOrigin: options.publicOrigin(request), root: `${previewResourcePrefix}${resource.session.token}/`, app: resource.app, upstream: upstream.href };
+    return { publicOrigin: options.publicOrigin(request), root: `${previewResourcePrefix}${resource.session.token}/`, app: resource.app, upstream: upstream.href, windowGlobals: new URL(request.url).searchParams.get(previewWindowParameter) === "1" };
   }
   async function backendFor(resource: PreviewResource): Promise<WorkspaceAppBackend> {
     await resolve(resource.session.workspaceId);
@@ -195,9 +198,9 @@ export function createWorkspacePathPreviews(options: WorkspacePathPreviewOptions
       if (!path.startsWith(previewAssetPrefix)) return;
       if (request.method !== "GET") return new Response("Method not allowed", { status: 405 });
       const name = path.slice(previewAssetPrefix.length);
-      if (!["runtime.js", "host.js"].includes(name)) return new Response("Not found", { status: 404 });
+      if (!["runtime.js", "host.js", "worker.js"].includes(name)) return new Response("Not found", { status: 404 });
       const bundle = await previewAssets();
-      return new Response(name === "runtime.js" ? bundle.runtime : bundle.host, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "access-control-allow-origin": "*" } });
+      return new Response(name === "runtime.js" ? bundle.runtime : name === "worker.js" ? bundle.worker : bundle.host, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "access-control-allow-origin": "*" } });
     },
     async resource(request: Request): Promise<Response | undefined> {
       const url = new URL(request.url);
@@ -267,10 +270,17 @@ export function createWorkspacePathPreviews(options: WorkspacePathPreviewOptions
       if (request.method === "HEAD" || !response.body || [204, 205, 304].includes(response.status)) return new Response(null, { status: response.status, headers: out });
       let body: BodyInit;
       if (type.includes("text/html")) {
-        body = await rewritePreviewHtml(html ?? await response.text(), context, nonce, url.searchParams.get("__kintsugi_persist") === "1", protocol === previewProtocolVersion);
+        context.windowGlobals = true;
+        const rewritten = await rewritePreviewHtml(html ?? await response.text(), context, nonce, url.searchParams.get("__kintsugi_persist") === "1", protocol === previewProtocolVersion);
+        body = rewritten.html;
+        out.set("content-security-policy", rewritten.policy.rewrite(out.get("content-security-policy")!));
         out.set(previewProtocolHeader, previewProtocolVersion);
       }
-      else if (type.includes("javascript")) body = await rewritePreviewJavaScript(await response.text(), context);
+      else if (type.includes("javascript")) {
+        const source = await response.text();
+        body = rewritePreviewJavaScript(context.windowGlobals && context.app !== "vscode" && protocol !== previewProtocolVersion ? await rewritePreviewGlobals(source) : source, context);
+        out.set(previewProtocolHeader, previewProtocolVersion);
+      }
       else if (type.includes("text/css")) body = rewritePreviewCss(await response.text(), context);
       else body = response.body;
       return new Response(body, { status: response.status, statusText: response.statusText, headers: out });

@@ -1,7 +1,7 @@
 import { parseSrcset, stringifySrcset } from "srcset";
 import { Type } from "typebox";
 import { tokenize, isTokenURL, isTokenString, isTokenFunction, isTokenAtKeyword, isTokenWhitespace, isTokenComment, type CSSToken } from "@csstools/css-tokenizer";
-import { isWorkspaceLoopbackHost, localhostSubdomain, workspacePortAppKey } from "@kintsugi/shared";
+import { isWorkspaceLoopbackHost, localhostSubdomain, workspacePortAppKey, parseWorkspacePortAppKey } from "@kintsugi/shared";
 
 export interface PreviewUrlContext {
   /** Request-derived HTTPS origin, never a configured deployment hostname. */
@@ -12,13 +12,16 @@ export interface PreviewUrlContext {
   /** Original app URL for relative resource resolution. */
   upstream: string;
   cookies?: string;
+  /** Window URL aliases are installed before this script executes. */
+  windowGlobals?: boolean;
   /** Earlier capability roots when this document traversed nested transports. */
   aliases?: Array<{ origin: string; root: string }>;
 }
 
-export const previewUrlContextSchema = Type.Object({ publicOrigin: Type.String(), root: Type.String(), app: Type.String(), upstream: Type.String(), cookies: Type.Optional(Type.String()), aliases: Type.Optional(Type.Array(Type.Object({ origin: Type.String(), root: Type.String() }))) });
+export const previewUrlContextSchema = Type.Object({ publicOrigin: Type.String(), root: Type.String(), app: Type.String(), upstream: Type.String(), cookies: Type.Optional(Type.String()), windowGlobals: Type.Optional(Type.Boolean()), aliases: Type.Optional(Type.Array(Type.Object({ origin: Type.String(), root: Type.String() }))) });
 export const previewProtocolHeader = "x-kintsugi-preview-protocol";
 export const previewProtocolVersion = "1";
+export const previewWindowParameter = "__kintsugi_window";
 
 export function mapPreviewSrcset(value: string, context: PreviewUrlContext): string {
   return stringifySrcset(parseSrcset(value).map(candidate => ({ ...candidate, url: mapPreviewUrl(candidate.url, context) })));
@@ -54,18 +57,21 @@ export function mapPreviewUrl(input: string, context: PreviewUrlContext): string
     return mapped.href;
   }
   let app = context.app;
-  if (target.origin === context.publicOrigin) {
+  const publicUrl = new URL(context.publicOrigin);
+  const visibleHost = target.hostname === publicUrl.hostname;
+  if (target.origin === context.publicOrigin || (visibleHost && target.port === publicUrl.port)) {
     // App code often builds root URLs from location.origin. Keep these inside
     // the workspace instead of allowing them to address management endpoints.
   } else if (target.protocol === "file:" && !target.host) app = "file";
   else if (target.origin === current.origin) {
     // The resource belongs to the current logical app.
   } else if (/^(?:file|vscode-remote)\+.*\.vscode-resource\.vscode-cdn\.net$/.test(target.hostname)) app = "file";
-  else if (isWorkspaceLoopbackHost(target.hostname)) {
+  else if (isWorkspaceLoopbackHost(target.hostname) || visibleHost) {
     const port = Number(target.port || (target.protocol === "https:" ? 443 : 80));
     const currentPort = Number(current.port || (current.protocol === "https:" ? 443 : 80));
-    if (!(isWorkspaceLoopbackHost(current.hostname) && port === currentPort && target.protocol === current.protocol && localhostSubdomain(target.hostname) === localhostSubdomain(current.hostname))) {
-      app = `${target.protocol === "https:" ? "https~" : ""}${workspacePortAppKey(port, target.hostname)}`;
+    const host = visibleHost ? isWorkspaceLoopbackHost(current.hostname) ? current.hostname : "localhost" : target.hostname;
+    if (!(isWorkspaceLoopbackHost(current.hostname) && port === currentPort && (target.protocol === current.protocol || websocket) && localhostSubdomain(host) === localhostSubdomain(current.hostname))) {
+      app = `${target.protocol === "https:" ? "https~" : ""}${workspacePortAppKey(port, host)}`;
     }
   } else return input;
   const mapped = new URL(context.publicOrigin);
@@ -76,6 +82,36 @@ export function mapPreviewUrl(input: string, context: PreviewUrlContext): string
   return mapped.href;
 }
 
+export function mapPreviewScriptUrl(input: string, context: PreviewUrlContext): string {
+  const mapped = mapPreviewUrl(input, context);
+  const target = URL.parse(mapped, context.upstream);
+  if (context.windowGlobals !== true || !target || target.origin !== context.publicOrigin || !target.pathname.startsWith(context.root)) return mapped;
+  target.searchParams.set(previewWindowParameter, "1");
+  return target.href;
+}
+
+export function mapPreviewModuleUrl(input: string, context: PreviewUrlContext): string {
+  // Bare imports still belong to the browser's import map/package resolver.
+  if (!/^(?:\.{1,2}\/|\/|https?:\/\/|file:\/\/)/.test(input)) return input;
+  return mapPreviewScriptUrl(input, context);
+}
+
+export function previewWorkerContext(entry: string, context: PreviewUrlContext): PreviewUrlContext {
+  const source = new URL(entry);
+  if (source.origin !== context.publicOrigin || !source.pathname.startsWith(context.root)) return context;
+  const start = context.root.length;
+  const end = source.pathname.indexOf("/", start);
+  const app = decodeURIComponent(source.pathname.slice(start, end));
+  const key = app.startsWith("https~") ? app.slice(6) : app;
+  const port = parseWorkspacePortAppKey(key);
+  let upstream = new URL(context.upstream);
+  if (port) upstream = new URL(`${app.startsWith("https~") ? "https" : "http"}://${port.host ?? "localhost"}:${port.port}`);
+  else if (app === "file") upstream = new URL("file:///");
+  else if (app !== context.app) throw new Error("Unsupported cross-app worker source");
+  upstream.pathname = source.pathname.slice(end); upstream.search = source.search; upstream.hash = source.hash;
+  return { ...context, app, upstream: upstream.href, cookies: app === context.app ? context.cookies : "" };
+}
+
 /** Preserve the application's policy while allowing the injected compatibility runtime. */
 export function previewContentPolicy(policy: string, context: PreviewUrlContext, nonce: string): string {
   if (policy.includes(",")) return policy.split(",").map(part => previewContentPolicy(part, context, nonce)).join(", ");
@@ -83,11 +119,25 @@ export function previewContentPolicy(policy: string, context: PreviewUrlContext,
   // Opaque ancestors cannot be named in frame-ancestors. The capability and
   // immutable sandbox replace framing restrictions, not script/form policies.
   directives.delete("frame-ancestors");
-  for (const [name, values] of directives) directives.set(name, values.map(value => value === "'self'" ? `${context.publicOrigin}${context.root}` : /^https?:\/\//.test(value) ? mapPreviewUrl(value, context) : value));
+  for (const [name, values] of directives) directives.set(name, values.map(value => value === "'self'" ? `${context.publicOrigin}${context.root}` : /^(?:https?|wss?):\/\//.test(value) ? mapPreviewUrl(value, context) : value));
+  const scriptSources = (values: string[], workers: boolean): string[] => {
+    const sources = values.filter(value => value !== "'none'");
+    // Adding a nonce disables CSP's otherwise-effective unsafe-inline. Keep
+    // that existing permission intact rather than breaking the app's scripts.
+    if (!sources.includes("'unsafe-inline'") || sources.some(value => /^'(?:nonce-|sha(?:256|384|512)-)/.test(value))) sources.push(`'nonce-${nonce}'`);
+    if (workers) sources.push("data:", "blob:");
+    sources.push(`${context.publicOrigin}/~preview-assets/runtime.js`, `${context.publicOrigin}/~preview-assets/worker.js`);
+    return sources;
+  };
   const scripts = directives.get("script-src") ?? directives.get("default-src") ?? [];
-  if (directives.has("script-src") || directives.has("default-src")) directives.set("script-src", [...scripts.filter(value => value !== "'none'"), `'nonce-${nonce}'`, "data:", "blob:"]);
-  if (directives.has("script-src-elem")) directives.set("script-src-elem", [...directives.get("script-src-elem")!.filter(value => value !== "'none'"), `'nonce-${nonce}'`]);
-  directives.set("worker-src", [`${context.publicOrigin}${context.root}`, "data:", "blob:"]);
+  const elements = directives.get("script-src-elem") ?? scripts;
+  const restricted = directives.has("script-src") || directives.has("default-src");
+  if (restricted) directives.set("script-src", scriptSources(scripts, true));
+  // Data/blob are needed inside opaque workers, not as a new permission for
+  // attacker-injected document script elements.
+  if (restricted || directives.has("script-src-elem")) directives.set("script-src-elem", scriptSources(elements, false));
+  const workers = directives.get("worker-src");
+  directives.set("worker-src", workers?.every(source => source === "'none'") ? ["'none'"] : [`${context.publicOrigin}${context.root}`, `${context.publicOrigin}/~preview-assets/worker.js`, "data:", "blob:"]);
   return [...directives].map(([name, values]) => `${name} ${values.join(" ")}`).join("; ");
 }
 
