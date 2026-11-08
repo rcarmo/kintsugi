@@ -44,16 +44,19 @@ Local app-only publishing also checks the existing System on every target channe
 Publish new System support before making an app require it. Unversioned images are
 version 0. Version 1 provides the compatibility foundation; version 2 adds optional
 listed-host policies; version 3 adds persistent resource admission and OOM
-containment. The app minimum stays at 0, with explicit capability-2 and capability-3
-gates for listed-host mode and resource controls. The network-policy reader stays
-at 2. Configured inspector allocations require independent resource-policy reader
-1 and System 3; app-only and paired preparation/activation/rollback and installer
-checks reject incompatible targets without resetting configuration. Saved custom
-sources, pins and the retained image-pair protocol are unchanged.
+containment; version 4 adds the optional installation-wide workspace RAM cap.
+The app minimum stays at 0, with explicit capability-2, capability-3 and capability-4
+gates for listed-host mode, resource controls and the global RAM cap. The
+network-policy reader stays at 2; the resource-policy reader is now 2. Configured
+inspector allocations require reader 1 and System 3; a saved global RAM cap
+requires reader 2 and System 4. App-only and paired preparation/activation/rollback
+and installer checks reject incompatible targets without resetting configuration.
+Saved custom sources, pins and the retained image-pair protocol are unchanged.
 
 Token telemetry is app-owned and opt-in. It introduces no new System operation or
-compatibility-counter change: System 3, app minimum 0, network-policy reader 2 and
-resource-policy reader 1 remain unchanged. Updating source does not enable an
+compatibility-counter change of its own. The current counters, including the RAM
+policy support above, are System 4, app minimum 0, network-policy reader 2 and
+resource-policy reader 2. Updating source does not enable an
 exporter or deploy an installation. Its private configuration/checkpoints live in
 app data and survive app replacement. An app that predates this feature does not export telemetry;
 image rollback is not a settings/checkpoint restore. Provider caching defaults,
