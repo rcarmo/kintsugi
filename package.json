@@ -26,6 +26,7 @@
     "check": "bun run generate:workspace-modules && bun run lint && bunx tsc --noEmit -p tsconfig.json",
     "lint": "oxlint .",
     "test": "bun run generate:workspace-modules && bun run test:parallel && bun run test:native",
+    "test:bounded": "bun --smol scripts/test-batches.ts",
     "test:gateway": "bun run packages/proxy-ingress/scripts/test-workspace-gateway.ts",
     "ci": "bun ci && bun run check && bun run test",
     "web": "bun run --cwd apps/web dev",
