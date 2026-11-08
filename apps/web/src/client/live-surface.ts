@@ -1,3 +1,4 @@
+import { flushPreviewFrames } from "@kintsugi/proxy-ingress/preview-client";
 import { CableTopics, type CableSubscription } from "@kintsugi/shared";
 import { Controller } from "@hotwired/stimulus";
 import { registerWorkspaceControllers } from "./workspace-controller-registry.ts";
@@ -15,6 +16,8 @@ class LiveSurfaceController extends Controller<HTMLElement> {
   ready = false;
   private failure?: HTMLElement;
   private failed = false;
+  private releaseGeneration = 0;
+  private releasing?: Promise<void>;
   get prepared(): boolean { return this.ready || this.failed; }
 
   connect(): void {
@@ -23,13 +26,22 @@ class LiveSurfaceController extends Controller<HTMLElement> {
   }
 
   disconnect(): void {
+    this.releaseGeneration++;
     mounts.delete(this.element);
     this.stop();
   }
 
   release(): void {
-    this.stop();
-    this.element.replaceChildren();
+    if (this.releasing) return;
+    const generation = ++this.releaseGeneration;
+    this.releasing = flushPreviewFrames(this.element).then(() => {
+      if (generation !== this.releaseGeneration) return;
+      this.stop();
+      this.element.replaceChildren();
+    }).catch(error => {
+      console.error("Workspace surface release paused", error);
+      this.showFailure("Preview settings did not finish saving. The pane was kept open.");
+    }).finally(() => { this.releasing = undefined; });
   }
 
   stop(): void {
@@ -64,6 +76,8 @@ class LiveSurfaceController extends Controller<HTMLElement> {
   }
 
   ensureReady(): Promise<void> {
+    // A workspace selected again during saving must keep its live document.
+    this.releaseGeneration++;
     if (this.ready || this.failed) return Promise.resolve();
     if (this.pending) return this.pending.promise;
     const pending = this.pending = Promise.withResolvers<void>();

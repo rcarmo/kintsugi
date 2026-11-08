@@ -1,3 +1,4 @@
+import { applyPreviewDatabaseChanges, previewDatabaseChanges } from "../preview-database-changes.ts";
 import { applyPreviewLocalChange, initialPreviewState, parsePreviewState, type PreviewLocalChange, type PreviewState } from "../preview-state.ts";
 
 /** The host chooses the scope; the opaque child never supplies a workspace or storage key. */
@@ -35,9 +36,10 @@ export class PreviewStateStore {
     return { state, changed };
   }
 
-  async saveDatabases(scope: string, input: PreviewState): Promise<void> {
+  async saveDatabases(scope: string, input: PreviewState, previous: PreviewState["databases"]): Promise<void> {
     const state = parsePreviewState(input);
-    await this.update(scope, current => { current.databases = state.databases; });
+    const changes = await previewDatabaseChanges(this.factory, previous, state.databases);
+    await this.update(scope, current => { current.databases = applyPreviewDatabaseChanges(this.factory, current.databases, changes); });
   }
 
   /** Read and modify in one native transaction, including across host instances/tabs. */

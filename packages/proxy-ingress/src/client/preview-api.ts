@@ -1,3 +1,4 @@
+export { flushPreviewFrame, flushPreviewFrames } from "./preview-flush.ts";
 export { setPreparedPreviewDocument } from "./preview-document.ts";
 export { installPreviewNetwork } from "./preview-network.ts";
 export { installPreviewStorage, installPreviewIndexedDB } from "./preview-storage.ts";

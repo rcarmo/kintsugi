@@ -30,6 +30,7 @@ export class PreviewPersistenceBroker {
     try {
       await this.writes.get(scope);
       const state = await this.store.load(scope);
+      let previousDatabases = state.databases;
       channel.port1.onmessage = event => {
         const data: unknown = event.data;
         if (!Value.Check(command, data)) {
@@ -42,7 +43,11 @@ export class PreviewPersistenceBroker {
           if (data.type === "local") {
             const saved = await this.store.saveLocal(scope, data.change);
             for (const client of clients) if (client === channel.port1 || saved.changed) client.postMessage({ type: "local-change", change: data.change, revision: saved.state.revision, remote: client !== channel.port1 });
-          } else await this.store.saveDatabases(scope, parsePreviewState(data.state));
+          } else {
+            const snapshot = parsePreviewState(data.state);
+            await this.store.saveDatabases(scope, snapshot, previousDatabases);
+            previousDatabases = snapshot.databases;
+          }
           channel.port1.postMessage({ type: "saved", id: data.id });
         }).catch(error => {
           channel.port1.postMessage({ type: "save-error", id: data.type === "close" ? 0 : data.id });

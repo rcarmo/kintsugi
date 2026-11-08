@@ -6,6 +6,7 @@ import { Value } from "typebox/value";
 import { Type } from "typebox";
 import { applyPreviewLocalChange, parsePreviewState, previewLocalChangeSchema, previewStorageEntriesSchema, type PreviewLocalChange, type PreviewState } from "../preview-state.ts";
 import { installPreviewNetwork } from "./preview-network.ts";
+import { previewFlushRequestSchema } from "../preview-persistence-protocol.ts";
 import { setPreviewParserScriptText } from "./preview-markup.ts";
 
 // Workspace documents only. Never load this entrypoint into a management document.
@@ -70,13 +71,28 @@ async function start(): Promise<void> {
   let writes = Promise.resolve();
   let databaseDirty = false;
   let sequence = 0;
-  const saved = new Map<number, { resolve(): void; reject(error: Error): void }>();
+  const saved = new Map<number, { done: Promise<void>; resolve(): void; reject(error: Error): void }>();
+  let persistenceFailure: Error | undefined;
+  function waitForSave(id: number): Promise<void> {
+    const pending = Promise.withResolvers<void>();
+    saved.set(id, { done: pending.promise, resolve: pending.resolve, reject: pending.reject });
+    return pending.promise;
+  }
   function notifyStorage(area: Storage, key: string | null, oldValue: string | null, newValue: string | null): void {
     const notification = new StorageEvent("storage", { key, oldValue, newValue });
     Object.defineProperty(notification, "storageArea", { value: area });
     window.dispatchEvent(notification);
   }
   port.onmessage = event => {
+    if (Value.Check(previewFlushRequestSchema, event.data)) {
+      const id = event.data.id;
+      void flush().then(async () => {
+        await Promise.all([...saved.values()].map(pending => pending.done));
+        if (persistenceFailure) throw persistenceFailure;
+        port.postMessage({ type: "flushed", id, saved: true });
+      }).catch(error => { port.postMessage({ type: "flushed", id, saved: false }); fail(error); });
+      return;
+    }
     if (event.data?.type === "session-state" && Value.Check(previewStorageEntriesSchema, event.data.values)) {
       const next = new Map<string, string>(event.data.values);
       for (const key of new Set([...session.keys(), ...next.keys()])) {
@@ -102,7 +118,7 @@ async function start(): Promise<void> {
     if (!pending) return;
     saved.delete(event.data.id);
     if (event.data.type === "saved") { pending.resolve(); port.postMessage({ type: "persisted" }); }
-    else pending.reject(new Error("Preview settings could not be saved"));
+    else { persistenceFailure = new Error("Preview settings could not be saved"); pending.reject(persistenceFailure); }
   };
   persistence.onmessage = port.onmessage;
   function changed() { databaseDirty = true; clearTimeout(timer); timer = setTimeout(() => { void flush().catch(fail); }, 250); }
@@ -113,7 +129,7 @@ async function start(): Promise<void> {
       databaseDirty = false;
       const databases = await snapshotPreviewDatabases(indexedDB);
       const id = ++sequence;
-      const done = new Promise<void>((resolve, reject) => { saved.set(id, { resolve, reject }); });
+      const done = waitForSave(id);
       persistence.postMessage({ type: "save", id, state: { version: 2, revision: 0, local: [], databases } });
       await done;
     });
@@ -121,7 +137,7 @@ async function start(): Promise<void> {
   }
   function persistStorage(type: "local" | "session", change: PreviewLocalChange): void {
     const id = ++sequence;
-    const done = new Promise<void>((resolve, reject) => { saved.set(id, { resolve, reject }); });
+    const done = waitForSave(id);
     void done.catch(fail);
     (type === "local" ? persistence : port).postMessage({ type, id, change });
   }
@@ -144,6 +160,11 @@ async function start(): Promise<void> {
     request.addEventListener("success", changed, { once: true });
     return request;
   };
+  window.addEventListener("beforeunload", event => {
+    if (!saved.size && !databaseDirty) return;
+    event.preventDefault(); event.returnValue = "";
+    void flush().catch(fail);
+  });
   window.addEventListener("pagehide", event => { void flush().then(() => { if (!event.persisted) persistence.postMessage({ type: "close" }); }).catch(fail); });
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") void flush().catch(fail); });
   await resumeScripts();

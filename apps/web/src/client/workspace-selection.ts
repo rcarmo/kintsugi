@@ -1,3 +1,4 @@
+import { flushPreviewFrames } from "@kintsugi/proxy-ingress/preview-client";
 import { restoreAppSettingsDestination } from "./app-settings-controller.ts";
 import { restoreTemplateSettingsDestination } from "./template-settings-controller.ts";
 import { markActiveWorkspaceRow } from "./workspace-presentation.ts";
@@ -26,8 +27,23 @@ class WorkspaceSelectionController extends Controller<HTMLElement> {
   private selection = 0;
   private readonly preparing = new Set<HTMLElement>();
   private retained = new Set<HTMLElement>();
+  private readonly preparedSubmissions = new WeakSet<HTMLFormElement>();
+  private readonly beforeWorkspaceStop = (event: SubmitEvent): void => {
+    if (!(event.target instanceof HTMLFormElement) || event.defaultPrevented) return;
+    const form = event.target, url = new URL(form.action);
+    if (url.origin !== location.origin || !/^\/workspaces\/[^/]+\/(?:park|delete)$/.test(url.pathname)) return;
+    if (this.preparedSubmissions.delete(form)) return;
+    const workspaceId = decodeURIComponent(url.pathname.split("/")[2]!);
+    const mount = this.mountTargets.find(mount => mount.dataset.workspaceId === workspaceId);
+    if (!mount) return;
+    event.preventDefault();
+    void flushPreviewFrames(mount).then(() => {
+      this.preparedSubmissions.add(form); form.requestSubmit(event.submitter);
+    }).catch(error => { console.error("Workspace stop paused", error); window.alert("Preview settings could not be saved. The workspace was kept open."); });
+  };
 
   connect(): void {
+    document.addEventListener("submit", this.beforeWorkspaceStop);
     document.addEventListener("kintsugi:workspace-pane-changed", this.changed);
     this.element.addEventListener("live:ready", this.changed);
     document.addEventListener("live:connection", this.changed);
@@ -39,6 +55,7 @@ class WorkspaceSelectionController extends Controller<HTMLElement> {
     this.historyChanged();
   }
   disconnect(): void {
+    document.removeEventListener("submit", this.beforeWorkspaceStop);
     this.selection++;
     document.removeEventListener("kintsugi:workspace-pane-changed", this.changed);
     this.element.removeEventListener("live:ready", this.changed);

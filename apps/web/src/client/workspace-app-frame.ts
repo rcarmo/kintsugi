@@ -1,3 +1,4 @@
+import { flushPreviewFrame } from "@kintsugi/proxy-ingress/preview-client";
 import { Controller } from "@hotwired/stimulus";
 import { isWorkspacePaneVisible } from "@kintsugi/shared";
 import { registerWorkspaceControllers } from "./workspace-controller-registry.ts";
@@ -29,8 +30,12 @@ class WorkspaceAppFrameController extends Controller<HTMLIFrameElement> {
     }
     // A live document may veto navigation with beforeunload. Keep it usable
     // rather than waiting for a load event that cancellation will never emit.
-    this.loadedUrl = this.frameSrc();
-    this.element.src = this.loadedUrl;
+    const destination = this.frameSrc();
+    void flushPreviewFrame(this.element).then(() => {
+      if (!this.element.isConnected || destination !== this.frameSrc()) return;
+      this.loadedUrl = destination;
+      this.element.src = destination;
+    }).catch(error => { console.error("Editor navigation paused", error); window.alert("Preview settings could not be saved. The current editor was kept open."); });
   }
 
   becomeVisible(): void {

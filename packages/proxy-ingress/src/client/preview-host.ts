@@ -1,6 +1,7 @@
 import { Application, Controller } from "@hotwired/stimulus";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
+import { PreviewFlushChannel, previewHostFlushSchema } from "../preview-persistence-protocol.ts";
 import { PreviewStateStore } from "./preview-state-store.ts";
 import { applyPreviewLocalChange, parsePreviewState, previewLocalChangeSchema, previewStorageEntriesSchema, type PreviewLocalChange, type PreviewState } from "../preview-state.ts";
 
@@ -27,6 +28,10 @@ class PreviewHostController extends Controller {
   private generation = 0;
   private documentNonce?: string;
   private readonly store = new PreviewStateStore(indexedDB);
+  private readonly flushing = new PreviewFlushChannel(message => {
+    if (!this.port) throw new Error("Preview persistence is not ready");
+    this.port.postMessage(message);
+  });
 
   connect(): void {
     // Only a tuple-origin host can share this native channel. Nested opaque
@@ -45,7 +50,7 @@ class PreviewHostController extends Controller {
     window.addEventListener("storage", this.sessionChanged);
     this.announce();
   }
-  disconnect(): void { this.generation++; this.port?.close(); this.persistence?.close(); this.ownerClosed(); this.changes?.close(); window.removeEventListener("pagehide", this.ownerClosed); window.removeEventListener("storage", this.sessionChanged); }
+  disconnect(): void { this.flushing.close(); this.generation++; this.port?.close(); this.persistence?.close(); this.ownerClosed(); this.changes?.close(); window.removeEventListener("pagehide", this.ownerClosed); window.removeEventListener("storage", this.sessionChanged); }
   private readonly ownerClosed = (event?: PageTransitionEvent): void => { if (!event?.persisted) this.worker?.port.postMessage("owner-closed"); };
   private openPersistence(): Promise<{ state: PreviewState; port: MessagePort }> {
     this.worker?.port.postMessage("owner-closed");
@@ -82,9 +87,22 @@ class PreviewHostController extends Controller {
   private announce(): void { this.frameTarget.contentWindow?.postMessage({ type: "kintsugi:preview-host-ready" }, "*"); }
 
   async receive(event: MessageEvent): Promise<void> {
+    if (event.isTrusted && event.source === window.parent && Value.Check(previewHostFlushSchema, event.data)) {
+      const id = event.data.id, parent = window.parent, generation = this.generation;
+      try {
+        await this.flushing.flush(); await this.writes;
+        if (generation !== this.generation) throw new Error("Preview document changed while saving");
+        parent.postMessage({ type: "kintsugi:preview-flushed", id, saved: true }, "*");
+      } catch (error) {
+        this.fail(error instanceof Error ? error : new Error(String(error)));
+        parent.postMessage({ type: "kintsugi:preview-flushed", id, saved: false }, "*");
+      }
+      return;
+    }
     if (event.source !== this.frameTarget.contentWindow || event.origin !== "null" || !Value.Check(readySchema, event.data)) return;
     if (this.documentNonce === event.data.nonce) return;
     this.documentNonce = event.data.nonce;
+    this.flushing.close();
     const generation = ++this.generation;
     this.port?.close(); this.port = undefined;
     try {
@@ -92,10 +110,12 @@ class PreviewHostController extends Controller {
       const persistent = globalThis.origin === "null" ? undefined : await this.openPersistence();
       const state = persistent ? persistent.state : await this.store.load(this.scopeValue);
       if (generation !== this.generation) { persistent?.port.postMessage({ type: "close" }); return; }
+      let previousDatabases = state.databases;
       const channel = new MessageChannel(), database = new MessageChannel();
       this.port = channel.port1;
       this.port.onmessage = event => {
         const data: unknown = event.data;
+        if (this.flushing.receive(data)) return;
         if (Value.Check(Type.Object({ type: Type.Literal("close") }), data)) { this.writes = this.writes.then(() => database.port1.close()); return; }
         if (Value.Check(Type.Object({ type: Type.Literal("persisted") }), data)) { this.statusTarget.textContent = "Preview state saved"; return; }
         if (!Value.Check(saveSchema, data)) { this.fail(new Error("Invalid preview persistence message")); return; }
@@ -105,7 +125,11 @@ class PreviewHostController extends Controller {
             channel.port1.postMessage({ type: "local-change", change: data.change, revision: saved.state.revision, remote: false });
             if (saved.changed) this.changes?.postMessage({ scope: this.scopeValue, writer: this.documentNonce, revision: saved.state.revision, change: data.change });
           } else if (data.type === "session") this.saveSession(data.change);
-          else await this.store.saveDatabases(this.scopeValue, parsePreviewState(data.state));
+          else {
+            const snapshot = parsePreviewState(data.state);
+            await this.store.saveDatabases(this.scopeValue, snapshot, previousDatabases);
+            previousDatabases = snapshot.databases;
+          }
           channel.port1.postMessage({ type: "saved", id: data.id });
           this.statusTarget.textContent = "Preview state saved";
         }).catch(error => { channel.port1.postMessage({ type: "save-error", id: data.id }); this.fail(error); });

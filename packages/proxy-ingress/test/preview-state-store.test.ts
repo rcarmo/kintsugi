@@ -21,7 +21,7 @@ test("independent hosts apply local changes atomically without overwriting sibli
   const state = await one.load("shared");
   expect(new Map(state.local).size).toBe(30);
   for (let index = 0; index < 30; index++) expect(new Map(state.local).get(String(index))).toBe(String(index));
-  await two.saveDatabases("shared", initialPreviewState());
+  await two.saveDatabases("shared", initialPreviewState(), []);
   expect((await one.load("shared")).local).toEqual(state.local);
   expect(await one.load("sibling")).toEqual(initialPreviewState());
 });

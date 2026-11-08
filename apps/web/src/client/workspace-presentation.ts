@@ -4,6 +4,7 @@ import { focusLikelyOpensSoftwareKeyboard, phoneLayoutMediaQuery, workspaceAgent
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 import { liveSurfaceReady, prepareLiveSurface, stopLiveSurface } from "./live-surface.ts";
+import { flushPreviewFrames } from "@kintsugi/proxy-ingress/preview-client";
 import { workspaceSelectionController } from "./workspace-controller-registry.ts";
 
 type PresentationPane = HTMLElement & { dataset: DOMStringMap & { workspacePaneRole?: string; workspacePaneId?: string; workspaceLogicallyVisible?: string } };
@@ -259,10 +260,18 @@ export function createWorkspacePresentationController(
       this.persistAndApply({ focus: destination.startsWith("work:") });
     }
 
+    private readonly preparedCloses = new WeakSet<HTMLFormElement>();
     confirmClose(event: SubmitEvent): void {
-      // SAFETY: The server-rendered DOM and connected controller contract establish this element shape.
-      const label = (event.currentTarget as HTMLElement).dataset.closeLabel ?? "this destination";
-      if (!window.confirm(`Close ${label}? Its live state will be destroyed.`)) event.preventDefault();
+      if (!(event.currentTarget instanceof HTMLFormElement)) throw new Error("Close action requires its form");
+      const form = event.currentTarget;
+      if (this.preparedCloses.delete(form)) return;
+      event.preventDefault();
+      const label = form.dataset.closeLabel ?? "this destination";
+      if (!window.confirm(`Close ${label}? Its live state will be destroyed.`)) return;
+      void flushPreviewFrames(this.element).then(() => {
+        this.preparedCloses.add(form);
+        form.requestSubmit(event.submitter);
+      }).catch(error => { console.error("Work view close paused", error); window.alert("Preview settings could not be saved. The view was kept open."); });
     }
 
     toggleWorkPane(): void {
