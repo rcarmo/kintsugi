@@ -3,11 +3,11 @@ import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 import { PreviewFlushChannel, previewHostFlushSchema } from "../preview-persistence-protocol.ts";
 import { PreviewStateStore } from "./preview-state-store.ts";
-import { applyPreviewLocalChange, parsePreviewState, previewLocalChangeSchema, previewStorageEntriesSchema, type PreviewLocalChange, type PreviewState } from "../preview-state.ts";
+import { applyPreviewLocalChange, parsePreviewState, previewDatabaseDestructionSchema, previewLocalChangeSchema, previewStorageEntriesSchema, type PreviewLocalChange, type PreviewState } from "../preview-state.ts";
 
 const readySchema = Type.Object({ type: Type.Literal("kintsugi:preview-ready"), version: Type.Literal(2), nonce: Type.String({ minLength: 36, maxLength: 36 }) });
 const saveSchema = Type.Union([
-  Type.Object({ type: Type.Literal("save"), id: Type.Integer({ minimum: 1 }), state: Type.Unknown() }),
+  Type.Object({ type: Type.Literal("save"), id: Type.Integer({ minimum: 1 }), state: Type.Unknown(), destructions: Type.Optional(Type.Array(previewDatabaseDestructionSchema, { maxItems: 4096 })) }),
   Type.Object({ type: Type.Literal("local"), id: Type.Integer({ minimum: 1 }), change: previewLocalChangeSchema }),
   Type.Object({ type: Type.Literal("session"), id: Type.Integer({ minimum: 1 }), change: previewLocalChangeSchema }),
 ]);
@@ -127,7 +127,7 @@ class PreviewHostController extends Controller {
           } else if (data.type === "session") this.saveSession(data.change);
           else {
             const snapshot = parsePreviewState(data.state);
-            await this.store.saveDatabases(this.scopeValue, snapshot, previousDatabases);
+            await this.store.saveDatabases(this.scopeValue, snapshot, previousDatabases, data.destructions);
             previousDatabases = snapshot.databases;
           }
           channel.port1.postMessage({ type: "saved", id: data.id });

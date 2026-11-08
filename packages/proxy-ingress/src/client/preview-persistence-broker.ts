@@ -1,12 +1,12 @@
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { parsePreviewState, previewLocalChangeSchema, type PreviewState } from "../preview-state.ts";
+import { parsePreviewState, previewDatabaseDestructionSchema, previewLocalChangeSchema, type PreviewState } from "../preview-state.ts";
 import { PreviewStateStore } from "./preview-state-store.ts";
 
 const id = Type.Integer({ minimum: 1 });
 const command = Type.Union([
   Type.Object({ type: Type.Literal("local"), id, change: previewLocalChangeSchema }, { additionalProperties: false }),
-  Type.Object({ type: Type.Literal("save"), id, state: Type.Unknown() }, { additionalProperties: false }),
+  Type.Object({ type: Type.Literal("save"), id, state: Type.Unknown(), destructions: Type.Optional(Type.Array(previewDatabaseDestructionSchema, { maxItems: 4096 })) }, { additionalProperties: false }),
   Type.Object({ type: Type.Literal("close") }, { additionalProperties: false }),
 ]);
 
@@ -45,7 +45,7 @@ export class PreviewPersistenceBroker {
             for (const client of clients) if (client === channel.port1 || saved.changed) client.postMessage({ type: "local-change", change: data.change, revision: saved.state.revision, remote: client !== channel.port1 });
           } else {
             const snapshot = parsePreviewState(data.state);
-            await this.store.saveDatabases(scope, snapshot, previousDatabases);
+            await this.store.saveDatabases(scope, snapshot, previousDatabases, data.destructions);
             previousDatabases = snapshot.databases;
           }
           channel.port1.postMessage({ type: "saved", id: data.id });

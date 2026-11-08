@@ -48,3 +48,66 @@ test("structured clone equality retains dates, blobs, binary views, maps, sets a
   const shared = { value: true };
   expect(await previewCloneEqual([shared, shared], [{ value: true }, { value: true }])).toBe(false);
 });
+
+test("an explicit clear removes unseen sibling records and retains puts after the clear", async () => {
+  const store = new PreviewStateStore(new IDBFactory()), before = database([{ key: "same", value: "kept-after-clear" }]);
+  await store.saveDatabases("one", before, []);
+  await store.saveDatabases("one", database([{ key: "unseen", value: "sibling" }]), []);
+  // The surviving record equals the baseline but was explicitly put after clear.
+  await store.saveDatabases("one", before, before.databases, [{ kind: "clear", database: "shared", store: "values" }]);
+  expect((await store.load("one")).databases[0]!.stores[0]!.records).toEqual(before.databases[0]!.stores[0]!.records);
+  await store.saveDatabases("one", database([]), before.databases, [{ kind: "clear", database: "shared", store: "values" }]);
+  expect((await store.load("one")).databases[0]!.stores[0]!.records).toEqual([]);
+});
+
+test("explicit deletion removes an unseen database and a recreated name starts with its new records", async () => {
+  const store = new PreviewStateStore(new IDBFactory()), original = database([{ key: "unseen", value: "sibling" }]);
+  await store.saveDatabases("one", original, []);
+  await store.saveDatabases("other", original, []);
+  await store.saveDatabases("one", initialPreviewState(), [], [{ kind: "delete-database", database: "shared" }]);
+  expect((await store.load("one")).databases).toEqual([]);
+  expect((await store.load("other")).databases).toEqual(original.databases);
+  await store.saveDatabases("one", original, []);
+  const recreated = database([{ key: "new", value: "fresh" }]);
+  await store.saveDatabases("one", recreated, original.databases, [{ kind: "delete-database", database: "shared" }]);
+  expect((await store.load("one")).databases).toEqual(recreated.databases);
+});
+
+test("unique-index conflicts reject a merged save and preserve the previously committed database", async () => {
+  const store = new PreviewStateStore(new IDBFactory());
+  const first = database([{ key: "one", value: { email: "same@example.test" } }]);
+  first.databases[0]!.stores[0]!.indexes.push({ name: "email", keyPath: "email", unique: true, multiEntry: false });
+  await store.saveDatabases("one", first, []);
+  const sibling = structuredClone(first);
+  sibling.databases[0]!.stores[0]!.records = [{ key: "two", value: { email: "same@example.test" } }];
+  const committed = await store.load("one");
+  await expect(store.saveDatabases("one", sibling, [])).rejects.toThrow();
+  expect(await store.load("one")).toEqual(committed);
+});
+
+test("validation retries cannot replace a concurrent localStorage mutation", async () => {
+  const factory = new IDBFactory(), one = new PreviewStateStore(factory), two = new PreviewStateStore(factory);
+  await Promise.all([
+    one.saveDatabases("scope", database([{ key: "record", value: "value" }]), []),
+    two.saveLocal("scope", { kind: "set", key: "local", value: "preserved" }),
+  ]);
+  const state = await one.load("scope");
+  expect(state.local).toEqual([["local", "preserved"]]);
+  expect(state.databases[0]!.stores[0]!.records).toEqual([{ key: "record", value: "value" }]);
+});
+
+test("unseen auto-increment key collisions reject without replacing the sibling's durable record", async () => {
+  const store = new PreviewStateStore(new IDBFactory());
+  const one = database([{ key: 1, value: "first" }]);
+  one.databases[0]!.stores[0]!.autoIncrement = true;
+  one.databases[0]!.stores[0]!.nextGeneratedKey = 2;
+  await store.saveDatabases("scope", one, []);
+  const two = structuredClone(one);
+  two.databases[0]!.stores[0]!.records[0]!.value = "second";
+  const committed = await store.load("scope");
+  await expect(store.saveDatabases("scope", two, [])).rejects.toThrow("auto-increment key collision");
+  expect(await store.load("scope")).toEqual(committed);
+  // A connection that actually observed the existing row can still update it.
+  await store.saveDatabases("scope", two, one.databases);
+  expect((await store.load("scope")).databases[0]!.stores[0]!.records[0]!.value).toBe("second");
+});

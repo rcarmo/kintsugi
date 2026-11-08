@@ -4,7 +4,7 @@ import { installPreviewWorkers } from "./preview-worker.ts";
 import { restorePreviewDatabases, snapshotPreviewDatabases } from "./preview-database.ts";
 import { Value } from "typebox/value";
 import { Type } from "typebox";
-import { applyPreviewLocalChange, parsePreviewState, previewLocalChangeSchema, previewStorageEntriesSchema, type PreviewLocalChange, type PreviewState } from "../preview-state.ts";
+import { applyPreviewLocalChange, parsePreviewState, previewLocalChangeSchema, previewStorageEntriesSchema, type PreviewDatabaseDestruction, type PreviewLocalChange, type PreviewState } from "../preview-state.ts";
 import { installPreviewNetwork } from "./preview-network.ts";
 import { previewFlushRequestSchema } from "../preview-persistence-protocol.ts";
 import { setPreviewParserScriptText } from "./preview-markup.ts";
@@ -70,6 +70,7 @@ async function start(): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let writes = Promise.resolve();
   let databaseDirty = false;
+  let destructions: PreviewDatabaseDestruction[] = [];
   let sequence = 0;
   const saved = new Map<number, { done: Promise<void>; resolve(): void; reject(error: Error): void }>();
   let persistenceFailure: Error | undefined;
@@ -125,13 +126,15 @@ async function start(): Promise<void> {
   function flush(): Promise<void> {
     clearTimeout(timer);
     writes = writes.then(async () => {
-      if (!databaseDirty) return;
-      databaseDirty = false;
-      const databases = await snapshotPreviewDatabases(indexedDB);
-      const id = ++sequence;
-      const done = waitForSave(id);
-      persistence.postMessage({ type: "save", id, state: { version: 2, revision: 0, local: [], databases } });
-      await done;
+      while (databaseDirty) {
+        databaseDirty = false;
+        const committedDestructions = destructions; destructions = [];
+        const databases = await snapshotPreviewDatabases(indexedDB);
+        const id = ++sequence;
+        const done = waitForSave(id);
+        persistence.postMessage({ type: "save", id, state: { version: 2, revision: 0, local: [], databases }, destructions: committedDestructions });
+        await done;
+      }
     });
     return writes;
   }
@@ -154,10 +157,27 @@ async function start(): Promise<void> {
     request.addEventListener("upgradeneeded", () => request.transaction!.addEventListener("complete", changed, { once: true }), { once: true });
     return request;
   };
+  const clear = IDBObjectStore.prototype.clear;
+  const transactionDestructions = new WeakMap<IDBTransaction, PreviewDatabaseDestruction[]>();
+  IDBObjectStore.prototype.clear = function() {
+    const request = clear.call(this);
+    let journal = transactionDestructions.get(this.transaction);
+    if (!journal) {
+      journal = []; transactionDestructions.set(this.transaction, journal);
+      const committed = journal;
+      this.transaction.addEventListener("complete", () => { destructions.push(...committed); changed(); }, { once: true });
+    }
+    const entry: PreviewDatabaseDestruction = { kind: "clear", database: this.transaction.db.name, store: this.name };
+    const pending = journal;
+    request.addEventListener("success", () => pending.push(entry), { once: true });
+    return request;
+  };
   const remove = indexedDB.deleteDatabase.bind(indexedDB);
-  indexedDB.deleteDatabase = name => {
+  indexedDB.deleteDatabase = input => {
+    // Convert once before delegation, matching the installed factory's DOMString boundary.
+    const name = String(input);
     const request = remove(name);
-    request.addEventListener("success", changed, { once: true });
+    request.addEventListener("success", () => { destructions.push({ kind: "delete-database", database: name }); changed(); }, { once: true });
     return request;
   };
   window.addEventListener("beforeunload", event => {

@@ -1,5 +1,7 @@
+import { IDBFactory as ValidationFactory } from "fake-indexeddb";
+import { restorePreviewDatabases } from "./preview-database.ts";
 import { applyPreviewDatabaseChanges, previewDatabaseChanges } from "../preview-database-changes.ts";
-import { applyPreviewLocalChange, initialPreviewState, parsePreviewState, type PreviewLocalChange, type PreviewState } from "../preview-state.ts";
+import { applyPreviewLocalChange, initialPreviewState, parsePreviewState, type PreviewDatabaseDestruction, type PreviewLocalChange, type PreviewState } from "../preview-state.ts";
 
 /** The host chooses the scope; the opaque child never supplies a workspace or storage key. */
 export class PreviewStateStore {
@@ -36,14 +38,28 @@ export class PreviewStateStore {
     return { state, changed };
   }
 
-  async saveDatabases(scope: string, input: PreviewState, previous: PreviewState["databases"]): Promise<void> {
+  async saveDatabases(scope: string, input: PreviewState, previous: PreviewState["databases"], destructions: PreviewDatabaseDestruction[] = []): Promise<void> {
     const state = parsePreviewState(input);
-    const changes = await previewDatabaseChanges(this.factory, previous, state.databases);
-    await this.update(scope, current => { current.databases = applyPreviewDatabaseChanges(this.factory, current.databases, changes); });
+    const changes = await previewDatabaseChanges(this.factory, previous, state.databases, destructions);
+    for (let attempt = 0; attempt < 16; attempt++) {
+      const baseline = await this.load(scope);
+      const databases = applyPreviewDatabaseChanges(this.factory, baseline.databases, changes, destructions);
+      // Validate schema, key generators and unique indexes through IndexedDB's
+      // public APIs before replacing durable state. This factory is private,
+      // ephemeral and never touches management-origin application databases.
+      await restorePreviewDatabases(new ValidationFactory(), databases);
+      let committed = false;
+      await this.update(scope, current => {
+        if (current.revision !== baseline.revision) return false;
+        current.databases = databases; committed = true;
+      });
+      if (committed) return;
+    }
+    throw new Error("Preview storage changed repeatedly during validation; retry the save");
   }
 
   /** Read and modify in one native transaction, including across host instances/tabs. */
-  private async update(scope: string, mutate: (state: PreviewState) => void): Promise<PreviewState> {
+  private async update(scope: string, mutate: (state: PreviewState) => void | false): Promise<PreviewState> {
     const db = await this.open();
     try {
       const transaction = db.transaction("states", "readwrite"), store = transaction.objectStore("states");
@@ -57,7 +73,9 @@ export class PreviewStateStore {
         try {
           const state = request.result === undefined ? initialPreviewState() : parsePreviewState(request.result);
           if (state.revision === Number.MAX_SAFE_INTEGER) throw new Error("Preview storage revision exhausted");
-          mutate(state); state.revision++; result = state; store.put(state, scope);
+          result = state;
+          if (mutate(state) === false) return;
+          state.revision++; store.put(state, scope);
         } catch (error) { failure = error; transaction.abort(); }
       };
       return await done;

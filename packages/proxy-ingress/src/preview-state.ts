@@ -25,6 +25,11 @@ export const previewLocalChangeSchema = Type.Union([
   Type.Object({ kind: Type.Literal("clear") }),
 ]);
 export type PreviewLocalChange = Static<typeof previewLocalChangeSchema>;
+export const previewDatabaseDestructionSchema = Type.Union([
+  Type.Object({ kind: Type.Literal("clear"), database: Type.String(), store: Type.String() }, { additionalProperties: false }),
+  Type.Object({ kind: Type.Literal("delete-database"), database: Type.String() }, { additionalProperties: false }),
+]);
+export type PreviewDatabaseDestruction = Static<typeof previewDatabaseDestructionSchema>;
 export function applyPreviewLocalChange(values: Map<string, string>, change: PreviewLocalChange): void {
   if (change.kind === "clear") values.clear();
   else if (change.kind === "remove") values.delete(change.key);
