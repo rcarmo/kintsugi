@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mapPreviewUrl, previewWorkerContext, type PreviewUrlContext } from "../src/preview-url.ts";
+import { mapPreviewUrl, previewWorkerContext, previewNestedFrameScope, type PreviewUrlContext } from "../src/preview-url.ts";
 
 const context: PreviewUrlContext = { publicOrigin: "https://dynamic-tailnet.example", root: "/~preview/unpredictable/", app: "port-3152", upstream: "http://localhost:3152/pages/index.html" };
 const prefix = "https://dynamic-tailnet.example/~preview/unpredictable/";
@@ -44,4 +44,18 @@ test("worker transport resolves script-relative requests and never forwards anot
   const file = previewWorkerContext(`${prefix}file/work/worker.js`, parent);
   expect(file.upstream).toBe("file:///work/worker.js"); expect(file.cookies).toBe("");
   expect(previewWorkerContext("blob:null/opaque-worker", parent)).toBe(parent);
+});
+
+test("nested storage derives its owner from a canonical iframe URL under this app, never a claimed sibling scope", () => {
+  const app = `${prefix}port-3152`;
+  expect(previewNestedFrameScope(`${app}/workspaces/inner/apps/vscode/`, context)).toBe("inner:vscode");
+  expect(previewNestedFrameScope(`${app}/workspaces/inner/ports/3153/`, context)).toBe("inner:port-3153");
+  expect(previewNestedFrameScope(`${app}/workspaces/inner/files/work/index.html`, context)).toBe("inner:file");
+  for (const input of [
+    `${prefix}port-3153/workspaces/inner/apps/vscode/`,
+    `${app}/unrelated/workspaces/inner/apps/vscode/`,
+    `${app}/workspaces/%/apps/vscode/`,
+    "https://other.example/workspaces/inner/apps/vscode/",
+    "about:srcdoc",
+  ]) expect(previewNestedFrameScope(input, context)).toBeUndefined();
 });

@@ -46,6 +46,16 @@ export function previewAppPath(context: PreviewUrlContext, app = context.app): s
   return `${context.root}${encodeURIComponent(app)}`;
 }
 
+/** A nested host must match the canonical app URL of its actual containing iframe. */
+export function previewNestedFrameScope(input: string, context: PreviewUrlContext): string | undefined {
+  const url = URL.parse(input, context.publicOrigin), prefix = previewAppPath(context);
+  if (!url || url.origin !== context.publicOrigin || !url.pathname.startsWith(`${prefix}/`)) return;
+  const match = /^\/workspaces\/([^/]+)\/(?:apps\/([^/]+)|ports\/(\d+)|files)(?:\/|$)/.exec(url.pathname.slice(prefix.length));
+  if (!match) return;
+  try { return `${decodeURIComponent(match[1]!)}:${match[2] ? decodeURIComponent(match[2]) : match[3] ? `port-${match[3]}` : "file"}`; }
+  catch { return; }
+}
+
 /** Route only this workspace's virtual origins; arbitrary external origins remain external. */
 export function mapPreviewUrl(input: string, context: PreviewUrlContext): string {
   if (!input || input.startsWith("#")) return input;

@@ -7,6 +7,16 @@ export type PreviewFlushRequest = Static<typeof previewFlushRequestSchema>;
 export const previewHostFlushSchema = Type.Object({ type: Type.Literal("kintsugi:preview-flush"), id: Type.String({ format: "uuid" }) }, { additionalProperties: false });
 export const previewHostFlushedSchema = Type.Object({ type: Type.Literal("kintsugi:preview-flushed"), id: Type.String({ format: "uuid" }), saved: Type.Boolean() }, { additionalProperties: false });
 
+export const previewNestedStorageSchema = Type.Object({ type: Type.Literal("kintsugi:preview-storage"), scopes: Type.Array(Type.String({ minLength: 1, maxLength: 1024 }), { minItems: 1, maxItems: 31 }) }, { additionalProperties: false });
+
+/** Root keys stay compatible; descendants can never select their parent's key. */
+export function previewStorageScope(scopes: readonly string[]): string {
+  if (!scopes.length || scopes.length > 32) throw new Error("Preview storage nesting limit exceeded");
+  const key = scopes.length === 1 ? scopes[0]! : JSON.stringify(scopes);
+  if (key.length > 2048) throw new Error("Preview storage scope is too long");
+  return key;
+}
+
 /** Acknowledgements are accepted only on the document's private persistence port. */
 export class PreviewFlushChannel {
   private readonly pending = new Map<string, { resolve(): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();

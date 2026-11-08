@@ -6,8 +6,9 @@ import { Value } from "typebox/value";
 import { Type } from "typebox";
 import { applyPreviewLocalChange, parsePreviewState, previewLocalChangeSchema, previewStorageEntriesSchema, type PreviewDatabaseDestruction, type PreviewLocalChange, type PreviewState } from "../preview-state.ts";
 import { installPreviewNetwork } from "./preview-network.ts";
-import { previewFlushRequestSchema } from "../preview-persistence-protocol.ts";
+import { previewFlushRequestSchema, previewNestedStorageSchema } from "../preview-persistence-protocol.ts";
 import { setPreviewParserScriptText } from "./preview-markup.ts";
+import { previewNestedFrameScope } from "../preview-url.ts";
 
 // Workspace documents only. Never load this entrypoint into a management document.
 if (globalThis.origin !== "null") throw new Error("The preview runtime requires an opaque sandbox");
@@ -63,7 +64,24 @@ async function resumeScripts(): Promise<void> {
 
 async function start(): Promise<void> {
   if (!document.querySelector('meta[name="kintsugi-preview-persistence"]')) { installPreviewStorage(new Map(), () => {}, network?.cookies); return; }
-  const { port, persistence, state, session: sessionEntries } = await connectHost();
+  const connected = connectHost();
+  let pendingChildren = 0;
+  // Relay only direct children's private reply ports. The trusted host, not
+  // this workspace document, prepends the parent's storage scope at each hop.
+  window.addEventListener("message", event => {
+    if (!event.isTrusted || event.origin !== "null" || !Value.Check(previewNestedStorageSchema, event.data) || event.ports.length !== 1) return;
+    const frame = [...document.querySelectorAll("iframe")].find(frame => frame.contentWindow === event.source);
+    if (!frame) return;
+    event.stopImmediatePropagation();
+    const reply = event.ports[0]!, message = event.data;
+    if (!network || previewNestedFrameScope(frame.src, network) !== message.scopes[0]) { reply.postMessage({ type: "error", message: "Nested storage scope does not match its frame" }); reply.close(); return; }
+    if (pendingChildren >= 128) { reply.postMessage({ type: "error", message: "Nested storage connection capacity exceeded" }); reply.close(); return; }
+    pendingChildren++;
+    void connected.then(({ port }) => port.postMessage(message, [reply])).catch(error => {
+      reply.postMessage({ type: "error", message: error instanceof Error ? error.message : String(error) }); reply.close();
+    }).finally(() => { pendingChildren--; });
+  }, { capture: true });
+  const { port, persistence, state, session: sessionEntries } = await connected;
   const local = new Map(state.local), session = new Map(sessionEntries);
   let revision = state.revision;
   await restorePreviewDatabases(indexedDB, state.databases);

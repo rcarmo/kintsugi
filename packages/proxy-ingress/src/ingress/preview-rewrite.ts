@@ -5,7 +5,7 @@ import { isPreviewUrlAttribute, mapPreviewUrl, mapPreviewScriptUrl, mapPreviewSr
 
 export { previewContentPolicy, rewritePreviewCss } from "../preview-url.ts";
 
-export const previewSandbox = "sandbox allow-scripts allow-forms allow-popups allow-downloads";
+export const previewSandbox = "sandbox allow-scripts allow-forms allow-popups allow-downloads allow-modals";
 
 export { rewritePreviewJavaScript } from "../preview-javascript.ts";
 import { rewritePreviewJavaScript } from "../preview-javascript.ts";
