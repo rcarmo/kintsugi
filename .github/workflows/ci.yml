@@ -130,6 +130,7 @@ jobs:
           bun run generate:workspace-modules
           # Existing installer fixtures require root; helper integration fixtures
           # instead need files owned by the unprivileged agent identity.
+          mkdir -p artifacts
           sudo --preserve-env=PATH "$(command -v bun)" run test:bounded --suite main
           bun run test:bounded --suite native
         if: "steps.changes.outputs.required == 'true'"
