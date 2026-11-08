@@ -31,19 +31,21 @@ class WorkspaceSelectionController extends Controller<HTMLElement> {
   private readonly beforeWorkspaceStop = (event: SubmitEvent): void => {
     if (!(event.target instanceof HTMLFormElement) || event.defaultPrevented) return;
     const form = event.target, url = new URL(form.action);
-    if (url.origin !== location.origin || !/^\/workspaces\/[^/]+\/(?:park|delete)$/.test(url.pathname)) return;
+    const stopping = /\/workspaces\/([^/]+)\/(?:park|delete)$/.exec(url.pathname);
+    if (url.origin !== location.origin || !stopping) return;
     if (this.preparedSubmissions.delete(form)) return;
-    const workspaceId = decodeURIComponent(url.pathname.split("/")[2]!);
+    const workspaceId = decodeURIComponent(stopping[1]!);
     const mount = this.mountTargets.find(mount => mount.dataset.workspaceId === workspaceId);
     if (!mount) return;
     event.preventDefault();
+    event.stopImmediatePropagation();
     void flushPreviewFrames(mount).then(() => {
       this.preparedSubmissions.add(form); form.requestSubmit(event.submitter);
     }).catch(error => { console.error("Workspace stop paused", error); window.alert("Preview settings could not be saved. The workspace was kept open."); });
   };
 
   connect(): void {
-    document.addEventListener("submit", this.beforeWorkspaceStop);
+    document.addEventListener("submit", this.beforeWorkspaceStop, true);
     document.addEventListener("kintsugi:workspace-pane-changed", this.changed);
     this.element.addEventListener("live:ready", this.changed);
     document.addEventListener("live:connection", this.changed);
@@ -55,7 +57,7 @@ class WorkspaceSelectionController extends Controller<HTMLElement> {
     this.historyChanged();
   }
   disconnect(): void {
-    document.removeEventListener("submit", this.beforeWorkspaceStop);
+    document.removeEventListener("submit", this.beforeWorkspaceStop, true);
     this.selection++;
     document.removeEventListener("kintsugi:workspace-pane-changed", this.changed);
     this.element.removeEventListener("live:ready", this.changed);

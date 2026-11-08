@@ -1,7 +1,7 @@
 import { Value } from "typebox/value";
 import { decodeHTMLAttribute } from "entities";
 import { escapeHtml } from "@kintsugi/shared";
-import { mapPreviewUrl, mapPreviewScriptUrl, mapPreviewSrcset, previewContentPolicy, rewritePreviewCss, previewUrlContextSchema, type PreviewUrlContext } from "../preview-url.ts";
+import { isPreviewUrlAttribute, mapPreviewUrl, mapPreviewScriptUrl, mapPreviewSrcset, previewContentPolicy, rewritePreviewCss, previewUrlContextSchema, type PreviewUrlContext } from "../preview-url.ts";
 
 export { previewContentPolicy, rewritePreviewCss } from "../preview-url.ts";
 
@@ -60,7 +60,7 @@ export async function rewritePreviewHtml(text: string, context: PreviewUrlContex
     .on("*", { async element(element) {
       for (const name of ["src", "href", "action", "formaction", "poster", "data"]) {
         const value = element.getAttribute(name);
-        if (value !== null) {
+        if (value !== null && isPreviewUrlAttribute(element.tagName, name)) {
           const original = decodeHTMLAttribute(value);
           const source = element.tagName === "script" && name === "src" ? rewritePreviewScriptDataUrl(original, source => rewritePreviewJavaScript(!nested && context.windowGlobals && context.app !== "vscode" ? rewritePreviewGlobals(source) : source, context)) : original;
           element.setAttribute(name, escapeHtml(element.tagName === "script" && name === "src" ? mapPreviewScriptUrl(source, context) : mapPreviewUrl(source, context)));

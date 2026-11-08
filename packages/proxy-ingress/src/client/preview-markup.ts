@@ -1,7 +1,7 @@
 import type {} from "trusted-types";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { mapPreviewUrl, mapPreviewScriptUrl, mapPreviewSrcset, previewContentPolicy, rewritePreviewCss, type PreviewUrlContext } from "../preview-url.ts";
+import { isPreviewUrlAttribute, mapPreviewUrl, mapPreviewScriptUrl, mapPreviewSrcset, previewContentPolicy, rewritePreviewCss, type PreviewUrlContext } from "../preview-url.ts";
 import { rewritePreviewGlobals } from "../preview-globals.ts";
 import { rewritePreviewJavaScript } from "../preview-javascript.ts";
 import { previewInlineAllowed, previewPolicyDirectives, previewPolicyName } from "../preview-policy.ts";
@@ -58,7 +58,7 @@ export function installPreviewMarkup(context: PreviewUrlContext, upstream: () =>
     for (const element of root.querySelectorAll("*")) {
       for (const [name, value] of [...element.attributes].map(attribute => [attribute.name, attribute.value] as const)) {
         const key = name.toLowerCase();
-        if (["src", "href", "xlink:href", "action", "formaction", "poster", "data"].includes(key)) {
+        if (isPreviewUrlAttribute(element.localName, key)) {
           const mapped = element instanceof HTMLScriptElement && key === "src" ? mapPreviewScriptUrl(executing ? previewBlobScriptUrl(rewritePreviewScriptDataUrl(value, javascript), { ...current(), policy: rules.join(", ") }) : value, current()) : map(value);
           if (mapped !== value) { if (element instanceof HTMLScriptElement) nativeScriptSource.set!.call(element, scriptUrl(mapped)); else nativeAttribute.call(element, name, mapped); }
         } else if (key === "srcset") nativeAttribute.call(element, name, mapPreviewSrcset(value, current()));

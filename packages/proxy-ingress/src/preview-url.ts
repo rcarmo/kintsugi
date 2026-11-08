@@ -30,6 +30,14 @@ export const previewProtocolHeader = "x-kintsugi-preview-protocol";
 export const previewProtocolVersion = "1";
 export const previewWindowParameter = "__kintsugi_window";
 
+/** Protocol/custom-element attributes named action or data are not URLs. */
+export function isPreviewUrlAttribute(tag: string, name: string): boolean {
+  if (name === "action") return tag === "form";
+  if (name === "formaction") return tag === "button" || tag === "input";
+  if (name === "data") return tag === "object";
+  return ["src", "href", "xlink:href", "poster"].includes(name);
+}
+
 export function mapPreviewSrcset(value: string, context: PreviewUrlContext): string {
   return stringifySrcset(parseSrcset(value).map(candidate => ({ ...candidate, url: mapPreviewUrl(candidate.url, context) })));
 }

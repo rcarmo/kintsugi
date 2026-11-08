@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { mapPreviewUrl, previewUrlContextSchema, mapPreviewSrcset, rewritePreviewCss, type PreviewUrlContext } from "../preview-url.ts";
+import { isPreviewUrlAttribute, mapPreviewUrl, previewUrlContextSchema, mapPreviewSrcset, rewritePreviewCss, type PreviewUrlContext } from "../preview-url.ts";
 import { replacePreviewCookies } from "./preview-storage.ts";
 import { installPreviewRequests } from "./preview-requests.ts";
 import { previewImportSpecifier } from "./preview-imports.ts";
@@ -39,7 +39,7 @@ export function installPreviewNetwork(): PreviewUrlContext | undefined {
   Element.prototype.setAttribute = function(name, value) {
     const attribute = String(name).toLowerCase();
     const text = String(value);
-    nativeSetAttribute.call(this, name, attribute === "srcset" ? mapPreviewSrcset(text, context) : ["src", "href", "action", "formaction", "poster", "data"].includes(attribute) ? map(text) : text);
+    nativeSetAttribute.call(this, name, attribute === "srcset" ? mapPreviewSrcset(text, context) : isPreviewUrlAttribute(this.localName, attribute) ? map(text) : text);
   };
   for (const [prototype, property] of [[HTMLImageElement.prototype, "src"], [HTMLImageElement.prototype, "srcset"], [HTMLSourceElement.prototype, "src"], [HTMLSourceElement.prototype, "srcset"], [HTMLIFrameElement.prototype, "src"], [HTMLLinkElement.prototype, "href"], [HTMLAnchorElement.prototype, "href"], [HTMLMediaElement.prototype, "src"], [HTMLFormElement.prototype, "action"]] as const) {
     const descriptor = Object.getOwnPropertyDescriptor(prototype, property)!;

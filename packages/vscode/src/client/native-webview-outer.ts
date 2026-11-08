@@ -2,7 +2,7 @@ import { Application, Controller } from "@hotwired/stimulus";
 import { setPreparedPreviewDocument } from "@kintsugi/proxy-ingress/preview-client";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { mapPreviewUrl, mapPreviewSrcset, previewUrlContextSchema, previewContentPolicy, rewritePreviewCss, type PreviewUrlContext } from "@kintsugi/proxy-ingress/preview";
+import { isPreviewUrlAttribute, mapPreviewUrl, mapPreviewSrcset, previewUrlContextSchema, previewContentPolicy, rewritePreviewCss, type PreviewUrlContext } from "@kintsugi/proxy-ingress/preview";
 import { nativeWebviewContent, nativeWebviewEnvelope, nativeWebviewStyles, type NativeWebviewContent, type NativeWebviewStyles } from "../native-webview-protocol.ts";
 
 const innerReady = Type.Object({ type: Type.Literal("kintsugi:webview-inner-ready"), nonce: Type.String() });
@@ -77,7 +77,7 @@ class NativeWebviewOuterController extends Controller {
         if (!content.options.allowScripts && (attribute.name.toLowerCase().startsWith("on") || /^(?:javascript|vbscript):/i.test(attribute.value.trimStart()))) element.removeAttribute(attribute.name);
       }
       for (const name of ["src", "href", "action", "formaction", "poster", "data"]) {
-        const value = element.getAttribute(name); if (value !== null) element.setAttribute(name, mapPreviewUrl(value, context));
+        const value = element.getAttribute(name); if (value !== null && isPreviewUrlAttribute(element.localName, name)) element.setAttribute(name, mapPreviewUrl(value, context));
       }
       const srcset = element.getAttribute("srcset"); if (srcset) element.setAttribute("srcset", mapPreviewSrcset(srcset, context));
       const style = element.getAttribute("style"); if (style) element.setAttribute("style", rewritePreviewCss(style, context));

@@ -153,3 +153,13 @@ test("already-instrumented nested srcdoc frames compose their context without a 
   expect(runtimes).toEqual(["https://outer.example/~preview-assets/runtime.js"]);
   expect(child).toContain("https://outer.example/~preview/outer/port-3000/~preview/capability/port-3000/image.svg");
 });
+
+test("URL transport preserves Turbo/custom protocol attributes while routing real form and object destinations", async () => {
+  const source = '<head></head><body><turbo-stream action="update"><template><custom-command action="run" data="opaque"></custom-command><form action="/save"><button formaction="/alternate">Save</button></form><object data="/document.pdf"></object></template></turbo-stream></body>';
+  const { html } = await rewritePreviewHtml(source, context, "nonce", false);
+  expect(html).toContain('turbo-stream action="update"');
+  expect(html).toContain('custom-command action="run" data="opaque"');
+  expect(html).toContain(`form action="${prefix}/save"`);
+  expect(html).toContain(`formaction="${prefix}/alternate"`);
+  expect(html).toContain(`object data="${prefix}/document.pdf"`);
+});
