@@ -23,11 +23,6 @@ export class PreviewStateStore {
     } finally { db.close(); }
   }
 
-  async save(scope: string, input: PreviewState): Promise<void> {
-    const state = parsePreviewState(input);
-    await this.update(scope, current => { current.local = state.local; current.databases = state.databases; });
-  }
-
   async saveLocal(scope: string, change: PreviewLocalChange): Promise<{ state: PreviewState; changed: boolean }> {
     let changed = false;
     const state = await this.update(scope, current => {

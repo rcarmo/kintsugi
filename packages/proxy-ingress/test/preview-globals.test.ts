@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { rewritePreviewGlobals } from "../src/ingress/preview-globals.ts";
+import { rewritePreviewGlobals } from "../src/preview-globals.ts";
 
 test("preview compilation maps global references and assignment targets, not lexical bindings or opaque data", async () => {
   const output = await rewritePreviewGlobals('"use strict"; const label="window.location"; function local(window,location){return window.location+location} location="/next"; ({location}=value); const path=window.location.pathname;');

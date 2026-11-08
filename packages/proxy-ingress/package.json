@@ -19,7 +19,6 @@
     "@kintsugi/design-system": "workspace:*",
     "@kintsugi/shared": "workspace:*",
     "@noble/hashes": "2.4.0",
-    "acorn": "8.19.0",
     "entities": "8.1.0",
     "es-module-lexer": "3.0.4",
     "fake-indexeddb": "6.2.7",

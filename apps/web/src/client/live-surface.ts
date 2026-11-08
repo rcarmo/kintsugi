@@ -40,7 +40,7 @@ class LiveSurfaceController extends Controller<HTMLElement> {
       this.element.replaceChildren();
     }).catch(error => {
       console.error("Workspace surface release paused", error);
-      this.showFailure("Preview settings did not finish saving. The pane was kept open.");
+      window.alert("Preview settings did not finish saving. The pane was kept open.");
     }).finally(() => { this.releasing = undefined; });
   }
 

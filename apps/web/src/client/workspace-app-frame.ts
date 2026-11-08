@@ -23,19 +23,7 @@ class WorkspaceAppFrameController extends Controller<HTMLIFrameElement> {
   }
 
   initialPathValueChanged(): void {
-    if (!isWorkspacePaneVisible(this.element)) return;
-    if (!this.loadedUrl) {
-      this.load();
-      return;
-    }
-    // A live document may veto navigation with beforeunload. Keep it usable
-    // rather than waiting for a load event that cancellation will never emit.
-    const destination = this.frameSrc();
-    void flushPreviewFrame(this.element).then(() => {
-      if (!this.element.isConnected || destination !== this.frameSrc()) return;
-      this.loadedUrl = destination;
-      this.element.src = destination;
-    }).catch(error => { console.error("Editor navigation paused", error); window.alert("Preview settings could not be saved. The current editor was kept open."); });
+    if (isWorkspacePaneVisible(this.element)) this.load();
   }
 
   becomeVisible(): void {
@@ -43,25 +31,25 @@ class WorkspaceAppFrameController extends Controller<HTMLIFrameElement> {
   }
 
   load(): void {
-    void this.loadAndWait();
+    void this.loadAndWait().catch(error => { console.error("Editor navigation paused", error); window.alert("Preview settings could not be saved. The current editor was kept open."); });
   }
 
   loadAndWait(): Promise<void> {
     const src = this.frameSrc();
     if (this.loadedUrl === src) return Promise.resolve();
-    if (this.pendingLoad?.url === src) return this.pendingLoad.promise;
+    if (this.pendingLoad) return this.pendingLoad.url === src ? this.pendingLoad.promise : this.pendingLoad.promise.then(() => this.loadAndWait());
     if (this.element.src === src && this.element.contentDocument?.readyState === "complete") {
       this.loadedUrl = src;
       return Promise.resolve();
     }
-    const promise = new Promise<void>((resolve) => {
-      this.element.addEventListener("load", () => {
-        this.loadedUrl = src;
-        this.pendingLoad = undefined;
-        resolve();
-      }, { once: true });
-      if (this.element.src !== src) this.element.src = src;
-    });
+    const promise = (async () => {
+      if (this.element.getAttribute("src") && this.element.src !== src) await flushPreviewFrame(this.element);
+      if (!this.element.isConnected || src !== this.frameSrc()) return;
+      await new Promise<void>(resolve => {
+        this.element.addEventListener("load", () => { this.loadedUrl = src; resolve(); }, { once: true });
+        if (this.element.src !== src) this.element.src = src;
+      });
+    })().finally(() => { this.pendingLoad = undefined; });
     this.pendingLoad = { url: src, promise };
     return promise;
   }

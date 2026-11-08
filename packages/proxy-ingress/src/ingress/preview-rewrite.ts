@@ -9,7 +9,7 @@ export const previewSandbox = "sandbox allow-scripts allow-forms allow-popups al
 
 export { rewritePreviewJavaScript } from "../preview-javascript.ts";
 import { rewritePreviewJavaScript } from "../preview-javascript.ts";
-import { rewritePreviewGlobals } from "./preview-globals.ts";
+import { rewritePreviewGlobals } from "../preview-globals.ts";
 import { PreviewInlinePolicy } from "./preview-inline-policy.ts";
 import { rewritePreviewScriptDataUrl } from "../preview-script-data.ts";
 

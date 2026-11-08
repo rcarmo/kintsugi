@@ -1,6 +1,6 @@
 import { mapPreviewUrl, previewWindowParameter, previewWorkerContext, type PreviewUrlContext } from "../preview-url.ts";
 import { rewritePreviewJavaScript } from "../preview-javascript.ts";
-import { parse } from "acorn";
+import { parse } from "@babel/parser";
 
 /** Data-URL workers retain native worker semantics without acquiring management origin. */
 export function installPreviewWorkers(context?: PreviewUrlContext): void {
@@ -80,13 +80,7 @@ export function installPreviewWorkers(context?: PreviewUrlContext): void {
         const source = context ? rewritePreviewJavaScript(text, { ...previewWorkerContext(url, context), windowGlobals: false }) : text;
         const runtime = context ? JSON.stringify(new URL("/~preview-assets/worker.js", context.publicOrigin).href) : undefined;
         const bootstrap = runtime ? module ? `import ${runtime};\n` : `importScripts(${runtime});\n` : `(()=>{const post=self.postMessage.bind(self);self.__kintsugiPreviewWorkerReady=nonce=>post({previewReady:nonce})})();\n`;
-        let offset = 0;
-        if (!module) {
-          for (const statement of parse(source, { ecmaVersion: "latest", sourceType: "script" }).body) {
-            if (statement.type !== "ExpressionStatement" || !("directive" in statement)) break;
-            offset = statement.end;
-          }
-        }
+        const offset = module ? 0 : parse(source, { sourceType: "script" }).program.directives.at(-1)?.end ?? 0;
         return source.slice(0, offset) + "\n" + bootstrap + source.slice(offset) + `\n;self.__kintsugiPreviewWorkerReady(${JSON.stringify(nonce)});\n`;
       }) : Promise.resolve("");
       void script.then(text => NativeWorker.prototype.postMessage.call(this, { previewBootstrap: nonce, url, source: text, blob: Boolean(blob) })).catch(error => {

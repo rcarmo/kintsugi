@@ -8,7 +8,7 @@ import { backendTransport } from "./backend-transport.ts";
 import { localAppHost } from "./local-app.ts";
 import { bufferUpstreamSocket, closeWebSocket, forwardToUpstream, maxSocketBufferedBytes } from "./websocket.ts";
 import { mapPreviewUrl, previewAppPath, previewProtocolHeader, previewProtocolVersion, type PreviewUrlContext } from "../preview-url.ts";
-import { rewritePreviewGlobals } from "./preview-globals.ts";
+import { rewritePreviewGlobals } from "../preview-globals.ts";
 import { previewWindowParameter } from "../preview-url.ts";
 import { previewContentPolicy, previewSandbox, rewritePreviewCss, rewritePreviewHtml, rewritePreviewJavaScript, readNestedPreviewContext } from "./preview-rewrite.ts";
 

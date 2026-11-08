@@ -2,8 +2,8 @@ import { Application, Controller } from "@hotwired/stimulus";
 import { setPreparedPreviewDocument } from "@kintsugi/proxy-ingress/preview-client";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { mapPreviewUrl, mapPreviewSrcset, previewContentPolicy, rewritePreviewCss, type PreviewUrlContext } from "@kintsugi/proxy-ingress/preview";
-import { nativeWebviewContext, nativeWebviewContent, nativeWebviewEnvelope, nativeWebviewStyles, type NativeWebviewContent, type NativeWebviewStyles } from "../native-webview-protocol.ts";
+import { mapPreviewUrl, mapPreviewSrcset, previewUrlContextSchema, previewContentPolicy, rewritePreviewCss, type PreviewUrlContext } from "@kintsugi/proxy-ingress/preview";
+import { nativeWebviewContent, nativeWebviewEnvelope, nativeWebviewStyles, type NativeWebviewContent, type NativeWebviewStyles } from "../native-webview-protocol.ts";
 
 const innerReady = Type.Object({ type: Type.Literal("kintsugi:webview-inner-ready"), nonce: Type.String() });
 const notification = Type.Object({ channel: Type.String(), data: Type.Optional(Type.Unknown()) });
@@ -23,12 +23,12 @@ class NativeWebviewOuterController extends Controller {
   connect(): void {
     if (globalThis.origin !== "null") throw new Error("Webviews require an opaque origin");
     const context: unknown = JSON.parse(document.querySelector<HTMLMetaElement>('meta[name="kintsugi-preview-context"]')!.content);
-    if (!Value.Check(nativeWebviewContext, context)) throw new Error("Invalid webview routing context");
+    if (!Value.Check(previewUrlContextSchema, context)) throw new Error("Invalid webview routing context");
     this.routing = context;
     const id = new URL(location.href).searchParams.get("id");
     if (!id || window.parent === window) throw new Error("Webview has no workbench owner");
     const channel = new MessageChannel(); this.host = channel.port1;
-    this.host.onmessage = event => { void this.fromHost(event.data).catch(error => this.sendHost("fatal-error", { message: error instanceof Error ? error.message : String(error) })); };
+    this.host.onmessage = event => { try { this.fromHost(event.data); } catch (error) { this.sendHost("fatal-error", { message: error instanceof Error ? error.message : String(error) }); } };
     window.parent.postMessage({ target: id, channel: "webview-ready", data: { keyEventToken: this.keyEventToken, mountId: new URL(location.href).searchParams.get("mountId") } }, "*", [channel.port2]);
   }
   disconnect(): void { this.host?.close(); this.inner?.close(); }
@@ -52,7 +52,7 @@ class NativeWebviewOuterController extends Controller {
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- This is the native structured-clone protocol boundary to the workbench's private MessagePort.
   private sendHost(channel: string, data: unknown, transfer: Transferable[] = []): void { this.host!.postMessage({ channel, data }, transfer); }
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- The private workbench MessagePort is decoded before invoking rendering or forwarding operations.
-  private async fromHost(input: unknown): Promise<void> {
+  private fromHost(input: unknown): void {
     if (!Value.Check(nativeWebviewEnvelope, input)) throw new Error("Invalid webview workbench message");
     const { channel, args } = input;
     if (channel === "content") {

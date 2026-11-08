@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { mapPreviewUrl, mapPreviewScriptUrl, mapPreviewModuleUrl, previewUrlContextSchema, mapPreviewSrcset, rewritePreviewCss, type PreviewUrlContext } from "../preview-url.ts";
+import { mapPreviewUrl, previewUrlContextSchema, mapPreviewSrcset, rewritePreviewCss, type PreviewUrlContext } from "../preview-url.ts";
 import { replacePreviewCookies } from "./preview-storage.ts";
 import { installPreviewRequests } from "./preview-requests.ts";
 import { previewImportSpecifier } from "./preview-imports.ts";
@@ -8,13 +8,11 @@ import { installPreviewGlobals } from "./preview-globals.ts";
 import { installPreviewMarkup } from "./preview-markup.ts";
 import { installPreviewSources } from "./preview-sources.ts";
 
-const contextSchema = previewUrlContextSchema;
-
 export function installPreviewNetwork(): PreviewUrlContext | undefined {
   const configuration = document.querySelector<HTMLMetaElement>('meta[name="kintsugi-preview-context"]');
   if (!configuration) return;
   const input: unknown = JSON.parse(configuration.content);
-  if (!Value.Check(contextSchema, input)) throw new Error("Invalid workspace preview context");
+  if (!Value.Check(previewUrlContextSchema, input)) throw new Error("Invalid workspace preview context");
   const context = input;
   globalThis.__kintsugiPreviewImportSpecifier = (value, module) => previewImportSpecifier(value, module, context);
   const map = (url: string) => mapPreviewUrl(url, { ...context, upstream: currentUpstream() });
@@ -41,12 +39,11 @@ export function installPreviewNetwork(): PreviewUrlContext | undefined {
   Element.prototype.setAttribute = function(name, value) {
     const attribute = String(name).toLowerCase();
     const text = String(value);
-    if (this instanceof HTMLScriptElement && attribute === "src" && this.type.toLowerCase() === "module") { nativeSetAttribute.call(this, name, mapPreviewModuleUrl(text, { ...context, upstream: currentUpstream() })); return; }
-    nativeSetAttribute.call(this, name, this instanceof HTMLScriptElement && attribute === "src" ? mapPreviewScriptUrl(text, { ...context, upstream: currentUpstream() }) : attribute === "srcset" ? mapPreviewSrcset(text, context) : ["src", "href", "action", "formaction", "poster", "data"].includes(attribute) ? map(text) : text);
+    nativeSetAttribute.call(this, name, attribute === "srcset" ? mapPreviewSrcset(text, context) : ["src", "href", "action", "formaction", "poster", "data"].includes(attribute) ? map(text) : text);
   };
-  for (const [prototype, property] of [[HTMLScriptElement.prototype, "src"], [HTMLImageElement.prototype, "src"], [HTMLImageElement.prototype, "srcset"], [HTMLSourceElement.prototype, "src"], [HTMLSourceElement.prototype, "srcset"], [HTMLIFrameElement.prototype, "src"], [HTMLLinkElement.prototype, "href"], [HTMLAnchorElement.prototype, "href"], [HTMLMediaElement.prototype, "src"], [HTMLFormElement.prototype, "action"]] as const) {
+  for (const [prototype, property] of [[HTMLImageElement.prototype, "src"], [HTMLImageElement.prototype, "srcset"], [HTMLSourceElement.prototype, "src"], [HTMLSourceElement.prototype, "srcset"], [HTMLIFrameElement.prototype, "src"], [HTMLLinkElement.prototype, "href"], [HTMLAnchorElement.prototype, "href"], [HTMLMediaElement.prototype, "src"], [HTMLFormElement.prototype, "action"]] as const) {
     const descriptor = Object.getOwnPropertyDescriptor(prototype, property)!;
-    Object.defineProperty(prototype, property, { ...descriptor, set(value: string) { descriptor.set!.call(this, this instanceof HTMLScriptElement && this.type.toLowerCase() === "module" ? mapPreviewModuleUrl(String(value), { ...context, upstream: currentUpstream() }) : this instanceof HTMLScriptElement ? mapPreviewScriptUrl(String(value), { ...context, upstream: currentUpstream() }) : property === "srcset" ? mapPreviewSrcset(String(value), context) : map(String(value))); } });
+    Object.defineProperty(prototype, property, { ...descriptor, set(value: string) { descriptor.set!.call(this, property === "srcset" ? mapPreviewSrcset(String(value), context) : map(String(value))); } });
   }
   const css = (text: string, upstream = currentUpstream()) => rewritePreviewCss(String(text), { ...context, upstream });
   const setProperty = CSSStyleDeclaration.prototype.setProperty;
@@ -76,7 +73,6 @@ export function installPreviewNetwork(): PreviewUrlContext | undefined {
     Object.defineProperty(prototype, "style", mappedDescriptor);
   }
   const nativeText = Object.getOwnPropertyDescriptor(Node.prototype, "textContent")!;
-  Object.defineProperty(Node.prototype, "textContent", { ...nativeText, set(value: string | null) { nativeText.set!.call(this, this instanceof HTMLStyleElement ? css(value ?? "") : value); } });
   const insertRule = CSSStyleSheet.prototype.insertRule;
   CSSStyleSheet.prototype.insertRule = function(rule, index) { return insertRule.call(this, css(rule, this.href ?? currentUpstream()), index); };
   const replace = CSSStyleSheet.prototype.replace;
