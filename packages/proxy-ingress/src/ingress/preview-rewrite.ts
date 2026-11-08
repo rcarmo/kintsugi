@@ -11,6 +11,9 @@ export { rewritePreviewJavaScript } from "../preview-javascript.ts";
 import { rewritePreviewJavaScript } from "../preview-javascript.ts";
 import { rewritePreviewGlobals } from "./preview-globals.ts";
 import { PreviewInlinePolicy } from "./preview-inline-policy.ts";
+import { rewritePreviewScriptDataUrl } from "../preview-script-data.ts";
+
+interface PreviewHtmlRewriteState { policy: PreviewInlinePolicy; depth: number }
 
 export async function readNestedPreviewContext(text: string): Promise<PreviewUrlContext> {
   let context: PreviewUrlContext | undefined;
@@ -21,8 +24,10 @@ export async function readNestedPreviewContext(text: string): Promise<PreviewUrl
   return context;
 }
 
-export async function rewritePreviewHtml(text: string, context: PreviewUrlContext, nonce: string, persist: boolean, nested = false): Promise<{ html: string; policy: PreviewInlinePolicy }> {
-  const policy = new PreviewInlinePolicy();
+export async function rewritePreviewHtml(text: string, context: PreviewUrlContext, nonce: string, persist: boolean, nested = false, state: PreviewHtmlRewriteState = { policy: new PreviewInlinePolicy(), depth: 0 }): Promise<{ html: string; policy: PreviewInlinePolicy }> {
+  if (state.depth > 32) throw new Error("Preview srcdoc nesting limit exceeded");
+  const policy = state.policy;
+  const inheritedPolicies = context.policy ? [context.policy] : [];
   if (!/<head(?:\s|>)/i.test(text)) text = `<!doctype html><html><head></head><body>${text}</body></html>`;
   const configuration = escapeHtml(JSON.stringify(context));
   const persistence = persist ? '<meta name="kintsugi-preview-persistence">' : "";
@@ -39,7 +44,11 @@ export async function rewritePreviewHtml(text: string, context: PreviewUrlContex
       element.setAttribute("content", escapeHtml(JSON.stringify({ ...inner, publicOrigin: context.publicOrigin, root: root.pathname, aliases: [...(inner.aliases ?? []), { origin: inner.publicOrigin, root: inner.root }] })));
     } })
     .on("meta[http-equiv]", { element(element) {
-      if (element.getAttribute("http-equiv")?.toLowerCase() === "content-security-policy") element.setAttribute("content", escapeHtml(previewContentPolicy(decodeHTMLAttribute(element.getAttribute("content") ?? ""), context, nonce)));
+      if (element.getAttribute("http-equiv")?.toLowerCase() === "content-security-policy") {
+        const original = decodeHTMLAttribute(element.getAttribute("content") ?? "");
+        inheritedPolicies.push(original);
+        element.setAttribute("content", escapeHtml(previewContentPolicy(original, context, nonce)));
+      }
     } })
     .on('meta#vscode-workbench-web-base-url', { element(element) {
       const value = element.getAttribute("data-settings"); if (value) element.setAttribute("data-settings", escapeHtml(mapPreviewUrl(decodeHTMLAttribute(value), context)));
@@ -47,12 +56,23 @@ export async function rewritePreviewHtml(text: string, context: PreviewUrlContex
     .on("*", { async element(element) {
       for (const name of ["src", "href", "action", "formaction", "poster", "data"]) {
         const value = element.getAttribute(name);
-        if (value !== null) element.setAttribute(name, escapeHtml(element.tagName === "script" && name === "src" ? mapPreviewScriptUrl(decodeHTMLAttribute(value), context) : mapPreviewUrl(decodeHTMLAttribute(value), context)));
+        if (value !== null) {
+          const original = decodeHTMLAttribute(value);
+          const source = element.tagName === "script" && name === "src" ? rewritePreviewScriptDataUrl(original, source => rewritePreviewJavaScript(!nested && context.windowGlobals && context.app !== "vscode" ? rewritePreviewGlobals(source) : source, context)) : original;
+          element.setAttribute(name, escapeHtml(element.tagName === "script" && name === "src" ? mapPreviewScriptUrl(source, context) : mapPreviewUrl(source, context)));
+        }
       }
       if (!nested && context.windowGlobals && context.app !== "vscode") for (const [name, value] of element.attributes) {
         if (name.toLowerCase().startsWith("on")) {
           const original = decodeHTMLAttribute(value); const rewritten = await rewritePreviewGlobals(original, true);
           policy.record("script", original, rewritten); element.setAttribute(name, escapeHtml(rewritten));
+        }
+      }
+      if (element.tagName === "iframe") {
+        const source = element.getAttribute("srcdoc");
+        if (source) {
+          const child = await rewritePreviewHtml(decodeHTMLAttribute(source), { ...context, policy: inheritedPolicies.join(", ") }, nonce, false, nested, { policy, depth: state.depth + 1 });
+          element.setAttribute("srcdoc", escapeHtml(child.html));
         }
       }
       const srcset = element.getAttribute("srcset");
