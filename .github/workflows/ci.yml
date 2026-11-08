@@ -124,14 +124,14 @@ jobs:
           make -j2
           sudo make install
           test "$(tmux -V)" = 'tmux 3.8'
-      - name: Run the full test suite
-        timeout-minutes: 15
+      - name: Run the full test suite in serial chunks
+        timeout-minutes: 30
         run: |
           bun run generate:workspace-modules
           # Existing installer fixtures require root; helper integration fixtures
           # instead need files owned by the unprivileged agent identity.
-          sudo --preserve-env=PATH "$(command -v bun)" run test:parallel
-          bun run test:native
+          sudo --preserve-env=PATH "$(command -v bun)" run test:bounded --suite main
+          bun run test:bounded --suite native
         if: "steps.changes.outputs.required == 'true'"
       - name: Verify helper root permission boundaries
         working-directory: packages/workspace-helper/helper

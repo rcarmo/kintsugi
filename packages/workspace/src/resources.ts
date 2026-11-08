@@ -1,7 +1,20 @@
 import { workspaceResourceControlAvailable } from "@kintsugi/core";
-import { hostRequest } from "@kintsugi/host/control";
-import { workspaceResourceChangeSchema, type WorkspaceResourceChange, type WorkspaceResourceSnapshot } from "@kintsugi/shared/workspace-resources";
+import { workspaceMemoryPolicySystemVersion } from "@kintsugi/shared/system-version";
+import { hostAvailable, readSystemVersion, hostRequest } from "@kintsugi/host/control";
+import { workspaceResourceChangeSchema, workspaceMemoryPolicyChangeSchema, type WorkspaceMemoryPolicyChange, type WorkspaceMemoryPolicySnapshot, type WorkspaceResourceChange, type WorkspaceResourceSnapshot } from "@kintsugi/shared/workspace-resources";
 import { Value } from "typebox/value";
+
+export async function workspaceMemoryPolicyAvailable(): Promise<boolean> {
+  return hostAvailable() && await readSystemVersion() >= workspaceMemoryPolicySystemVersion;
+}
+export async function inspectWorkspaceMemoryPolicy(): Promise<WorkspaceMemoryPolicySnapshot> {
+  if (!await workspaceMemoryPolicyAvailable()) throw new Error("Global workspace RAM limits need System compatibility version 4. Update the installation first.");
+  return hostRequest({ operation: "resource-policy", action: "inspect" });
+}
+export async function configureWorkspaceMemoryPolicy(changes: WorkspaceMemoryPolicyChange): Promise<WorkspaceMemoryPolicySnapshot> {
+  if (!await workspaceMemoryPolicyAvailable()) throw new Error("Global workspace RAM limits need System compatibility version 4. Update the installation first.");
+  return hostRequest({ operation: "resource-policy", action: "configure", changes: Value.Parse(workspaceMemoryPolicyChangeSchema, changes) });
+}
 
 async function requireControl() {
   if (!await workspaceResourceControlAvailable()) throw new Error("Workspace resource inspection needs System compatibility version 3. Update the installation; network settings remain available.");

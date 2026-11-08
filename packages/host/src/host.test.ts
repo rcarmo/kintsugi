@@ -89,3 +89,17 @@ describe.skip("System terminal lifecycle over private socket", () => {
     expect(await call({ operation: "list" })).toEqual([]);
   });
 });
+
+test("global RAM policy uses a private typed operation without workspace or command overrides", async () => {
+  const request: HostCommand = { operation: "resource-policy", action: "configure", changes: { maximumMemory: 1024 ** 3 } };
+  expect(parseHostRequest(JSON.stringify(request))).toEqual(request);
+  expect(() => parseHostRequest(JSON.stringify({ ...request, workspaceId: "other" }))).toThrow();
+  expect(() => parseHostRequest(JSON.stringify({ ...request, changes: { maximumMemory: 0 } }))).toThrow();
+  const service = new HostService(async () => sample);
+  await expect(service.handle({ operation: "resource-policy", action: "inspect" })).rejects.toThrow("unavailable");
+  service.resourceControl = async command => {
+    expect(command.operation).toBe("resource-policy");
+    return { maximumMemory: 1024 ** 3, capacity: 2 * 1024 ** 3, defaultMemory: 1024 ** 3 };
+  };
+  expect(await service.handle({ operation: "resource-policy", action: "inspect" })).toMatchObject({ maximumMemory: 1024 ** 3 });
+});

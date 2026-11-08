@@ -1,5 +1,5 @@
 import type { HostMetricId } from "./diagnostics.ts";
-import { workspaceResourceChangeSchema, type WorkspaceResourceSnapshot } from "@kintsugi/shared/workspace-resources";
+import { workspaceResourceChangeSchema, workspaceMemoryPolicyChangeSchema, type WorkspaceMemoryPolicySnapshot, type WorkspaceResourceSnapshot } from "@kintsugi/shared/workspace-resources";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 export const hostSocketPath = "/run/kintsugi-host/control.sock";
@@ -11,6 +11,7 @@ import { networkModeSchema, networkConfigurationSchema, type WorkspaceNetworkPol
 export interface HostResults {
   network: WorkspaceNetworkPolicy;
   resources: null | WorkspaceResourceSnapshot;
+  "resource-policy": WorkspaceMemoryPolicySnapshot;
   list: HostTerminal[];
   create: HostTerminal;
   terminate: null;
@@ -19,6 +20,8 @@ export interface HostResults {
 export type HostResult = HostResults[keyof HostResults];
 const terminalId = Type.String({ pattern: "^host-[a-f0-9-]{36}$" });
 const requestSchema = Type.Union([
+  Type.Object({ operation: Type.Literal("resource-policy"), action: Type.Literal("inspect") }, { additionalProperties: false }),
+  Type.Object({ operation: Type.Literal("resource-policy"), action: Type.Literal("configure"), changes: workspaceMemoryPolicyChangeSchema }, { additionalProperties: false }),
   Type.Object({ operation: Type.Literal("resources"), action: Type.Optional(Type.Union([Type.Literal("admit"), Type.Literal("park")])), workspaceId: Type.String({ pattern: "^[a-zA-Z0-9][a-zA-Z0-9_.-]*$" }), recover: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
   Type.Object({ operation: Type.Literal("resources"), action: Type.Literal("inspect"), workspaceId: Type.String({ pattern: "^[a-zA-Z0-9][a-zA-Z0-9_.-]*$" }) }, { additionalProperties: false }),
   Type.Object({ operation: Type.Literal("resources"), action: Type.Literal("configure"), workspaceId: Type.String({ pattern: "^[a-zA-Z0-9][a-zA-Z0-9_.-]*$" }), changes: workspaceResourceChangeSchema }, { additionalProperties: false }),

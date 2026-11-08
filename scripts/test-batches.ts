@@ -11,6 +11,7 @@ const { values, positionals } = parseArgs({
   args: process.argv.slice(2), allowPositionals: true,
   options: {
     "batch-size": { type: "string", default: "1" },
+    suite: { type: "string", default: "all" },
     from: { type: "string", default: "1" },
     to: { type: "string" },
     out: { type: "string" },
@@ -22,22 +23,29 @@ function positiveInteger(name: string, value: string): number {
   return Number(value);
 }
 const size = positiveInteger("batch-size", values["batch-size"]!);
+const suite = Value.Parse(Type.Union([Type.Literal("all"), Type.Literal("main"), Type.Literal("native")]), values.suite);
 const discovered = Bun.spawnSync(["git", "ls-files", "-co", "--exclude-standard"], { cwd: root });
 if (discovered.exitCode !== 0) throw new Error(discovered.stderr.toString());
 const files = [...new Set(discovered.stdout.toString().trim().split("\n"))].filter(path => /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(path)).sort();
-const pkg = await Bun.file(join(root, "package.json")).json();
-const nativeCommand = Value.Parse(Type.String(), pkg.scripts["test:native"]);
-if (!nativeCommand.startsWith("bun test ")) throw new Error("Unsupported test:native command; review its test selection");
-const native = nativeCommand.slice("bun test ".length).trim().split(/\s+/);
-if (!native.every(path => files.includes(path))) throw new Error("test:native must name existing test files");
+// These fixtures require native processes/browser dependencies and run as the
+// unprivileged owner in CI. Keep every file, with one fresh process per chunk.
+const native = [
+  "apps/web/test/kintsugi-recording.test.ts",
+  "packages/observable-terminal/test/server/terminal-process.helper.test.ts",
+  "packages/workspace-helper/test/authentication.helper.test.ts",
+  "packages/workspace-helper/test/files.helper.test.ts",
+  "packages/builtin-agent/test/server/durable-workspace-files.helper.test.ts",
+  "packages/builtin-agent/test/server/durable-workspace-files-abort.helper.test.ts",
+];
+if (!native.every(path => files.includes(path))) throw new Error("Native suite must name existing test files");
 const requested = positionals.map(path => relative(root, resolve(root, path)).replaceAll("\\", "/"));
 for (const path of requested) if (!files.some(file => file === path || file.startsWith(`${path}/`))) throw new Error(`No test files found at ${path}`);
 const selected = (path: string): boolean => !requested.length || requested.some(prefix => path === prefix || path.startsWith(`${prefix}/`));
 const regular = files.filter(path => !path.endsWith(".helper.test.ts") && !native.includes(path) && selected(path));
 const groups: Array<{ index: number; kind: "main" | "native"; files: string[] }> = [];
-for (let offset = 0; offset < regular.length; offset += size) groups.push({ index: groups.length + 1, kind: "main", files: regular.slice(offset, offset + size) });
+for (let offset = 0; suite !== "native" && offset < regular.length; offset += size) groups.push({ index: groups.length + 1, kind: "main", files: regular.slice(offset, offset + size) });
 // Native helper fixtures run alone, using exactly the existing native-suite list.
-for (const path of native.filter(selected)) groups.push({ index: groups.length + 1, kind: "native", files: [path] });
+for (const path of suite === "main" ? [] : native.filter(selected)) groups.push({ index: groups.length + 1, kind: "native", files: [path] });
 const from = positiveInteger("from", values.from!);
 const to = values.to ? positiveInteger("to", values.to) : groups.length;
 if (!groups.length || from > to || to > groups.length) throw new Error(`Invalid batch range; available batches: 1–${groups.length}`);
@@ -61,7 +69,7 @@ interface RunResult { label: string; files: string[]; exitCode: number; elapsedM
 const results: RunResult[] = [];
 const report = () => {
   const passed = results.filter(result => result.files.length).length === chosen.length && results.every(result => result.exitCode === 0);
-  return Bun.write(join(out, "summary.json"), JSON.stringify({ passed, fullSuite: passed && !requested.length && from === 1 && to === groups.length, requested, batchSize: size, availableBatches: groups.length, selected: chosen, results }, null, 2) + "\n");
+  return Bun.write(join(out, "summary.json"), JSON.stringify({ passed, fullSuite: passed && suite === "all" && !requested.length && from === 1 && to === groups.length, suite, requested, batchSize: size, availableBatches: groups.length, selected: chosen, results }, null, 2) + "\n");
 };
 async function run(label: string, argv: string[], paths: string[] = []): Promise<void> {
   const log = join(out, `${label}.log`);

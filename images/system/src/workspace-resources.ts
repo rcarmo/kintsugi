@@ -4,7 +4,7 @@ import { workspaceOomGroupKills } from "./workspace-oom-events.ts";
 import { createKeyedOperationQueue, readTextIfExists, writeJsonAtomic } from "../../../packages/core/src/index.ts";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
-import { workspaceResourceLimitsSchema, workspaceResourceChangeSchema, type WorkspaceResourceChange, type WorkspaceResourceSnapshot, type WorkspaceResourceUsage, type WorkspaceResourceLimits } from "../../../packages/shared/src/workspace-resources.ts";
+import { workspaceResourceLimitsSchema, workspaceResourceChangeSchema, workspaceMemoryPolicyChangeSchema, workspaceMemoryPolicySchema, type WorkspaceMemoryPolicyChange, type WorkspaceMemoryPolicySnapshot, type WorkspaceResourceChange, type WorkspaceResourceSnapshot, type WorkspaceResourceUsage, type WorkspaceResourceLimits } from "../../../packages/shared/src/workspace-resources.ts";
 
 const GiB = 1024 ** 3;
 export function workspaceResourceDefaults(memory: number, cpus: number) {
@@ -16,17 +16,30 @@ type RecordState = Static<typeof recordSchema>;
 // Docker is a privileged external boundary. Do not return its Env/Cmd/Error or arbitrary image metadata in diagnostics.
 const inspectSchema = Type.Array(Type.Object({ Id: Type.String(), Name: Type.String(), Config: Type.Object({ Image: Type.Optional(Type.String()), ExposedPorts: Type.Optional(Type.Union([Type.Null(), Type.Record(Type.String(), Type.Unknown())])), Labels: Type.Union([Type.Null(), Type.Record(Type.String(), Type.String())]) }), State: Type.Object({ Running: Type.Boolean(), OOMKilled: Type.Boolean(), Pid: Type.Integer(), ExitCode: Type.Integer(), FinishedAt: Type.String(), StartedAt: Type.Optional(Type.String()), Status: Type.Optional(Type.String()) }), NetworkSettings: Type.Optional(Type.Object({ Networks: Type.Optional(Type.Record(Type.String(), Type.Object({ IPAddress: Type.Optional(Type.String()), GlobalIPv6Address: Type.Optional(Type.String()) }))), Ports: Type.Optional(Type.Union([Type.Null(), Type.Record(Type.String(), Type.Union([Type.Null(), Type.Array(Type.Object({ HostIp: Type.String(), HostPort: Type.String() }))]))])) })), RestartCount: Type.Integer(), HostConfig: Type.Object({ CpusetCpus: Type.Optional(Type.String()), RestartPolicy: Type.Optional(Type.Object({ Name: Type.String() })), Memory: Type.Number(), MemorySwap: Type.Number(), NanoCpus: Type.Number(), PidsLimit: Type.Union([Type.Null(), Type.Number()]) }) }));
 type Container = Static<typeof inspectSchema>[number];
-export function createWorkspaceResourceControl(options: { memory: number; cpus: number; swap?: number; swapSupported?: boolean; systemMemory?: number; sample?: (container: Container) => Promise<WorkspaceResourceUsage>; cgroupParent: string; docker(...args: string[]): Promise<string>; file?: string; appData?: string; park?: (id: string) => Promise<void>; readOom?: (container: Container) => Promise<number>; now?: () => number }) {
+export function createWorkspaceResourceControl(options: { memory: number; cpus: number; swap?: number; swapSupported?: boolean; systemMemory?: number; sample?: (container: Container) => Promise<WorkspaceResourceUsage>; cgroupParent: string; docker(...args: string[]): Promise<string>; file?: string; appData?: string; policyFile?: string; park?: (id: string) => Promise<void>; readOom?: (container: Container) => Promise<number>; now?: () => number }) {
   const file = options.file ?? "/data/supervisor/workspace-resources.json";
-  const defaults = workspaceResourceDefaults(options.memory, options.cpus);
-  const budget = Math.floor(options.memory * 0.8); // Per-workspace ceiling; the shared aggregate cap also covers source readers and image builds.
+  const baseDefaults = workspaceResourceDefaults(options.memory, options.cpus);
+  const defaults = { ...baseDefaults };
+  const capacity = Math.floor(options.memory * 0.8); // Leave shared capacity for source readers and image builds.
+  const policyFile = options.policyFile ?? join(options.appData ?? "/data/app", "workspace-resource-policy.json");
+  let budget = capacity, configuredMaximumMemory: number | undefined;
   const serialize = createKeyedOperationQueue();
   // Track admitted starts until Docker reports them running, not capacity reservations.
   const pending = new Map<string, number>();
   const now = options.now ?? Date.now;
   let closing = false;
   let state: Record<string, RecordState>;
-  async function load() { state ??= Value.Parse(Type.Record(Type.String(), recordSchema), JSON.parse(await readTextIfExists(file) ?? "{}")); }
+  async function load() {
+    if (state) return;
+    const records = Value.Parse(Type.Record(Type.String(), recordSchema), JSON.parse(await readTextIfExists(file) ?? "{}"));
+    const text = await readTextIfExists(policyFile);
+    const policy = text === undefined ? undefined : Value.Parse(workspaceMemoryPolicySchema, JSON.parse(text));
+    configuredMaximumMemory = policy?.maximumMemory;
+    budget = Math.min(capacity, configuredMaximumMemory ?? capacity);
+    defaults.memory = Math.min(baseDefaults.memory, budget);
+    state = records;
+  }
+  const memoryPolicy = (): WorkspaceMemoryPolicySnapshot => ({ maximumMemory: budget, configuredMaximumMemory, capacity, defaultMemory: defaults.memory });
   const save = () => writeJsonAtomic(file, state, { mode: 0o600 });
   const idOf = (c: Container) => { const id = c.Config.Labels?.["com.kintsugi.workspace-id"]; return id && /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(id) && c.Config.Labels?.["com.kintsugi.type"] === "workspace" && c.Name === `/kintsugi-${id}` ? id : undefined; };
   async function containers() {
@@ -36,14 +49,19 @@ export function createWorkspaceResourceControl(options: { memory: number; cpus: 
   function entry(c: Container): RecordState {
     const id = idOf(c)!;
     if (!Object.hasOwn(state, id)) {
-      const memory = c.HostConfig.Memory || defaults.memory;
-      state[id] = { limits: { memory, memorySwap: c.HostConfig.MemorySwap > 0 ? c.HostConfig.MemorySwap : memory, cpus: c.HostConfig.NanoCpus > 0 ? c.HostConfig.NanoCpus / 1e9 : defaults.cpus, pids: c.HostConfig.PidsLimit && c.HostConfig.PidsLimit > 0 ? c.HostConfig.PidsLimit : defaults.pids }, oomKills: 0 };
+      const originalMemory = c.HostConfig.Memory || defaults.memory;
+      const memory = configuredMaximumMemory === undefined ? originalMemory : Math.min(originalMemory, budget);
+      state[id] = { limits: { memory, memorySwap: memory + (c.HostConfig.MemorySwap > 0 ? Math.max(0, c.HostConfig.MemorySwap - originalMemory) : 0), cpus: c.HostConfig.NanoCpus > 0 ? c.HostConfig.NanoCpus / 1e9 : defaults.cpus, pids: c.HostConfig.PidsLimit && c.HostConfig.PidsLimit > 0 ? c.HostConfig.PidsLimit : defaults.pids }, oomKills: 0 };
     }
     const current = state[id]!;
+    if (configuredMaximumMemory !== undefined && !current.managed && current.limits.memory > budget) {
+      const extra = Math.max(0, current.limits.memorySwap - current.limits.memory);
+      current.limits.memory = budget; current.limits.memorySwap = budget + extra;
+    }
     if (current.containerId === c.Id && !current.managed) {
       const config = c.HostConfig;
-      if (config.Memory > 0) current.limits.memory = config.Memory;
-      if (config.MemorySwap > 0) current.limits.memorySwap = config.MemorySwap;
+      if (config.Memory > 0) current.limits.memory = configuredMaximumMemory === undefined ? config.Memory : Math.min(config.Memory, budget);
+      if (config.MemorySwap > 0) current.limits.memorySwap = current.limits.memory + Math.max(0, config.MemorySwap - (config.Memory || current.limits.memory));
       if (config.NanoCpus > 0) current.limits.cpus = config.NanoCpus / 1e9;
       if (config.PidsLimit && config.PidsLimit > 0) current.limits.pids = config.PidsLimit;
     }
@@ -156,6 +174,22 @@ export function createWorkspaceResourceControl(options: { memory: number; cpus: 
   const summary = () => ({ budget, aggregateMemory: options.memory, aggregateSwap: options.swap ?? 0, defaults, totalWorkspaces: Object.keys(state ?? {}).length, workspaces: Object.fromEntries(Object.entries(state ?? {}).sort(([,a],[,b]) => (b.blockedAt ?? 0) - (a.blockedAt ?? 0)).slice(0,128)) });
   return {
     status() { return summary(); },
+    policy() { return serialize("resources", async () => { await load(); return memoryPolicy(); }); },
+    configurePolicy(input: WorkspaceMemoryPolicyChange) { return serialize("resources", async () => {
+      if (closing) throw Error("System resource control is stopping");
+      const changes = Value.Parse(workspaceMemoryPolicyChangeSchema, input); await load();
+      if (changes.maximumMemory > capacity) throw Error(`RAM cap exceeds the installation capacity of ${capacity} bytes.`);
+      const conflicts = new Set(Object.entries(state).filter(([, saved]) => saved.managed && saved.limits.memory > changes.maximumMemory).map(([id]) => id));
+      for (const c of await containers()) {
+        const saved = entry(c);
+        if ((saved.managed && saved.limits.memory > changes.maximumMemory) || (c.State.Running && (c.HostConfig.Memory === 0 || c.HostConfig.Memory > changes.maximumMemory))) conflicts.add(idOf(c)!);
+      }
+      if (conflicts.size) throw Error(`Lower workspace RAM limits before reducing the global cap: ${[...conflicts].sort().join(", ")}. No running limits were changed.`);
+      await writeJsonAtomic(policyFile, { version: 2, maximumMemory: changes.maximumMemory }, { mode: 0o600 });
+      configuredMaximumMemory = changes.maximumMemory; budget = changes.maximumMemory; defaults.memory = Math.min(baseDefaults.memory, budget);
+      await chown(policyFile, 1000, 1000);
+      return memoryPolicy();
+    }); },
     inspect(workspaceId: string) { return serialize("resources",async()=>{ await load(); const all=await containers(),c=all.find(c=>idOf(c)===workspaceId);if(!c)throw Error("Workspace resource target not found");return snapshot(c,all); }); },
     configure(workspaceId: string, input: WorkspaceResourceChange) { return serialize("resources",async()=>{
       if(closing)throw Error("System resource control is stopping");
@@ -182,6 +216,7 @@ export function createWorkspaceResourceControl(options: { memory: number; cpus: 
         const previousFinish = e.finishedAt;
         try {
           await observe(c,e);
+          if (configuredMaximumMemory !== undefined && c.State.Running && (c.HostConfig.Memory === 0 || c.HostConfig.Memory > budget)) throw Error("Workspace RAM limit exceeds the installation-wide cap. Lower its limits before restarting.");
           if (e.managed && c.State.Running && (e.pending || !sameLimits(actual(c),e.limits) || !withinCapacity(e.limits))) {
             e.pending = true; e.applyError ??= "Docker settings differ from the saved configuration. Apply the saved limits or park/unpark to reconcile.";
             await options.docker("update", "--restart", "no", "--cpu-shares", "128", c.Id);
@@ -215,6 +250,7 @@ export function createWorkspaceResourceControl(options: { memory: number; cpus: 
       if (closing) throw new Error("System resource control is stopping");
       await load(); const all = await containers(); const c = all.find(c => idOf(c) === workspaceId); if (!c) throw new Error("Workspace resource target not found");
       const e = entry(c); await observe(c,e);
+      if (configuredMaximumMemory !== undefined && c.State.Running && (c.HostConfig.Memory === 0 || c.HostConfig.Memory > budget)) throw new Error("Running workspace exceeds the global RAM cap. Park it before applying its bounded limits.");
       if (c.State.Running && e.managed && (e.pending || !sameLimits(actual(c), e.limits))) throw new Error("Saved resource changes are pending. Apply them explicitly, or park the workspace before starting it.");
       if (e.blockedAt !== undefined) {
         if (!recover || now() - e.blockedAt < 60_000) throw new Error(e.reason);

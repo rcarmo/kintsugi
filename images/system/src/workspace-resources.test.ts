@@ -22,7 +22,7 @@ async function setup() {
     if (args[0] === "update") { if(args.includes("--memory")) c.HostConfig.Memory = Number(args[args.indexOf("--memory")+1]); if(args.includes("--memory-swap")) c.HostConfig.MemorySwap = Number(args[args.indexOf("--memory-swap")+1]); if(args.includes("--cpus")) c.HostConfig.NanoCpus = Number(args[args.indexOf("--cpus")+1])*1e9; if(args.includes("--pids-limit")) c.HostConfig.PidsLimit = Number(args[args.indexOf("--pids-limit")+1]); return c.Id; }
     throw Error("Unexpected Docker operation");
   }
-  const create = (swap = 0, swapSupported = true) => createWorkspaceResourceControl({ swap, swapSupported, memory: 8*GiB, cpus: 6, cgroupParent: "/fixture/workloads", file, docker, now: () => time, readOom: async c => kills.get(c.Id) ?? 0, sample: async c => c.State.Running ? {memory: 128*1024**2,memoryPeak:256*1024**2,swap:0,cpuCores:.5,effectiveMemory:c.HostConfig.Memory,effectiveAdditionalSwap:0,effectiveCpus:c.HostConfig.NanoCpus/1e9}: {}, park: async id => { parked.push(id); } });
+  const create = (swap = 0, swapSupported = true) => createWorkspaceResourceControl({ policyFile: join(directory, "global-policy.json"), swap, swapSupported, memory: 8*GiB, cpus: 6, cgroupParent: "/fixture/workloads", file, docker, now: () => time, readOom: async c => kills.get(c.Id) ?? 0, sample: async c => c.State.Running ? {memory: 128*1024**2,memoryPeak:256*1024**2,swap:0,cpuCores:.5,effectiveMemory:c.HostConfig.Memory,effectiveAdditionalSwap:0,effectiveCpus:c.HostConfig.NanoCpus/1e9}: {}, park: async id => { parked.push(id); } });
   return { directory, file, containers, calls, kills, parked, create, refuseUpdate: (value:boolean) => { failUpdate=value; }, advance: (ms: number) => { time += ms; } };
 }
 test("workspace defaults bound memory, CPU and processes on small and large installations", () => {
@@ -175,4 +175,58 @@ test("admission rejects individual operator caps beyond RAM, CPU or swap capacit
 test("last exit metadata remains visible after a successful retry and later recreation",()=>fixture(async f=>{
   const c=f.containers[0]!;c.State.OOMKilled=true;c.State.ExitCode=137;c.State.FinishedAt="2026-10-16T19:00:00Z";const control=f.create();await control.reconcile();f.advance(60_001);await control.admit("a",true);
   c.State.Running=true;c.State.OOMKilled=false;c.State.ExitCode=0;c.State.FinishedAt="0001-01-01T00:00:00Z";await control.reconcile();const value=await control.inspect("a");expect(value.lastExit).toMatchObject({code:137,finishedAt:"2026-10-16T19:00:00Z"});
+}));
+
+test("global workspace RAM caps persist, bound defaults and reject individual limits above them", () => fixture(async f => {
+  const control = f.create();
+  expect((await control.policy()).maximumMemory).toBe(Math.floor(8 * GiB * .8));
+  const policy = await control.configurePolicy({ maximumMemory: 2 * GiB });
+  expect(policy.defaultMemory).toBe(2 * GiB);
+  expect(policy.configuredMaximumMemory).toBe(2 * GiB);
+  await control.admit("a");
+  expect(f.containers[0]!.HostConfig.Memory).toBe(2 * GiB);
+  await expect(control.configure("b", { memory: 3 * GiB, additionalSwap: 0, cpus: 1 })).rejects.toThrow("per-workspace maximum");
+  const restored = f.create();
+  expect((await restored.policy()).maximumMemory).toBe(2 * GiB);
+  await restored.admit("c");
+  expect(f.containers[2]!.HostConfig.Memory).toBe(2 * GiB);
+  expect(JSON.parse(await readFile(join(f.directory, "global-policy.json"), "utf8"))).toEqual({ version: 2, maximumMemory: 2 * GiB });
+}));
+
+test("reducing the global cap refuses conflicting saved or running allocations without resizing", () => fixture(async f => {
+  const control = f.create();
+  await control.configurePolicy({ maximumMemory: 4 * GiB });
+  await control.configure("a", { memory: 3 * GiB, additionalSwap: 0, cpus: 1 });
+  const file = join(f.directory, "global-policy.json"), before = await readFile(file, "utf8"), calls = f.calls.length;
+  await expect(control.configurePolicy({ maximumMemory: 2 * GiB })).rejects.toThrow("a");
+  expect(await readFile(file, "utf8")).toBe(before);
+  expect(f.calls.slice(calls).some(call => ["update", "stop"].includes(call[0]!))).toBe(false);
+  await control.configure("a", { memory: GiB, additionalSwap: 0, cpus: 1 });
+  f.containers[1]!.State.Running = true;
+  await expect(control.configurePolicy({ maximumMemory: 2 * GiB })).rejects.toThrow("b");
+  await control.configure("b", { memory: GiB, additionalSwap: 0, cpus: 1, acknowledgeMemoryReduction: true });
+  expect((await control.configurePolicy({ maximumMemory: 2 * GiB })).maximumMemory).toBe(2 * GiB);
+}));
+
+test("a global cap fences an out-of-band oversized running container without killing peers", () => fixture(async f => {
+  const control = f.create(); await control.configurePolicy({ maximumMemory: 2 * GiB });
+  await control.admit("a"); await control.admit("b");
+  f.containers[0]!.State.Running = true; f.containers[1]!.State.Running = true;
+  f.containers[0]!.HostConfig.Memory = 3 * GiB; f.containers[0]!.HostConfig.MemorySwap = 3 * GiB;
+  await control.reconcile();
+  expect(f.containers[0]!.State.Running).toBe(false);
+  expect(f.containers[1]!.State.Running).toBe(true);
+  expect(f.parked).toEqual(["a"]);
+}));
+
+test("global cap input and capacity validation leave policy unchanged", () => fixture(async f => {
+  const control = f.create(); await control.configurePolicy({ maximumMemory: GiB });
+  for (const maximumMemory of [0, -1, NaN, Infinity, 7 * GiB]) await expect(control.configurePolicy({ maximumMemory })).rejects.toThrow();
+  expect((await control.policy()).maximumMemory).toBe(GiB);
+}));
+
+test("global RAM cap includes managed allocations whose containers are temporarily absent", () => fixture(async f => {
+  const control = f.create(); await control.configure("a", { memory: 3 * GiB, additionalSwap: 0, cpus: 1 });
+  f.containers.shift();
+  await expect(control.configurePolicy({ maximumMemory: GiB })).rejects.toThrow("a");
 }));

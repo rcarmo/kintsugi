@@ -14,6 +14,15 @@ export const workspaceResourceChangeSchema = Type.Object({
   acknowledgeMemoryReduction: Type.Optional(Type.Boolean()),
 }, { additionalProperties: false });
 export type WorkspaceResourceChange = Static<typeof workspaceResourceChangeSchema>;
+export const workspaceMemoryPolicyChangeSchema = Type.Object({ maximumMemory: Type.Integer({ minimum: 6 * 1024 ** 2, maximum: 1024 ** 4 }) }, { additionalProperties: false });
+export const workspaceMemoryPolicySchema = Type.Object({ version: Type.Literal(2), maximumMemory: workspaceMemoryPolicyChangeSchema.properties.maximumMemory }, { additionalProperties: false });
+export type WorkspaceMemoryPolicyChange = Static<typeof workspaceMemoryPolicyChangeSchema>;
+export interface WorkspaceMemoryPolicySnapshot {
+  maximumMemory: number;
+  configuredMaximumMemory?: number;
+  capacity: number;
+  defaultMemory: number;
+}
 export interface WorkspaceResourceUsage {
   memory?: number; memoryPeak?: number; swap?: number; cpuCores?: number;
   effectiveMemory?: number; effectiveAdditionalSwap?: number; effectiveCpus?: number; effectivePids?: number;

@@ -21,3 +21,14 @@ test("malformed markers do not silently authorise a downgrade",async()=>{
   const root=await mkdtemp(join(tmpdir(),"resource-compatibility-invalid-"));const directory=join(root,"workspaces","fixture","metadata");
   try{await mkdir(directory,{recursive:true});await writeFile(join(directory,"resource-policy.json"),'{"version":0}');await expect(requiredAppResourceStateVersion(root)).rejects.toThrow();}finally{await rm(root,{recursive:true,force:true});}
 });
+
+test("global RAM policy fences old app/System images even with no workspaces", async () => {
+  const root = await mkdtemp(join(tmpdir(), "global-resource-compatibility-"));
+  try {
+    await writeFile(join(root, "workspace-resource-policy.json"), JSON.stringify({ version: 2, maximumMemory: 2 * 1024 ** 3 }));
+    expect(await requiredAppResourceStateVersion(root)).toBe(2);
+    expect(() => assertResourceStateCompatible(2, { [resourcePolicyVersionLabel]: "2" }, { [systemVersionLabel]: "4" })).not.toThrow();
+    expect(() => assertResourceStateCompatible(2, { [resourcePolicyVersionLabel]: "1" }, { [systemVersionLabel]: "4" })).toThrow();
+    expect(() => assertResourceStateCompatible(2, { [resourcePolicyVersionLabel]: "2" }, { [systemVersionLabel]: "3" })).toThrow();
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

@@ -694,4 +694,4 @@ export async function prepareWorkspaceRuntime(id: string, report: (detail: strin
   await workspaceImagePreloader.install(images, workspaceContainerName(id), report, activity);
 }
 
-export { inspectWorkspaceResources, configureWorkspaceResources } from "./resources.ts";
+export { inspectWorkspaceResources, configureWorkspaceResources, workspaceMemoryPolicyAvailable, inspectWorkspaceMemoryPolicy, configureWorkspaceMemoryPolicy } from "./resources.ts";

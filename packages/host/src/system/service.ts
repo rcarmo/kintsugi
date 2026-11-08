@@ -17,7 +17,7 @@ export class HostService {
   private sampling?: Promise<HostSample>;
   constructor(private readonly sample: () => Promise<HostSample>, private readonly socketName = "kintsugi-host", private readonly network?: (request: Extract<HostCommand, { operation: "network" }>) => Promise<HostResult>) {}
 
-  resourceControl?: (request: Extract<HostCommand, { operation: "resources" }>) => Promise<HostResult>;
+  resourceControl?: (request: Extract<HostCommand, { operation: "resources" | "resource-policy" }>) => Promise<HostResult>;
 
   private async list(): Promise<HostTerminal[]> {
     // The dedicated host tmux server is started once and kept alive with no sessions.
@@ -35,6 +35,7 @@ export class HostService {
   }
   async handle(request: HostCommand): Promise<HostResult> {
     switch (request.operation) {
+      case "resource-policy":
       case "resources": {
         if (!this.resourceControl) throw new Error("Workspace resource control is unavailable");
         return this.resourceControl(request);
@@ -65,7 +66,7 @@ export class HostService {
 }
 
 /** Only the app receives this socket mount. No privileged API on the public supervisor listener. */
-export async function startHostService(options: { resourceControl?: (request: Extract<HostCommand, { operation: "resources" }>) => Promise<HostResult>; root: string; effectiveMemory: number; socketPath?: string; tmuxSocketName?: string; network?: (request: Extract<HostCommand, { operation: "network" }>) => Promise<HostResult> }) {
+export async function startHostService(options: { resourceControl?: (request: Extract<HostCommand, { operation: "resources" | "resource-policy" }>) => Promise<HostResult>; root: string; effectiveMemory: number; socketPath?: string; tmuxSocketName?: string; network?: (request: Extract<HostCommand, { operation: "network" }>) => Promise<HostResult> }) {
   const socketPath = options.socketPath ?? hostSocketPath;
   const socketName = options.tmuxSocketName ?? "kintsugi-host";
   await mkdir(dirname(socketPath), { recursive: true });

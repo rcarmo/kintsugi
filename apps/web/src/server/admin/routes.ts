@@ -33,6 +33,8 @@ route("POST", "/settings/telemetry/test", ["security"], "Test a Carbon TCP conne
 route("POST", "/settings/telemetry/discard", ["security"], "Explicitly discard pending token telemetry exports");
 route("GET", "/settings/network", ["security"], "Read LAN CIDRs and external DNS forwarders");
 route("POST", "/settings/network", ["security"], "Configure LAN CIDRs and external DNS forwarders; workspace restart required");
+route("GET", "/settings/workspace-resources", ["security"], "Read the installation-wide hard workspace RAM cap");
+route("POST", "/settings/workspace-resources", ["security"], "Persist a workspace RAM cap; conflicting allocations must be lowered first");
 route("GET", "/workspaces/{id}/resources", ["security"], "Inspect desired, Docker and cgroup limits without starting the workspace");
 route("POST", "/workspaces/{id}/resources", ["security"], "Persist and apply finite resource limits; risky RAM reductions require acknowledgement");
 route("GET", "/workspaces/{id}/network", ["security"]);
