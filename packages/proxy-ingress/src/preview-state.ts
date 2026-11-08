@@ -10,15 +10,30 @@ const database = Type.Object({
     records: Type.Array(Type.Object({ key: Type.Unknown(), value: Type.Unknown() })),
   })),
 });
+export const previewStorageEntriesSchema = Type.Array(Type.Tuple([Type.String(), Type.String()]));
+const legacyPreviewStateSchema = Type.Object({ version: Type.Literal(1), local: previewStorageEntriesSchema, databases: Type.Array(database) });
 export const previewStateSchema = Type.Object({
-  version: Type.Literal(1),
-  local: Type.Array(Type.Tuple([Type.String(), Type.String()])),
+  version: Type.Literal(2),
+  revision: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+  local: previewStorageEntriesSchema,
   databases: Type.Array(database),
 });
 export type PreviewState = Static<typeof previewStateSchema>;
+export const previewLocalChangeSchema = Type.Union([
+  Type.Object({ kind: Type.Literal("set"), key: Type.String(), value: Type.String() }),
+  Type.Object({ kind: Type.Literal("remove"), key: Type.String() }),
+  Type.Object({ kind: Type.Literal("clear") }),
+]);
+export type PreviewLocalChange = Static<typeof previewLocalChangeSchema>;
+export function applyPreviewLocalChange(values: Map<string, string>, change: PreviewLocalChange): void {
+  if (change.kind === "clear") values.clear();
+  else if (change.kind === "remove") values.delete(change.key);
+  else values.set(change.key, change.value);
+}
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Structured-cloned messages and persisted IndexedDB records are parsed at this external boundary.
 export function parsePreviewState(input: unknown): PreviewState {
+  if (Value.Check(legacyPreviewStateSchema, input)) return { version: 2, revision: 0, local: input.local, databases: input.databases };
   if (!Value.Check(previewStateSchema, input)) throw new Error("Invalid preview storage state");
   return input;
 }
-export const initialPreviewState = (): PreviewState => ({ version: 1, local: [], databases: [] });
+export const initialPreviewState = (): PreviewState => ({ version: 2, revision: 0, local: [], databases: [] });

@@ -167,10 +167,10 @@ export function installPreviewMarkup(context: PreviewUrlContext, upstream: () =>
     return result;
   }
 
-  function finishFragment(result: DocumentFragment): void {
+  function finishFragment(result: DocumentFragment, executing = false): void {
     const rules = [...policies(), ...[...result.querySelectorAll<HTMLMetaElement>('meta[http-equiv="Content-Security-Policy" i]')].map(meta => meta.content)];
     const styles = [...result.querySelectorAll<HTMLElement | SVGElement>("[style]")].map(element => ({ element, source: element.getAttribute("style")! }));
-    rewriteTree(result);
+    rewriteTree(result, [], executing);
     document.adoptNode(result);
     // Recheck inline attributes against the live document's CSP before insertion.
     for (const { element, source } of styles) {
@@ -181,6 +181,24 @@ export function installPreviewMarkup(context: PreviewUrlContext, upstream: () =>
       if ((element instanceof HTMLElement || element instanceof SVGElement) && previewInlineAllowed(rules, "style", source, "", true) && element.style.cssText) element.style.cssText = rewritePreviewCss(element.style.cssText, current());
     }
   }
+
+  const parseDocument = DOMParser.prototype.parseFromString;
+  DOMParser.prototype.parseFromString = function(...args: Parameters<typeof parseDocument>) {
+    const result = parseDocument.apply(this, args);
+    if (["text/html", "image/svg+xml", "application/xhtml+xml"].includes(result.contentType)) rewriteTree(result);
+    return result;
+  };
+
+  const contextualFragment = Range.prototype.createContextualFragment;
+  Range.prototype.createContextualFragment = function(value) {
+    const owner = inert();
+    const source = this.startContainer instanceof Element ? this.startContainer : this.startContainer.parentElement;
+    const staging = owner.createElementNS(source?.namespaceURI ?? "http://www.w3.org/1999/xhtml", source?.localName === "html" ? "body" : source?.localName ?? "body");
+    const range = owner.createRange(); range.selectNodeContents(staging);
+    const result = contextualFragment.call(range, value);
+    finishFragment(result, true);
+    return result;
+  };
 
   Object.defineProperty(Element.prototype, "innerHTML", { ...inner, set(value: string | TrustedHTML) {
     if (this instanceof HTMLScriptElement || this instanceof HTMLStyleElement) {

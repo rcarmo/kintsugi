@@ -2,7 +2,9 @@
 export function rewritePreviewScriptDataUrl(input: string, rewrite: (source: string) => string): string {
   if (!input.toLowerCase().startsWith("data:")) return input;
   const url = new URL(input);
-  const value = url.href.slice(5, url.hash ? -url.hash.length : undefined);
+  const href = url.href; url.hash = "";
+  const hash = href.slice(url.href.length);
+  const value = url.href.slice(5);
   const comma = value.indexOf(",");
   if (comma < 0) return input;
   const metadata = value.slice(0, comma), payload = value.slice(comma + 1);
@@ -16,5 +18,5 @@ export function rewritePreviewScriptDataUrl(input: string, rewrite: (source: str
   const source = new TextDecoder(charset || "utf-8").decode(bytes);
   const translated = rewrite(source);
   if (translated === source) return input;
-  return `data:${parameters.filter((parameter, index) => index === 0 || (!parameter.trim().toLowerCase().startsWith("charset=") && !(base64 && index === parameters.length - 1))).join(";")};charset=utf-8,${encodeURIComponent(translated)}${url.hash}`;
+  return `data:${parameters.filter((parameter, index) => index === 0 || (!parameter.trim().toLowerCase().startsWith("charset=") && !(base64 && index === parameters.length - 1))).join(";")};charset=utf-8,${encodeURIComponent(translated)}${hash}`;
 }

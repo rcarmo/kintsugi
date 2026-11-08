@@ -40,16 +40,17 @@ export interface PreparedPreviewSocket {
   cancel(): void;
 }
 
-let assets: Promise<{ runtime: string; host: string; worker: string; source: string }> | undefined;
+let assets: Promise<{ runtime: string; host: string; worker: string; source: string; state: string }> | undefined;
 async function previewAssets() {
   return assets ??= (async () => {
-    const build = await Bun.build({ entrypoints: [new URL("../client/preview-runtime.ts", import.meta.url).pathname, new URL("../client/preview-host.ts", import.meta.url).pathname, new URL("../client/preview-worker-network.ts", import.meta.url).pathname, new URL("../client/preview-source-host.ts", import.meta.url).pathname], target: "browser", format: "iife", minify: true, naming: "[name].[ext]" });
+    const build = await Bun.build({ entrypoints: [new URL("../client/preview-runtime.ts", import.meta.url).pathname, new URL("../client/preview-host.ts", import.meta.url).pathname, new URL("../client/preview-worker-network.ts", import.meta.url).pathname, new URL("../client/preview-source-host.ts", import.meta.url).pathname, new URL("../client/preview-state-worker.ts", import.meta.url).pathname], target: "browser", format: "iife", minify: true, naming: "[name].[ext]" });
     if (!build.success) throw new AggregateError(build.logs, "Could not build isolated preview runtime");
     const runtime = build.outputs.find(output => output.path.endsWith("preview-runtime.js"))!;
     const host = build.outputs.find(output => output.path.endsWith("preview-host.js"))!;
     const worker = build.outputs.find(output => output.path.endsWith("preview-worker-network.js"))!;
     const source = build.outputs.find(output => output.path.endsWith("preview-source-host.js"))!;
-    return { runtime: await runtime.text(), host: await host.text(), worker: await worker.text(), source: await source.text() };
+    const state = build.outputs.find(output => output.path.endsWith("preview-state-worker.js"))!;
+    return { runtime: await runtime.text(), host: await host.text(), worker: await worker.text(), source: await source.text(), state: await state.text() };
   })();
 }
 
@@ -196,7 +197,7 @@ export function createWorkspacePathPreviews(options: WorkspacePathPreviewOptions
       const src = `${target.pathname}${target.search}`;
       const scope = `${app.workspaceId}:${app.appKey}`;
       const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Workspace preview</title><style>html,body{height:100%;margin:0}body{display:flex;flex-direction:column;background:#111;color:#eee;font:13px system-ui}iframe{display:block;flex:1;min-height:0;width:100%;border:0;background:white}[role=status]{position:absolute;top:0;right:0;font-size:11px;padding:2px 6px;pointer-events:none;opacity:.6}[role=alert]{position:relative;padding:8px;background:#5b1d24;opacity:1}</style><script src="${previewAssetPrefix}host.js" defer></script></head><body data-controller="preview-host" data-preview-host-scope-value="${escapeHtml(scope)}" data-action="message@window->preview-host#receive"><span role="status" data-preview-host-target="status">Loading preview</span><iframe title="Workspace content" sandbox="allow-scripts allow-forms allow-popups allow-downloads" allow="clipboard-read; clipboard-write; fullscreen" allowfullscreen referrerpolicy="no-referrer" data-preview-host-target="frame" data-action="load->preview-host#loaded" src="${escapeHtml(src)}"></iframe></body></html>`;
-      return new Response(request.method === "HEAD" ? null : html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "content-security-policy": `default-src 'none'; script-src ${options.publicOrigin(request)}${previewAssetPrefix}; style-src 'unsafe-inline'; frame-src ${options.publicOrigin(request)}${previewResourcePrefix}; frame-ancestors 'self'; base-uri 'none'; form-action 'none'` } });
+      return new Response(request.method === "HEAD" ? null : html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "content-security-policy": `default-src 'none'; script-src ${options.publicOrigin(request)}${previewAssetPrefix}; style-src 'unsafe-inline'; worker-src ${options.publicOrigin(request)}${previewAssetPrefix}state-worker.js; frame-src ${options.publicOrigin(request)}${previewResourcePrefix}; frame-ancestors 'self'; base-uri 'none'; form-action 'none'` } });
     },
     async asset(request: Request): Promise<Response | undefined> {
       const path = new URL(request.url).pathname;
@@ -205,9 +206,11 @@ export function createWorkspacePathPreviews(options: WorkspacePathPreviewOptions
       if (path === previewSourceHost) return new Response(`<!doctype html><html><head><script src="${previewAssetPrefix}source-host.js"></script></head><body></body></html>`, { headers: { "content-type": "text/html", "cache-control": "no-store", "referrer-policy": "no-referrer", "content-security-policy": `sandbox allow-scripts; default-src \'none\'; script-src ${options.publicOrigin(request)}${previewAssetPrefix}source-host.js; connect-src ${options.publicOrigin(request)}${previewSourcePrefix}` } });
       if (request.method !== "GET") return new Response("Method not allowed", { status: 405 });
       const name = path.slice(previewAssetPrefix.length);
-      if (!["runtime.js", "host.js", "worker.js", "source-host.js"].includes(name)) return new Response("Not found", { status: 404 });
+      if (!["runtime.js", "host.js", "worker.js", "source-host.js", "state-worker.js"].includes(name)) return new Response("Not found", { status: 404 });
       const bundle = await previewAssets();
-      return new Response(name === "runtime.js" ? bundle.runtime : name === "worker.js" ? bundle.worker : name === "source-host.js" ? bundle.source : bundle.host, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "access-control-allow-origin": "*" } });
+      const headers = new Headers({ "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "access-control-allow-origin": "*" });
+      if (name === "state-worker.js") headers.set("content-security-policy", "default-src 'none'");
+      return new Response(name === "runtime.js" ? bundle.runtime : name === "worker.js" ? bundle.worker : name === "source-host.js" ? bundle.source : name === "state-worker.js" ? bundle.state : bundle.host, { headers });
     },
     async resource(request: Request): Promise<Response | undefined> {
       const url = new URL(request.url);

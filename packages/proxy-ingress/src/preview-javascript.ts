@@ -1,4 +1,5 @@
 import { parse } from "es-module-lexer/minimal/js";
+import { previewBlobIdentity } from "./preview-source.ts";
 import { mapPreviewScriptUrl, type PreviewUrlContext } from "./preview-url.ts";
 
 export function rewritePreviewJavaScript(text: string, context: PreviewUrlContext, blobSource?: (url: string) => string): string {
@@ -18,9 +19,9 @@ export function rewritePreviewJavaScript(text: string, context: PreviewUrlContex
       continue;
     }
     if (!entry.n) continue;
-    if (entry.n.startsWith("blob:") && blobSource) {
+    if (blobSource && previewBlobIdentity(entry.n)) {
       const mapped = JSON.stringify(blobSource(entry.n));
-      edits.push({ start: entry.s, end: entry.e, value: dynamic ? mapped : mapped.slice(1, -1) }); continue;
+      edits.push({ start: entry.s, end: entry.e, value: dynamic ? mapped : mapped.slice(1, -1).replaceAll("'", "\\'") }); continue;
     }
     if (!/^(?:\.{1,2}\/|\/|https?:\/\/|file:\/\/)/.test(entry.n)) continue;
     const mapped = mapPreviewScriptUrl(entry.n, context);

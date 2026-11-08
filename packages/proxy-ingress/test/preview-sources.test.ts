@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
+import { parse as parseJavaScript } from "@babel/parser";
 import { PreviewSources } from "../src/ingress/preview-sources.ts";
-import { previewSourceUrl } from "../src/preview-source.ts";
+import { previewBlobIdentity, previewSourceUrl } from "../src/preview-source.ts";
 import { previewContentPolicy } from "../src/preview-url.ts";
 
 const context = { publicOrigin: "https://dynamic.example", root: "/~preview/cap/", app: "port-3152", upstream: "http://localhost:3152/index.html", windowGlobals: true, policy: "script-src-elem blob:" };
@@ -74,6 +75,47 @@ test("only blob-authorised documents gain their exact generated-code prefix", ()
   const denied = previewContentPolicy("default-src 'none'; script-src 'none'", { ...context, source }, "runtime");
   expect(denied).not.toContain("/~preview-source/");
   expect(denied).not.toContain("allow-same-origin");
+});
+
+test("Blob identities normalise native URLs without dropping module fragments or conflating queries", () => {
+  const original = `blob:null/${id()}`;
+  expect(previewBlobIdentity(` \t${original}#one\n`)).toEqual({ url: original, hash: "#one" });
+  expect(previewBlobIdentity(`${original}#`)).toEqual({ url: original, hash: "#" });
+  expect(previewBlobIdentity(`${original}?version=1#two`)).toEqual({ url: `${original}?version=1`, hash: "#two" });
+  expect(previewBlobIdentity(`BLOB:${original.slice(5)}#encoded%2Ffragment`)).toEqual({ url: original, hash: "#encoded%2Ffragment" });
+  expect(previewBlobIdentity("https://dynamic.example/source.js")).toBeUndefined();
+  expect(previewBlobIdentity("not a URL")).toBeUndefined();
+});
+
+test("native Blob module fragments retain distinct module identities through alias resolution", async () => {
+  const sources = new PreviewSources(), document = sources.create("one", context), child = id(), parent = id();
+  const original = `blob:null/${id()}`, childUrl = previewSourceUrl(context.publicOrigin, document, child), parentUrl = previewSourceUrl(context.publicOrigin, document, parent);
+  await sources.request(new Request(childUrl, { method: "PUT", headers: { "x-kintsugi-source-original": original }, body: "export const value = 1;" }), resolve);
+  await sources.request(new Request(parentUrl, { method: "PUT", body: `import {value as first} from '${original}#one'; import {value as second} from '${original}#two';` }), resolve);
+  const response = (await sources.request(new Request(parentUrl), resolve))!;
+  expect(response.status).toBe(200);
+  const body = await response.text();
+  expect(body).toContain(`${childUrl}#one`);
+  expect(body).toContain(`${childUrl}#two`);
+});
+
+test("Blob aliases retain query identity and valid quoting for module fragments", async () => {
+  const sources = new PreviewSources(), document = sources.create("one", context);
+  const original = `blob:null/${id()}`, plain = id(), query = id(), parent = id();
+  for (const [key, url] of [[plain, original], [query, `${original}?version=1`]] as const) {
+    const response = (await sources.request(new Request(previewSourceUrl(context.publicOrigin, document, key), {
+      method: "PUT", headers: { "x-kintsugi-source-original": url }, body: "export const value = 1;",
+    }), resolve))!;
+    expect(response.status).toBe(204);
+  }
+  const parentUrl = previewSourceUrl(context.publicOrigin, document, parent);
+  await sources.request(new Request(parentUrl, { method: "PUT", body: `import {value as plain} from '${original}#it\\'s'; import {value as query} from "${original}?version=1#two"; import("${original}#it's");` }), resolve);
+  const response = (await sources.request(new Request(parentUrl), resolve))!;
+  expect(response.status).toBe(200);
+  const body = await response.text();
+  expect(body).toContain(`${previewSourceUrl(context.publicOrigin, document, plain)}#it\\'s`);
+  expect(body).toContain(`${previewSourceUrl(context.publicOrigin, document, query)}#two`);
+  expect(() => parseJavaScript(body, { sourceType: "module" })).not.toThrow();
 });
 
 test("revocation while ownership is pending cannot revive a document capability", async () => {

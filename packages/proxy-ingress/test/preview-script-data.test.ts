@@ -25,6 +25,13 @@ test("decodes UTF-8 and base64 bytes, excludes fragments and retains query text"
   expect(received).toBe('fetch("/path?a=1&b=2")');
 });
 
+test("an empty fragment stays outside the script and retains module URL identity", () => {
+  let received = "";
+  const output = rewritePreviewScriptDataUrl("data:text/javascript,location.pathname#", source => { received = source; return "changed"; });
+  expect(received).toBe("location.pathname");
+  expect(output).toBe("data:text/javascript;charset=utf-8,changed#");
+});
+
 test("honours a declared charset and emits translated source as UTF-8", () => {
   let received = "";
   const output = rewritePreviewScriptDataUrl('data:text/javascript;charset=windows-1252,%22caf%E9%22', source => { received = source; return source + ";"; });

@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { parse } from "es-module-lexer/minimal/js";
 import { previewBlobAllowed } from "../preview-policy.ts";
-import { previewSourcePrefix, previewSourceUrl } from "../preview-source.ts";
+import { previewBlobIdentity, previewSourcePrefix, previewSourceUrl } from "../preview-source.ts";
 import { rewritePreviewGlobals } from "../preview-globals.ts";
 import { rewritePreviewJavaScript } from "../preview-javascript.ts";
 import type { PreviewUrlContext } from "../preview-url.ts";
@@ -108,9 +108,11 @@ export class PreviewSources {
       if (!document.active) throw new Error("Generated source capability revoked");
       const context = document.context;
       const aliases = new Map<string, string>();
-      for (const imported of parse(input)[0]) if (imported.n?.startsWith("blob:")) {
-        const id = await Promise.race([this.alias(document, imported.n).ready, new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("Generated module registration timed out")), 10000); })]);
-        aliases.set(imported.n, previewSourceUrl(context.publicOrigin, context.source!, id));
+      for (const imported of parse(input)[0]) {
+        const original = imported.n && previewBlobIdentity(imported.n);
+        if (!original) continue;
+        const id = await Promise.race([this.alias(document, original.url).ready, new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("Generated module registration timed out")), 10000); })]);
+        aliases.set(imported.n!, previewSourceUrl(context.publicOrigin, context.source!, id) + original.hash);
         clearTimeout(timer);
       }
       const body = rewritePreviewJavaScript(context.app === "vscode" ? input : rewritePreviewGlobals(input), context, url => aliases.get(url)!);
