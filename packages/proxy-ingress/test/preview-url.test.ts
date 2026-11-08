@@ -59,3 +59,21 @@ test("nested storage derives its owner from a canonical iframe URL under this ap
     "about:srcdoc",
   ]) expect(previewNestedFrameScope(input, context)).toBeUndefined();
 });
+
+test("external assets and lookalike reserved paths remain direct, including inside nested previews", () => {
+  const nested = { ...context, aliases: [{ origin: "http://localhost:4915", root: "/~preview/inner/" }] };
+  for (const url of [
+    "https://ms-vscode.gallerycdn.vsassets.io/extensions/ms-vscode/hexeditor/icon.png",
+    "https://raw.githubusercontent.com/owner/repository/main/image.svg",
+    "https://fonts.googleapis.com/css2?family=Example",
+    "https://external.example/vscode-public-resources/chat.json",
+    "https://external.example/~preview-assets/runtime.js",
+    "https://external.example/~preview/inner/vscode/main.js",
+    "https://dynamic-tailnet.example.evil.example/main.js",
+    "http://localhost.evil.example/api",
+    "wss://external.example/events",
+  ]) {
+    expect(mapPreviewUrl(url, context)).toBe(url);
+    expect(mapPreviewUrl(url, nested)).toBe(url);
+  }
+});

@@ -163,3 +163,16 @@ test("URL transport preserves Turbo/custom protocol attributes while routing rea
   expect(html).toContain(`formaction="${prefix}/alternate"`);
   expect(html).toContain(`object data="${prefix}/document.pdf"`);
 });
+
+test("external HTML, CSS and module resources retain their original destinations", async () => {
+  const url = "https://external.example/assets/file.js";
+  const { html } = await rewritePreviewHtml(`<head></head><script src="${url}"></script><img src="${url}"><a href="${url}">external</a>`, context, "nonce", false);
+  expect(html).toContain(`src="${url}"`);
+  expect(html).toContain(`href="${url}"`);
+  const css = `@import "${url}"; a{background:url('${url}')}`;
+  expect(rewritePreviewCss(css, context)).toBe(css);
+  expect(mapPreviewSrcset(`${url} 1x, ${url}?retina 2x`, context)).toBe(`${url} 1x, ${url}?retina 2x`);
+  const script = await rewritePreviewJavaScript(`import "${url}"; export * from "${url}";`, context);
+  expect(script).toContain(url);
+  expect(script).not.toContain("/~preview/");
+});

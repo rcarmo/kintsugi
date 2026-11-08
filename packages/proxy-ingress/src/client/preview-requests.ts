@@ -37,7 +37,10 @@ export function installPreviewRequests(context: PreviewUrlContext, upstream: () 
   };
   const NativeEventSource = EventSource;
   globalThis.EventSource = class extends NativeEventSource {
-    constructor(url: string | URL, init?: EventSourceInit) { super(map(String(url)), { ...init, withCredentials: false }); }
+    constructor(url: string | URL, init?: EventSourceInit) {
+      const destination = map(String(url)), target = new URL(destination, context.publicOrigin + context.root);
+      super(destination, target.origin === context.publicOrigin && target.pathname.startsWith(context.root) ? { ...init, withCredentials: false } : init);
+    }
   };
   const scopedRequests = new WeakSet<XMLHttpRequest>();
   const nativeOpen = XMLHttpRequest.prototype.open;
