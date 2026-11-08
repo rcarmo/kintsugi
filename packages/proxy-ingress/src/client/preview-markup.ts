@@ -8,6 +8,7 @@ import { previewInlineAllowed, previewPolicyDirectives, previewPolicyName } from
 import { createPreviewHtmlStream, previewHtmlStartTag } from "../preview-html-stream.ts";
 import { rewritePreviewScriptDataUrl } from "../preview-script-data.ts";
 import { preparedPreviewDocument } from "./preview-document.ts";
+import { previewBlobScriptUrl, retainPreviewSourcePolicy } from "./preview-sources.ts";
 
 let resumeScript: ((element: HTMLScriptElement, text: string) => void) | undefined;
 /** Already-translated parser scripts retain their exact CSP hash during restoration. */
@@ -36,8 +37,8 @@ export function installPreviewMarkup(context: PreviewUrlContext, upstream: () =>
   const factory = "trustedTypes" in window ? window.trustedTypes : undefined;
   const retainedPolicies = new Set(context.policy ? [context.policy] : []);
   function rememberPolicies(root: ParentNode): void {
-    if (root instanceof HTMLMetaElement && root.httpEquiv.toLowerCase() === "content-security-policy") retainedPolicies.add(root.content);
-    for (const meta of root.querySelectorAll<HTMLMetaElement>('meta[http-equiv="Content-Security-Policy" i]')) retainedPolicies.add(meta.content);
+    if (root instanceof HTMLMetaElement && root.httpEquiv.toLowerCase() === "content-security-policy") { retainedPolicies.add(root.content); retainPreviewSourcePolicy(root.content); }
+    for (const meta of root.querySelectorAll<HTMLMetaElement>('meta[http-equiv="Content-Security-Policy" i]')) { retainedPolicies.add(meta.content); retainPreviewSourcePolicy(meta.content); }
   }
   const policies = () => { rememberPolicies(document); return [...retainedPolicies]; };
   const forbidsPolicy = policies().some(policy => policy.split(",").some(part => previewPolicyDirectives(part).get("trusted-types")?.includes("'none'")));
@@ -58,7 +59,7 @@ export function installPreviewMarkup(context: PreviewUrlContext, upstream: () =>
       for (const [name, value] of [...element.attributes].map(attribute => [attribute.name, attribute.value] as const)) {
         const key = name.toLowerCase();
         if (["src", "href", "xlink:href", "action", "formaction", "poster", "data"].includes(key)) {
-          const mapped = element instanceof HTMLScriptElement && key === "src" ? mapPreviewScriptUrl(executing ? rewritePreviewScriptDataUrl(value, javascript) : value, current()) : map(value);
+          const mapped = element instanceof HTMLScriptElement && key === "src" ? mapPreviewScriptUrl(executing ? previewBlobScriptUrl(rewritePreviewScriptDataUrl(value, javascript), { ...current(), policy: rules.join(", ") }) : value, current()) : map(value);
           if (mapped !== value) { if (element instanceof HTMLScriptElement) nativeScriptSource.set!.call(element, scriptUrl(mapped)); else nativeAttribute.call(element, name, mapped); }
         } else if (key === "srcset") nativeAttribute.call(element, name, mapPreviewSrcset(value, current()));
         else if (key === "style" && previewInlineAllowed(rules, "style", value, "", true)) {
@@ -289,7 +290,7 @@ export function installPreviewMarkup(context: PreviewUrlContext, upstream: () =>
   function setScriptSource(element: HTMLScriptElement, value: string | TrustedScriptURL): void {
     const staging = document.createElement("script"); nativeScriptSource.set!.call(staging, value);
     const approved = staging.getAttribute("src")!;
-    nativeScriptSource.set!.call(element, scriptUrl(mapPreviewScriptUrl(rewritePreviewScriptDataUrl(approved, javascript), current())));
+    nativeScriptSource.set!.call(element, scriptUrl(mapPreviewScriptUrl(previewBlobScriptUrl(rewritePreviewScriptDataUrl(approved, javascript), { ...current(), policy: policies().join(", ") }, element.nonce), current())));
   }
   Object.defineProperty(HTMLScriptElement.prototype, "src", { ...nativeScriptSource, set(value: string | TrustedScriptURL) { setScriptSource(this, value); } });
   const attributes = Element.prototype.setAttribute;

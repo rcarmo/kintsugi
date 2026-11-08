@@ -1,7 +1,7 @@
 import { parse } from "es-module-lexer/minimal/js";
 import { mapPreviewScriptUrl, type PreviewUrlContext } from "./preview-url.ts";
 
-export function rewritePreviewJavaScript(text: string, context: PreviewUrlContext): string {
+export function rewritePreviewJavaScript(text: string, context: PreviewUrlContext, blobSource?: (url: string) => string): string {
   const [imports] = parse(text);
   const edits: Array<{ start: number; end: number; value: string }> = [];
   const moduleContext = JSON.stringify({ publicOrigin: context.publicOrigin, root: context.root, app: context.app, upstream: context.upstream, windowGlobals: context.windowGlobals, aliases: context.aliases }).replaceAll("<", "\\u003c");
@@ -18,6 +18,10 @@ export function rewritePreviewJavaScript(text: string, context: PreviewUrlContex
       continue;
     }
     if (!entry.n) continue;
+    if (entry.n.startsWith("blob:") && blobSource) {
+      const mapped = JSON.stringify(blobSource(entry.n));
+      edits.push({ start: entry.s, end: entry.e, value: dynamic ? mapped : mapped.slice(1, -1) }); continue;
+    }
     if (!/^(?:\.{1,2}\/|\/|https?:\/\/|file:\/\/)/.test(entry.n)) continue;
     const mapped = mapPreviewScriptUrl(entry.n, context);
     const literal = JSON.stringify(mapped);

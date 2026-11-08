@@ -141,3 +141,14 @@ test("nested documents receive prefix-bound delegated capabilities, not parent w
     expect((await previews.resource(new Request(destination)))!.status).toBe(403);
   } finally { backend.stop(true); }
 });
+
+test("a backend reply arriving after suspension cannot mint a fresh generated-code capability", async () => {
+  let reply!: (response: Response) => void, started!: () => void;
+  const waiting = new Promise<void>(resolve => { started = resolve; });
+  const previews = createWorkspacePathPreviews({ publicOrigin: () => "https://dynamic.example", resolveWorkspace() {}, resolvePort() { throw new Error("Not a port"); }, resolveApp: () => ({ kind: "fetch", fetch: () => { started(); return new Promise<Response>(resolve => { reply = resolve; }); } }) });
+  const capability = await root(previews, "one");
+  const pending = previews.resource(new Request(new URL("file/work/generated.html", capability)));
+  await waiting; previews.removeWorkspace("one");
+  reply(new Response("<html><head></head><body>old</body></html>", { headers: { "content-type": "text/html" } }));
+  expect((await pending)!.status).toBe(403);
+});

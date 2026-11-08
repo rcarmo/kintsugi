@@ -13,7 +13,7 @@ import { rewritePreviewGlobals } from "./preview-globals.ts";
 import { PreviewInlinePolicy } from "./preview-inline-policy.ts";
 import { rewritePreviewScriptDataUrl } from "../preview-script-data.ts";
 
-interface PreviewHtmlRewriteState { policy: PreviewInlinePolicy; depth: number }
+interface PreviewHtmlRewriteState { policy: PreviewInlinePolicy; depth: number; recordContext?: (context: PreviewUrlContext) => void }
 
 export async function readNestedPreviewContext(text: string): Promise<PreviewUrlContext> {
   let context: PreviewUrlContext | undefined;
@@ -28,6 +28,7 @@ export async function rewritePreviewHtml(text: string, context: PreviewUrlContex
   if (state.depth > 32) throw new Error("Preview srcdoc nesting limit exceeded");
   const policy = state.policy;
   const inheritedPolicies = context.policy ? [context.policy] : [];
+  let documentContext = context;
   if (!/<head(?:\s|>)/i.test(text)) text = `<!doctype html><html><head></head><body>${text}</body></html>`;
   const configuration = escapeHtml(JSON.stringify(context));
   const persistence = persist ? '<meta name="kintsugi-preview-persistence">' : "";
@@ -41,7 +42,10 @@ export async function rewritePreviewHtml(text: string, context: PreviewUrlContex
       const inner = Value.Parse(previewUrlContextSchema, JSON.parse(decodeHTMLAttribute(element.getAttribute("content")!)));
       const root = new URL(mapPreviewUrl(`${inner.publicOrigin}${inner.root}`, context));
       if (root.origin !== context.publicOrigin || !root.pathname.startsWith(context.root)) throw new Error("Nested preview context escaped its containing workspace");
-      element.setAttribute("content", escapeHtml(JSON.stringify({ ...inner, publicOrigin: context.publicOrigin, root: root.pathname, aliases: [...(inner.aliases ?? []), { origin: inner.publicOrigin, root: inner.root }] })));
+      const composed = { ...inner, publicOrigin: context.publicOrigin, root: root.pathname, source: context.source, aliases: [...(inner.aliases ?? []), { origin: inner.publicOrigin, root: inner.root }] };
+      documentContext = composed;
+      state.recordContext?.(composed);
+      element.setAttribute("content", escapeHtml(JSON.stringify(composed)));
     } })
     .on("meta[http-equiv]", { element(element) {
       if (element.getAttribute("http-equiv")?.toLowerCase() === "content-security-policy") {
@@ -71,7 +75,7 @@ export async function rewritePreviewHtml(text: string, context: PreviewUrlContex
       if (element.tagName === "iframe") {
         const source = element.getAttribute("srcdoc");
         if (source) {
-          const child = await rewritePreviewHtml(decodeHTMLAttribute(source), { ...context, policy: inheritedPolicies.join(", ") }, nonce, false, nested, { policy, depth: state.depth + 1 });
+          const child = await rewritePreviewHtml(decodeHTMLAttribute(source), { ...context, policy: inheritedPolicies.join(", ") }, nonce, false, nested, { policy, depth: state.depth + 1, recordContext: state.recordContext });
           element.setAttribute("srcdoc", escapeHtml(child.html));
         }
       }
@@ -95,7 +99,7 @@ export async function rewritePreviewHtml(text: string, context: PreviewUrlContex
       scriptBuffer += chunk.text;
       if (chunk.lastInTextNode) {
         const source = !nested && context.windowGlobals && context.app !== "vscode" ? await rewritePreviewGlobals(scriptBuffer) : scriptBuffer;
-        const rewritten = scriptType === "module" ? rewritePreviewJavaScript(source, context) : source;
+        const rewritten = rewritePreviewJavaScript(source, context);
         policy.record("script", scriptBuffer, rewritten); chunk.replace(rewritten, { html: true });
       }
       else chunk.remove();
@@ -110,5 +114,6 @@ export async function rewritePreviewHtml(text: string, context: PreviewUrlContex
   const translated = await new HTMLRewriter().on("meta[http-equiv]", { element(element) {
     if (element.getAttribute("http-equiv")?.toLowerCase() === "content-security-policy") element.setAttribute("content", escapeHtml(policy.rewrite(decodeHTMLAttribute(element.getAttribute("content") ?? ""))));
   } }).transform(new Response(html)).text();
+  state.recordContext?.({ ...documentContext, policy: [documentContext.policy ?? "", ...inheritedPolicies].join(", ") });
   return { html: translated, policy };
 }

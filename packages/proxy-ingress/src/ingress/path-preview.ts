@@ -1,4 +1,7 @@
 import { randomBytes } from "node:crypto";
+import { PreviewSources } from "./preview-sources.ts";
+import { previewSourceHost, previewSourcePrefix } from "../preview-source.ts";
+import { PreviewInlinePolicy } from "./preview-inline-policy.ts";
 import { CookieJar } from "tough-cookie";
 import { escapeHtml, isWorkspaceAppPort, parseWorkspacePortAppKey, workspacePortAppKey, stripHopByHopHeaders, type WorkspaceAppBackend, type WorkspaceAppRef, type WorkspaceHttpAppBackend, type WorkspaceServerSocketSession } from "@kintsugi/shared";
 import { backendTransport } from "./backend-transport.ts";
@@ -37,20 +40,22 @@ export interface PreparedPreviewSocket {
   cancel(): void;
 }
 
-let assets: Promise<{ runtime: string; host: string; worker: string }> | undefined;
+let assets: Promise<{ runtime: string; host: string; worker: string; source: string }> | undefined;
 async function previewAssets() {
   return assets ??= (async () => {
-    const build = await Bun.build({ entrypoints: [new URL("../client/preview-runtime.ts", import.meta.url).pathname, new URL("../client/preview-host.ts", import.meta.url).pathname, new URL("../client/preview-worker-network.ts", import.meta.url).pathname], target: "browser", format: "iife", minify: true, naming: "[name].[ext]" });
+    const build = await Bun.build({ entrypoints: [new URL("../client/preview-runtime.ts", import.meta.url).pathname, new URL("../client/preview-host.ts", import.meta.url).pathname, new URL("../client/preview-worker-network.ts", import.meta.url).pathname, new URL("../client/preview-source-host.ts", import.meta.url).pathname], target: "browser", format: "iife", minify: true, naming: "[name].[ext]" });
     if (!build.success) throw new AggregateError(build.logs, "Could not build isolated preview runtime");
     const runtime = build.outputs.find(output => output.path.endsWith("preview-runtime.js"))!;
     const host = build.outputs.find(output => output.path.endsWith("preview-host.js"))!;
     const worker = build.outputs.find(output => output.path.endsWith("preview-worker-network.js"))!;
-    return { runtime: await runtime.text(), host: await host.text(), worker: await worker.text() };
+    const source = build.outputs.find(output => output.path.endsWith("preview-source-host.js"))!;
+    return { runtime: await runtime.text(), host: await host.text(), worker: await worker.text(), source: await source.text() };
   })();
 }
 
 /** Capability-checked transport for opaque browser documents; management is never a fallback. */
 export function createWorkspacePathPreviews(options: WorkspacePathPreviewOptions) {
+  const sources = new PreviewSources();
   const byWorkspace = new Map<string, PreviewSession>();
   const byToken = new Map<string, PreviewSession>();
   const delegated = new Map<string, PreviewSession>();
@@ -195,12 +200,14 @@ export function createWorkspacePathPreviews(options: WorkspacePathPreviewOptions
     },
     async asset(request: Request): Promise<Response | undefined> {
       const path = new URL(request.url).pathname;
-      if (!path.startsWith(previewAssetPrefix)) return;
+      if (!path.startsWith(previewAssetPrefix) && !path.startsWith(previewSourcePrefix)) return;
+      const generated = await sources.request(request, resolve); if (generated) return generated;
+      if (path === previewSourceHost) return new Response(`<!doctype html><html><head><script src="${previewAssetPrefix}source-host.js"></script></head><body></body></html>`, { headers: { "content-type": "text/html", "cache-control": "no-store", "referrer-policy": "no-referrer", "content-security-policy": `sandbox allow-scripts; default-src \'none\'; script-src ${options.publicOrigin(request)}${previewAssetPrefix}source-host.js; connect-src ${options.publicOrigin(request)}${previewSourcePrefix}` } });
       if (request.method !== "GET") return new Response("Method not allowed", { status: 405 });
       const name = path.slice(previewAssetPrefix.length);
-      if (!["runtime.js", "host.js", "worker.js"].includes(name)) return new Response("Not found", { status: 404 });
+      if (!["runtime.js", "host.js", "worker.js", "source-host.js"].includes(name)) return new Response("Not found", { status: 404 });
       const bundle = await previewAssets();
-      return new Response(name === "runtime.js" ? bundle.runtime : name === "worker.js" ? bundle.worker : bundle.host, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "access-control-allow-origin": "*" } });
+      return new Response(name === "runtime.js" ? bundle.runtime : name === "worker.js" ? bundle.worker : name === "source-host.js" ? bundle.source : bundle.host, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "access-control-allow-origin": "*" } });
     },
     async resource(request: Request): Promise<Response | undefined> {
       const url = new URL(request.url);
@@ -253,6 +260,7 @@ export function createWorkspacePathPreviews(options: WorkspacePathPreviewOptions
           return new Response(null, { status: 302, headers: { location: destination.pathname + destination.search, "cache-control": "no-store", "referrer-policy": "no-referrer", "content-security-policy": previewSandbox } });
         }
       }
+      if (byToken.get(resource.session.token) !== resource.session) return new Response("Preview capability revoked", { status: 403 });
       const context = contextFor(request, resource, logical);
       for (const cookie of response.headers.getSetCookie()) jar.setCookieSync(cookie, logical.href, { ignoreError: true });
       context.cookies = jar.getCookiesSync(logical.href).filter(cookie => !cookie.httpOnly).map(cookie => cookie.cookieString()).join("; ");
@@ -266,14 +274,16 @@ export function createWorkspacePathPreviews(options: WorkspacePathPreviewOptions
       out.set("access-control-expose-headers", "content-range,content-disposition,x-kintsugi-preview-cookie");
       const nonce = randomBytes(18).toString("base64url");
       context.nonce = nonce;
+      if (type.includes("text/html") && request.method !== "HEAD" && response.body && ![204, 205, 304].includes(response.status)) context.source = sources.create(resource.session.workspaceId, context);
       const originalPolicy = out.get("content-security-policy");
       out.set("content-security-policy", previewSandbox + (originalPolicy ? `, ${previewContentPolicy(originalPolicy, context, nonce)}` : ""));
       if (request.method === "HEAD" || !response.body || [204, 205, 304].includes(response.status)) return new Response(null, { status: response.status, headers: out });
       let body: BodyInit;
       context.policy = out.get("content-security-policy")!;
+      if (context.source) sources.context(context.source, context);
       if (type.includes("text/html")) {
         context.windowGlobals = true;
-        const rewritten = await rewritePreviewHtml(html ?? await response.text(), context, nonce, url.searchParams.get("__kintsugi_persist") === "1", protocol === previewProtocolVersion);
+        const rewritten = await rewritePreviewHtml(html ?? await response.text(), context, nonce, url.searchParams.get("__kintsugi_persist") === "1", protocol === previewProtocolVersion, { policy: new PreviewInlinePolicy(), depth: 0, recordContext: composed => sources.context(context.source!, composed) });
         body = rewritten.html;
         out.set("content-security-policy", rewritten.policy.rewrite(out.get("content-security-policy")!));
         out.set(previewProtocolHeader, previewProtocolVersion);
@@ -323,6 +333,7 @@ export function createWorkspacePathPreviews(options: WorkspacePathPreviewOptions
       } };
     },
     removeWorkspace(workspaceId: string): void {
+      sources.remove(workspaceId);
       for (const session of byToken.values()) {
         if (session.workspaceId !== workspaceId) continue;
         for (const socket of session.sockets) socket.close(1001, "Workspace removed");

@@ -2,6 +2,15 @@ import { sha256, sha384, sha512 } from "@noble/hashes/sha2.js";
 
 export type PreviewInlineKind = "script" | "style";
 
+/** A generated HTTPS resource must not bypass a blob: script denial. */
+export function previewBlobAllowed(policies: readonly string[], nonce = ""): boolean {
+  return policies.flatMap(policy => policy.split(",")).every(policy => {
+    const directives = previewPolicyDirectives(policy);
+    const values = directives.get("script-src-elem") ?? directives.get("script-src") ?? directives.get("default-src");
+    return !values || values.includes("blob:") || Boolean(nonce && values.includes(`'nonce-${nonce}'`));
+  });
+}
+
 export function previewPolicyName(nonce: string): string { return `kintsugi-preview-${nonce}`; }
 
 export function previewPolicyDirectives(policy: string): Map<string, string[]> {

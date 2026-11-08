@@ -1,6 +1,6 @@
 import { Type, type Static } from "typebox";
 
-export const nativeWebviewContext = Type.Object({ publicOrigin: Type.String(), root: Type.String(), app: Type.String(), upstream: Type.String(), cookies: Type.Optional(Type.String()) });
+export const nativeWebviewContext = Type.Object({ publicOrigin: Type.String(), root: Type.String(), app: Type.String(), upstream: Type.String(), cookies: Type.Optional(Type.String()), source: Type.Optional(Type.String()) });
 export const nativeWebviewContent = Type.Object({
   contents: Type.String(),
   options: Type.Object({ allowScripts: Type.Optional(Type.Boolean()), allowForms: Type.Optional(Type.Boolean()), allowMultipleAPIAcquire: Type.Optional(Type.Boolean()) }),

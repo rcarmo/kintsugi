@@ -1,6 +1,7 @@
 import { parseSrcset, stringifySrcset } from "srcset";
 import { Type } from "typebox";
 import { previewPolicyDirectives, previewPolicyName } from "./preview-policy.ts";
+import { previewSourcePrefix, previewSourceHost } from "./preview-source.ts";
 import { tokenize, isTokenURL, isTokenString, isTokenFunction, isTokenAtKeyword, isTokenWhitespace, isTokenComment, type CSSToken } from "@csstools/css-tokenizer";
 import { isWorkspaceLoopbackHost, localhostSubdomain, workspacePortAppKey, parseWorkspacePortAppKey } from "@kintsugi/shared";
 
@@ -18,11 +19,13 @@ export interface PreviewUrlContext {
   /** Trusted adapter nonce and effective header policy, scoped to this document. */
   nonce?: string;
   policy?: string;
+  /** Server-owned generated-code capability for this document. */
+  source?: string;
   /** Earlier capability roots when this document traversed nested transports. */
   aliases?: Array<{ origin: string; root: string }>;
 }
 
-export const previewUrlContextSchema = Type.Object({ publicOrigin: Type.String(), root: Type.String(), app: Type.String(), upstream: Type.String(), cookies: Type.Optional(Type.String()), windowGlobals: Type.Optional(Type.Boolean()), nonce: Type.Optional(Type.String()), policy: Type.Optional(Type.String()), aliases: Type.Optional(Type.Array(Type.Object({ origin: Type.String(), root: Type.String() }))) });
+export const previewUrlContextSchema = Type.Object({ publicOrigin: Type.String(), root: Type.String(), app: Type.String(), upstream: Type.String(), cookies: Type.Optional(Type.String()), windowGlobals: Type.Optional(Type.Boolean()), nonce: Type.Optional(Type.String()), policy: Type.Optional(Type.String()), source: Type.Optional(Type.String()), aliases: Type.Optional(Type.Array(Type.Object({ origin: Type.String(), root: Type.String() }))) });
 export const previewProtocolHeader = "x-kintsugi-preview-protocol";
 export const previewProtocolVersion = "1";
 export const previewWindowParameter = "__kintsugi_window";
@@ -44,7 +47,7 @@ export function mapPreviewUrl(input: string, context: PreviewUrlContext): string
   const websocket = target.protocol === "ws:" || target.protocol === "wss:";
   if (target.protocol === "ws:") target.protocol = "http:";
   if (target.protocol === "wss:") target.protocol = "https:";
-  const publicResource = target.pathname.startsWith("/vscode-public-resources/") || target.pathname.startsWith("/~preview-assets/");
+  const publicResource = target.pathname.startsWith("/vscode-public-resources/") || target.pathname.startsWith("/~preview-assets/") || target.pathname.startsWith(previewSourcePrefix);
   if (publicResource && (target.origin === context.publicOrigin || target.origin === current.origin || context.aliases?.some(alias => new URL(alias.origin).host === target.host))) {
     return new URL(target.pathname + target.search + target.hash, context.publicOrigin).href;
   }
@@ -143,6 +146,14 @@ export function previewContentPolicy(policy: string, context: PreviewUrlContext,
   for (const name of ["style-src", "style-src-elem"]) {
     const values = directives.get(name) ?? (name === "style-src" ? directives.get("default-src") : undefined);
     if (values?.some(value => /^'(?:nonce-|sha(?:256|384|512)-)/.test(value))) directives.set(name, [...values.filter(value => value !== "'none'"), `'nonce-${nonce}'`]);
+  }
+  if (context.source) {
+    const frames = directives.get("frame-src") ?? directives.get("child-src") ?? directives.get("default-src");
+    if (frames) directives.set("frame-src", [...frames.filter(value => value !== "\'none\'"), `${context.publicOrigin}${previewSourceHost}`]);
+    for (const name of ["script-src", "script-src-elem"]) {
+      const values = directives.get(name);
+      if (values && (name === "script-src" ? scripts : elements).includes("blob:")) directives.set(name, [...values, `${context.publicOrigin}${previewSourcePrefix}${context.source}/`]);
+    }
   }
   const trusted = directives.get("trusted-types");
   if (trusted && !trusted.includes("'none'")) directives.set("trusted-types", [...trusted, previewPolicyName(nonce)]);

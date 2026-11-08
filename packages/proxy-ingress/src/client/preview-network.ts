@@ -6,6 +6,7 @@ import { installPreviewRequests } from "./preview-requests.ts";
 import { previewImportSpecifier } from "./preview-imports.ts";
 import { installPreviewGlobals } from "./preview-globals.ts";
 import { installPreviewMarkup } from "./preview-markup.ts";
+import { installPreviewSources } from "./preview-sources.ts";
 
 const contextSchema = previewUrlContextSchema;
 
@@ -31,6 +32,7 @@ export function installPreviewNetwork(): PreviewUrlContext | undefined {
     History.prototype[method] = function(data, unused, url) { native.call(this, data, unused, url === undefined || url === null ? url : map(String(url))); };
   }
   installPreviewGlobals(context, map);
+  installPreviewSources(context);
   const nativeOpenWindow = window.open.bind(window);
   window.open = (url, target, features) => nativeOpenWindow(url === undefined || url === "" ? url : map(String(url)), target, features);
   installPreviewRequests(context, currentUpstream, { read: () => document.cookie, write: replacePreviewCookies });
