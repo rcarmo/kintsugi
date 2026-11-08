@@ -265,10 +265,12 @@ export function createWorkspacePathPreviews(options: WorkspacePathPreviewOptions
       out.set("x-kintsugi-preview-cookie", nestedPreviewPath.test(logical.pathname) ? response.headers.get("x-kintsugi-preview-cookie") ?? "" : context.cookies);
       out.set("access-control-expose-headers", "content-range,content-disposition,x-kintsugi-preview-cookie");
       const nonce = randomBytes(18).toString("base64url");
+      context.nonce = nonce;
       const originalPolicy = out.get("content-security-policy");
       out.set("content-security-policy", previewSandbox + (originalPolicy ? `, ${previewContentPolicy(originalPolicy, context, nonce)}` : ""));
       if (request.method === "HEAD" || !response.body || [204, 205, 304].includes(response.status)) return new Response(null, { status: response.status, headers: out });
       let body: BodyInit;
+      context.policy = out.get("content-security-policy")!;
       if (type.includes("text/html")) {
         context.windowGlobals = true;
         const rewritten = await rewritePreviewHtml(html ?? await response.text(), context, nonce, url.searchParams.get("__kintsugi_persist") === "1", protocol === previewProtocolVersion);

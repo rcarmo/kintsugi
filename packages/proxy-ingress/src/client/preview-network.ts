@@ -5,6 +5,7 @@ import { replacePreviewCookies } from "./preview-storage.ts";
 import { installPreviewRequests } from "./preview-requests.ts";
 import { previewImportSpecifier } from "./preview-imports.ts";
 import { installPreviewGlobals } from "./preview-globals.ts";
+import { installPreviewMarkup } from "./preview-markup.ts";
 
 const contextSchema = previewUrlContextSchema;
 
@@ -34,6 +35,7 @@ export function installPreviewNetwork(): PreviewUrlContext | undefined {
   window.open = (url, target, features) => nativeOpenWindow(url === undefined || url === "" ? url : map(String(url)), target, features);
   installPreviewRequests(context, currentUpstream, { read: () => document.cookie, write: replacePreviewCookies });
   const nativeSetAttribute = Element.prototype.setAttribute;
+  const nativeScriptSource = Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, "src")!;
   Element.prototype.setAttribute = function(name, value) {
     const attribute = String(name).toLowerCase();
     const text = String(value);
@@ -83,5 +85,6 @@ export function installPreviewNetwork(): PreviewUrlContext | undefined {
   window.FontFace = class extends NativeFontFace {
     constructor(family: string, source: string | BufferSource, descriptors?: FontFaceDescriptors) { super(family, Value.Check(Type.String(), source) ? css(source) : source, descriptors); }
   };
+  installPreviewMarkup(context, currentUpstream, nativeSetAttribute, nativeText, nativeScriptSource);
   return context;
 }

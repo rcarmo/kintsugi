@@ -1,5 +1,6 @@
 import { parseSrcset, stringifySrcset } from "srcset";
 import { Type } from "typebox";
+import { previewPolicyDirectives, previewPolicyName } from "./preview-policy.ts";
 import { tokenize, isTokenURL, isTokenString, isTokenFunction, isTokenAtKeyword, isTokenWhitespace, isTokenComment, type CSSToken } from "@csstools/css-tokenizer";
 import { isWorkspaceLoopbackHost, localhostSubdomain, workspacePortAppKey, parseWorkspacePortAppKey } from "@kintsugi/shared";
 
@@ -14,11 +15,14 @@ export interface PreviewUrlContext {
   cookies?: string;
   /** Window URL aliases are installed before this script executes. */
   windowGlobals?: boolean;
+  /** Trusted adapter nonce and effective header policy, scoped to this document. */
+  nonce?: string;
+  policy?: string;
   /** Earlier capability roots when this document traversed nested transports. */
   aliases?: Array<{ origin: string; root: string }>;
 }
 
-export const previewUrlContextSchema = Type.Object({ publicOrigin: Type.String(), root: Type.String(), app: Type.String(), upstream: Type.String(), cookies: Type.Optional(Type.String()), windowGlobals: Type.Optional(Type.Boolean()), aliases: Type.Optional(Type.Array(Type.Object({ origin: Type.String(), root: Type.String() }))) });
+export const previewUrlContextSchema = Type.Object({ publicOrigin: Type.String(), root: Type.String(), app: Type.String(), upstream: Type.String(), cookies: Type.Optional(Type.String()), windowGlobals: Type.Optional(Type.Boolean()), nonce: Type.Optional(Type.String()), policy: Type.Optional(Type.String()), aliases: Type.Optional(Type.Array(Type.Object({ origin: Type.String(), root: Type.String() }))) });
 export const previewProtocolHeader = "x-kintsugi-preview-protocol";
 export const previewProtocolVersion = "1";
 export const previewWindowParameter = "__kintsugi_window";
@@ -115,7 +119,7 @@ export function previewWorkerContext(entry: string, context: PreviewUrlContext):
 /** Preserve the application's policy while allowing the injected compatibility runtime. */
 export function previewContentPolicy(policy: string, context: PreviewUrlContext, nonce: string): string {
   if (policy.includes(",")) return policy.split(",").map(part => previewContentPolicy(part, context, nonce)).join(", ");
-  const directives = new Map(policy.split(";").map(part => part.trim().split(/\s+/)).filter(part => part[0]).map(([name, ...values]) => [name!.toLowerCase(), values]));
+  const directives = previewPolicyDirectives(policy);
   // Opaque ancestors cannot be named in frame-ancestors. The capability and
   // immutable sandbox replace framing restrictions, not script/form policies.
   directives.delete("frame-ancestors");
@@ -136,6 +140,12 @@ export function previewContentPolicy(policy: string, context: PreviewUrlContext,
   // Data/blob are needed inside opaque workers, not as a new permission for
   // attacker-injected document script elements.
   if (restricted || directives.has("script-src-elem")) directives.set("script-src-elem", scriptSources(elements, false));
+  for (const name of ["style-src", "style-src-elem"]) {
+    const values = directives.get(name) ?? (name === "style-src" ? directives.get("default-src") : undefined);
+    if (values?.some(value => /^'(?:nonce-|sha(?:256|384|512)-)/.test(value))) directives.set(name, [...values.filter(value => value !== "'none'"), `'nonce-${nonce}'`]);
+  }
+  const trusted = directives.get("trusted-types");
+  if (trusted && !trusted.includes("'none'")) directives.set("trusted-types", [...trusted, previewPolicyName(nonce)]);
   const workers = directives.get("worker-src");
   directives.set("worker-src", workers?.every(source => source === "'none'") ? ["'none'"] : [`${context.publicOrigin}${context.root}`, `${context.publicOrigin}/~preview-assets/worker.js`, "data:", "blob:"]);
   return [...directives].map(([name, values]) => `${name} ${values.join(" ")}`).join("; ");

@@ -1,4 +1,5 @@
 import { Application, Controller } from "@hotwired/stimulus";
+import { setPreparedPreviewDocument } from "@kintsugi/proxy-ingress/preview-client";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { mapPreviewUrl, mapPreviewSrcset, previewContentPolicy, rewritePreviewCss, type PreviewUrlContext } from "@kintsugi/proxy-ingress/preview";
@@ -96,7 +97,7 @@ class NativeWebviewOuterController extends Controller {
     doc.head.prepend(config, routing, script);
     doc.body.setAttribute("data-controller", `${doc.body.getAttribute("data-controller") ?? ""} native-webview-inner`.trim());
     doc.body.setAttribute("data-action", `${doc.body.getAttribute("data-action") ?? ""} click->native-webview-inner#click keydown->native-webview-inner#keydown keyup->native-webview-inner#keyup focus@window->native-webview-inner#focus blur@window->native-webview-inner#blur scroll@window->native-webview-inner#scroll submit->native-webview-inner#submit`);
-    this.frameTarget.srcdoc = `<!doctype html>\n${doc.documentElement.outerHTML}`;
+    setPreparedPreviewDocument(this.frameTarget, `<!doctype html>\n${doc.documentElement.outerHTML}`);
   }
 }
 Application.start().register("native-webview-outer", NativeWebviewOuterController);

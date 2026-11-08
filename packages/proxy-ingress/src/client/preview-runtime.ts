@@ -4,6 +4,7 @@ import { installPreviewWorkers } from "./preview-worker.ts";
 import { restorePreviewDatabases, snapshotPreviewDatabases } from "./preview-database.ts";
 import { parsePreviewState, type PreviewState } from "../preview-state.ts";
 import { installPreviewNetwork } from "./preview-network.ts";
+import { setPreviewParserScriptText } from "./preview-markup.ts";
 
 // Workspace documents only. Never load this entrypoint into a management document.
 if (globalThis.origin !== "null") throw new Error("The preview runtime requires an opaque sandbox");
@@ -45,7 +46,7 @@ async function resumeScripts(): Promise<void> {
     if (source.nonce) script.nonce = source.nonce;
     script.type = source.dataset.kintsugiScriptType!;
     script.async = false;
-    script.textContent = source.textContent;
+    setPreviewParserScriptText(script, source.textContent ?? "");
     const loaded = script.src || script.type === "module" ? new Promise<void>((resolve, reject) => {
       script.onload = () => resolve(); script.onerror = () => reject(new Error(`Preview script failed: ${script.src || "inline module"}`));
     }) : Promise.resolve();
