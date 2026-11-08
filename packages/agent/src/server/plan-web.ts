@@ -22,7 +22,10 @@ function editor(workspaceId: string, agent: PlanAgent, plan: AgentPlan) {
     <header class="work-view-toolbar agent-plan-toolbar"><strong>${h(agent.title)}</strong><span>${completed}/${plan.plan.length} complete</span><progress max="100" value="${percent}" aria-label="Plan completion">${percent}%</progress></header>
     <input type="hidden" name="expectedRevision" value="${plan.revision}" data-agent-plan-target="revision">
     <div id="${signalId(workspaceId, agent.id)}">${signal(plan)}</div>
-    <textarea class="textarea agent-plan-text" name="markdown" aria-label="Agent plan Markdown" spellcheck="false" maxlength="65536" data-agent-plan-target="editor" data-action="input->agent-plan#edited"${agent.readOnly ? " readonly" : ""}>${h(plan.markdown)}</textarea>
+    <div class="agent-plan-input">
+      <pre class="agent-plan-highlight" data-agent-plan-target="highlight" aria-hidden="true"></pre>
+      <textarea class="textarea agent-plan-text" name="markdown" aria-label="Agent plan Markdown" spellcheck="false" maxlength="65536" data-agent-plan-target="editor" data-action="input->agent-plan#edited scroll->agent-plan#scrollHighlight"${agent.readOnly ? " readonly" : ""}>${h(plan.markdown)}</textarea>
+    </div>
     <textarea hidden data-agent-plan-target="prompt">${h(agentPlanSubmission(plan.markdown))}</textarea>
     <footer class="agent-plan-footer"><p>Markdown checklist: [ ] pending · [-] in progress · [x] complete. One item may be in progress.</p>
     <div class="agent-plan-actions">${button("Refresh", "refresh")}${agent.readOnly ? "" : `${button("Reset", "reset")}${button("Save", "save", true)}${button("Submit to model", "submitToModel")}`}</div></footer>

@@ -2,17 +2,19 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { agentComposerSendPromptEvent, CableTopics, type AgentComposerSendPromptDetail, type CableSubscription, type WorkspaceClientControllerConstructor } from "@kintsugi/shared";
 import { agentPlanSubmission } from "../plan-submission.ts";
+import { highlightCodeHtml } from "@kintsugi/syntax";
 const draftSchema = Type.Object({ markdown: Type.String({ maxLength: 65536 }), revision: Type.Integer({ minimum: 0 }) });
 type Draft = { markdown: string; revision: number };
 
 export function createAgentPlanController(Controller: WorkspaceClientControllerConstructor) {
   return class extends Controller {
-    static targets = ["form", "editor", "revision", "status", "version", "confirmation", "confirmationMessage"];
+    static targets = ["form", "editor", "highlight", "revision", "status", "version", "confirmation", "confirmationMessage"];
     static values = { workspaceId: String };
     declare readonly element: HTMLElement;
     declare readonly workspaceIdValue: string;
     declare readonly formTarget: HTMLFormElement;
     declare readonly editorTarget: HTMLTextAreaElement;
+    declare readonly highlightTarget: HTMLPreElement;
     declare readonly revisionTarget: HTMLInputElement;
     declare readonly statusTarget: HTMLElement;
     declare readonly confirmationTarget: HTMLDialogElement;
@@ -75,6 +77,7 @@ export function createAgentPlanController(Controller: WorkspaceClientControllerC
         this.status(changed ? "The saved plan changed. Your draft is kept; copy it or refresh before replacing the plan." : "Unsaved draft restored.");
       } else this.status("Saved plan. Changes here are sent to the agent only when you choose Submit to model.");
       if (this.submissionStatus) this.status(this.submissionStatus);
+      this.highlight();
       this.subscribe();
     }
     versionTargetConnected(version: HTMLElement): void {
@@ -83,7 +86,13 @@ export function createAgentPlanController(Controller: WorkspaceClientControllerC
       if (this.dirty || this.saving) this.status("Plan changed elsewhere. Your draft is kept; refresh to load the saved plan.");
       else void this.load();
     }
-    edited(): void { this.submissionStatus = undefined; this.edits++; this.dirty = true; this.status("Unsaved changes"); this.remember(); }
+    private highlight(): void {
+      this.highlightTarget.innerHTML = highlightCodeHtml({ code: this.editorTarget.value + "\n", language: "markdown" }).html;
+      this.editorTarget.parentElement!.classList.add("syntax-ready");
+      this.scrollHighlight();
+    }
+    scrollHighlight(): void { this.highlightTarget.scrollTop = this.editorTarget.scrollTop; this.highlightTarget.scrollLeft = this.editorTarget.scrollLeft; }
+    edited(): void { this.highlight(); this.submissionStatus = undefined; this.edits++; this.dirty = true; this.status("Unsaved changes"); this.remember(); }
     private async load(): Promise<void> {
       if (!this.agentId) return;
       this.loading?.abort(); const controller = this.loading = new AbortController();

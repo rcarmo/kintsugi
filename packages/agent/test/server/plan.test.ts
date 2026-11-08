@@ -81,6 +81,13 @@ test("HTTP JSON reads/mutations are per-agent, revisioned and cannot start execu
     expect((await (await call("a")).json()).plan.revision).toBe(0);
     const saved = await call("a", { action: "write", markdown: "- [-] Work", expectedRevision: 0 });
     expect(saved.status).toBe(200); expect(saved.headers.get("x-kintsugi-plan-revision")).toBe("1");
+    const htmlRequest = new Request("http://fixture/workspaces/w/agent-plans/a", { headers: { Accept: "text/vnd.turbo-stream.html" } });
+    const htmlResponse = await handlePlanRequest(htmlRequest, new URL(htmlRequest.url), { openWorkView: async () => new Response(), renderModalPage: async () => new Response() });
+    const html = await htmlResponse!.text();
+    expect(html).toContain('data-agent-plan-target="highlight" aria-hidden="true"');
+    expect(html).toContain('name="markdown" aria-label="Agent plan Markdown"');
+    expect(html).toContain('scroll->agent-plan#scrollHighlight');
+    expect(html).toContain('>- [-] Work</textarea>');
     expect((await (await call("b")).json()).plan.revision).toBe(0);
     expect((await call("a", { action: "reset", expectedRevision: 0 })).status).toBe(409);
     expect((await call("a", { action: "write", markdown: "bad", agentId: "b" })).status).toBe(400);

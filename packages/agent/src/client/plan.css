@@ -6,7 +6,16 @@
 .agent-plan-toolbar { flex: none; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; padding: .5rem .75rem; }
 .agent-plan-toolbar strong { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .agent-plan-toolbar progress { width: 5rem; accent-color: var(--accent); }
-.agent-plan-text.textarea { flex: 1; min-height: 5rem; width: 100%; resize: none; border-radius: 0; border-inline: none; padding: .75rem; font-family: var(--font-mono); font-size: var(--text-code); line-height: 1.65; tab-size: 2; }
+.agent-plan-input { position: relative; flex: 1; min-height: 5rem; }
+.agent-plan-text.textarea, .agent-plan-highlight { box-sizing: border-box; margin: 0; width: 100%; height: 100%; border-radius: 0; border: 0; padding: .75rem; font-family: var(--font-mono); font-size: var(--text-code); font-weight: normal; line-height: 1.65; tab-size: 2; white-space: pre-wrap; overflow-wrap: break-word; overflow-y: scroll; }
+.agent-plan-highlight { position: absolute; inset: 0; pointer-events: none; color: var(--text); }
+.agent-plan-text.textarea { position: relative; resize: none; }
+.agent-plan-input.syntax-ready .agent-plan-text { background: transparent; color: transparent; caret-color: var(--text); }
+.agent-plan-input.syntax-ready .agent-plan-text::selection { color: transparent; background: color-mix(in srgb, var(--accent) 25%, transparent); }
+@media (forced-colors: active) {
+  .agent-plan-highlight { display: none; }
+  .agent-plan-input.syntax-ready .agent-plan-text { color: CanvasText; }
+}
 .agent-plan-footer { flex: none; padding: .5rem .75rem; }
 .agent-plan-footer p { margin: 0 0 .5rem; color: var(--text-muted); font-size: var(--text-code); }
 .agent-plan-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
