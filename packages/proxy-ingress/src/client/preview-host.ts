@@ -153,23 +153,22 @@ class PreviewHostController extends Controller {
         const data: unknown = event.data;
         if (this.flushing.receive(data)) return;
         if (Value.Check(previewNestedStorageSchema, data) && event.ports.length === 1) { void this.connectChild(data.scopes, event.ports[0]!); return; }
-        if (Value.Check(Type.Object({ type: Type.Literal("persisted") }), data)) { this.statusTarget.textContent = "Preview state saved"; return; }
+        if (Value.Check(Type.Object({ type: Type.Literal("persisted") }), data)) return;
         if (!Value.Check(sessionSchema, data)) { this.fail(new Error("Invalid preview persistence message")); return; }
         this.writes = this.writes.then(() => {
           if (persistent.control) { persistent.control.postMessage(data); return; }
           this.saveSession(persistent.scope, data.change);
           channel.port1.postMessage({ type: "saved", id: data.id });
-          this.statusTarget.textContent = "Preview state saved";
         }).catch(error => { channel.port1.postMessage({ type: "save-error", id: data.id }); this.fail(error); });
       };
       this.frameTarget.contentWindow!.postMessage({ type: "kintsugi:preview-connect", version: 2, nonce: this.documentNonce, state: persistent.state, session: this.readSession(persistent) }, "*", [channel.port2, persistent.port]);
-      this.statusTarget.textContent = "Preview state restored";
     } catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))); }
   }
 
   private fail(error: Error): void {
     this.statusTarget.textContent = "Preview settings could not be saved. Reloading may lose recent changes.";
     this.statusTarget.setAttribute("role", "alert");
+    this.statusTarget.hidden = false;
     console.error("Preview persistence failed", error);
   }
 }

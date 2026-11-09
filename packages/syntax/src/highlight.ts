@@ -31,8 +31,13 @@ export function highlightCodeHtml(request: HighlightRequest): HighlightedCode {
   const language = resolveLanguage(request.language ?? languageFromPath(request.path));
   if (!language) return { html: escapeHtml(request.code) };
   const lines = codeToTokens(request.code, { lang: language, theme: kintsugiTheme }).tokens;
-  const html = lines.map((tokens) => tokens.map((token) => {
-    const escaped = escapeHtml(token.content);
+  const html = lines.map((tokens) => tokens.map((token, index) => {
+    let escaped = escapeHtml(token.content);
+    // The Markdown lexer emits task boxes as plain text after its list marker.
+    const previous = tokens[index - 1];
+    if (language === "markdown" && previous?.color === "var(--syntax-attribute)" && /^\s*(?:[-+*]|\d+[.)])\s+$/.test(previous.content)) {
+      escaped = escaped.replace(/^\[([ xX-])\](?=\s|$)/, (box: string, state: string) => `<span class="syntax-${state === "-" ? "keyword" : state.toLowerCase() === "x" ? "string" : "attribute"}">${box}</span>`);
+    }
     const role = token.color?.match(colorRole)?.[1];
     return role && role !== "foreground" ? `<span class="syntax-${role}">${escaped}</span>` : escaped;
   }).join("")).join("\n");

@@ -87,3 +87,22 @@ describe("Kintsugi syntax highlighting", () => {
     expect(new Set(Object.values(palettes).map((palette) => palette.string)).size).toBe(5);
   });
 });
+
+test("Markdown themes distinguish task states, quotes, emphasis and link text", () => {
+  const result = highlightCodeHtml({ code: "> Quote **important**\n- [ ] pending\n- [-] current\n- [x] done\n- [X] done\n  - [ ] nested\n> - [ ] quoted\n[label](https://example.com)", language: "markdown" });
+  expect(result.html).toContain('<span class="syntax-keyword">&gt; </span>');
+  expect(result.html).toContain('<span class="syntax-keyword">**important**</span>');
+  expect(result.html).toContain('<span class="syntax-attribute">[ ]</span>');
+  expect(result.html).toContain('<span class="syntax-keyword">[-]</span>');
+  expect(result.html).toContain('<span class="syntax-string">[x]</span>');
+  expect(result.html).toContain('<span class="syntax-string">[X]</span>');
+  expect(result.html).toContain('<span class="syntax-link">label</span>');
+});
+
+test("task highlighting does not turn fenced code, ordinary brackets or unsafe text into markup", () => {
+  const result = highlightCodeHtml({ code: '```text\n- [ ] not a task\n```\n\nOrdinary [ ] brackets\n- [ ] <script>alert(1)</script>', language: "markdown" });
+  expect(result.html).toContain('- [ ] not a task');
+  expect(result.html).toContain('Ordinary [ ] brackets');
+  expect(result.html).not.toContain('<script>');
+  expect(result.html.match(/class="syntax-attribute">\[ \]<\/span>/g)).toHaveLength(1);
+});
