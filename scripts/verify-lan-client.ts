@@ -1,5 +1,6 @@
 import { Type } from "typebox";
 import { Value } from "typebox/value";
+import { CableTopics, decodeCableServerMessage } from "@kintsugi/shared";
 import type { JsonObject } from "../packages/core/src/index.ts";
 // Run on a second physical LAN client. Mutates only a newly created disposable workspace when explicitly requested.
 import { strict as assert } from "node:assert";
@@ -43,25 +44,42 @@ try {
   checks.push("Foreign, null and missing origins rejected; same-origin reaches routing");
   const events = await request(values.ui, "/settings/access/events");
   assert.equal(events.status, 200); assert(events.headers.get("content-type")?.startsWith("text/event-stream"));
-  const reader = events.body!.getReader(); assert((await reader.read()).value?.length); await reader.cancel(); checks.push("SSE delivered without waiting for stream completion");
-  const live = await request(values.ui, "/cable", "POST");
-  assert.equal(live.status, 200); assert(live.headers.get("content-type")?.startsWith("text/event-stream"));
-  const liveReader = live.body!.getReader();
-  try {
-    const decoder = new TextDecoder();
-    let frame = "";
-    while (!frame.includes("\n\n")) {
-      const { value, done } = await liveReader.read();
-      assert(!done, "Live SSE ended before welcome");
-      frame += decoder.decode(value, { stream: true });
-    }
-    const data = frame.slice(0, frame.indexOf("\n\n")).split("\n").filter(line => line.startsWith("data:")).map(line => line.slice(5).trimStart()).join("\n");
-    assert.equal(JSON.parse(data).type, "welcome");
-  } finally {
-    await liveReader.cancel();
-    liveReader.releaseLock();
-  }
-  checks.push("CA-verified management SSE stream and welcome");
+  const reader = events.body!.getReader(); assert((await reader.read()).value?.length); await reader.cancel(); checks.push("Settings SSE delivered without waiting for stream completion");
+  // SAFETY: This CLI runs in Bun, whose WebSocket constructor accepts Origin and TLS options.
+  const Client = WebSocket as typeof WebSocket & (new (url: string, options: Bun.WebSocketOptions) => WebSocket);
+  const live = new Client(values.ui.replace("https:", "wss:") + "/cable", { headers: { origin: values.ui }, tls: { ca } });
+  await new Promise<void>((resolve, reject) => {
+    const subscriptionId = crypto.randomUUID();
+    const identifier = CableTopics.shell();
+    let welcomed = false;
+    const finish = (error?: Error) => {
+      clearTimeout(timer);
+      live.onclose = null;
+      live.close();
+      if (error) reject(error); else resolve();
+    };
+    const timer = setTimeout(() => finish(new Error("Live WebSocket subscription timed out")), 30_000);
+    live.onerror = () => finish(new Error("Live WebSocket connection failed"));
+    live.onclose = () => finish(new Error("Live WebSocket closed before subscription confirmation"));
+    live.onmessage = event => {
+      try {
+        const message = decodeCableServerMessage(event.data);
+        if (!welcomed) {
+          assert.equal(message.type, "welcome");
+          welcomed = true;
+          live.send(JSON.stringify({ command: "subscribe", identifier, subscriptionId }));
+        } else if (message.type === "confirm_subscription") {
+          assert.equal(message.subscriptionId, subscriptionId);
+          assert.deepEqual(message.identifier, identifier);
+          live.send(JSON.stringify({ command: "unsubscribe", identifier, subscriptionId }));
+          finish();
+        } else if (message.type === "reject_subscription" || message.type === "error") {
+          throw new Error(`Live WebSocket command failed: ${message.type}`);
+        }
+      } catch (error) { finish(new Error("Live WebSocket message failed verification", { cause: error })); }
+    };
+  });
+  checks.push("CA-verified management WebSocket welcome and subscription round trip");
   if (values["preview-origin"]) {
     assert.notEqual(new URL(values["preview-origin"]).origin, values.ui);
     const preview = await request(values["preview-origin"], "/"); assert.equal(preview.status, 200);
