@@ -1,5 +1,6 @@
 import { KintsugiCoreError, type KintsugiEventBus } from "@kintsugi/core";
 import {
+  cableCommandBodyLimit,
   decodeCableClientMessages,
   errorMessage,
   serializeCableIdentifier,
@@ -172,6 +173,10 @@ export function createCableServer(options: CableServerOptions): CableServer {
 
   function handleInboundCommand(ws: CableSocket, raw: string | Buffer): void {
     if (!connections.has(ws)) return;
+    if (Buffer.byteLength(raw) > cableCommandBodyLimit) {
+      ws.close?.(1009, "Live command too large");
+      return;
+    }
     try {
       const messages: CableClientMessage[] = decodeCableClientMessages(textMessage(raw));
       for (const message of messages) {

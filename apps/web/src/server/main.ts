@@ -33,7 +33,6 @@ import { getAgentType, rememberAgentType } from "./agent-types.ts";
 import { createWebApp, type WebApp } from "./app.ts";
 import { parseAssetManifest } from "./asset-manifest.ts";
 import { createCableServer, type CableSocketData } from "./cable.ts";
-import { createCableSseTransport } from "./cable-sse.ts";
 import { openWorkspaceSocket } from "./workspace-socket.ts";
 import { clientEntrypoints, legacyStaticFiles } from "./static-files.ts";
 import { workspaceModules } from "./workspace-modules.generated.ts";
@@ -298,6 +297,7 @@ kintsugiEvents.on("workspace_deleted", ({ workspaceId }) => { pathPreviews.remov
 kintsugiEvents.on("workspace_suspending", ({ workspaceId }) => pathPreviews.removeWorkspace(workspaceId));
 
 async function validateSocket(request: Request, url: URL): Promise<SocketData | undefined> {
+  if (url.pathname === "/cable") return { kind: "cable", connectionId: crypto.randomUUID() };
 
   for (const handler of socketHandlers) {
     const session = await handler(url, request);
@@ -310,7 +310,6 @@ const defaultWorkspaceImage = await ensureDefaultWorkspaceImage({ buildOutput: "
 await ensureHostInotifyLimit(defaultWorkspaceImage);
 for (const workspace of persistedWorkspaces) await ingressSockets.ensure(workspace.id);
 await workspaceIngress.initialize();
-const handleCable = createCableSseTransport(cableServer);
 const server = Bun.serve<SocketData>({
   hostname,
   port: requestedPort,
@@ -356,8 +355,7 @@ const server = Bun.serve<SocketData>({
       return textResponse("websocket upgrade failed", { status: 400 });
     }
 
-    const cableResponse = await handleCable(request);
-    if (cableResponse) return cableResponse;
+    if (url.pathname === "/cable") return textResponse("WebSocket upgrade required", { status: 426, headers: { upgrade: "websocket" } });
 
     if (url.pathname === "/debug/connections" && request.method === "GET") {
       return new Response(JSON.stringify({ cable: cableServer.stats(), ingress: workspaceIngress.inspect() }, null, 2), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
@@ -379,7 +377,8 @@ const server = Bun.serve<SocketData>({
       else void openWorkspaceSocket(ws.data, ws);
     },
     message(ws, message) {
-      if (ws.data.kind === "workspace-module") ws.data.message?.(ws, message);
+      if (ws.data.kind === "cable") cableServer.message(ws, message);
+      else ws.data.message?.(ws, message);
     },
     close(ws) {
       if (ws.data.kind === "cable") cableServer.close(ws);

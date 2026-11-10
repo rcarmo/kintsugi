@@ -42,7 +42,9 @@ function startIngress(targetPort: (host: string) => number | undefined, listenPo
         const headers = new Headers(request.headers);
         const protocols = headers.get("sec-websocket-protocol")?.split(",").map(value => value.trim()) ?? [];
         for (const name of ["sec-websocket-key", "sec-websocket-version", "sec-websocket-extensions", "sec-websocket-protocol", "connection", "upgrade"]) headers.delete(name);
-        const upstream = new WebSocket(`ws://${target}`, { headers: Object.fromEntries(headers), protocols });
+        // SAFETY: This ingress runs in Bun, whose WebSocket constructor accepts headers.
+        const Client = WebSocket as typeof WebSocket & (new (url: string, options: Bun.WebSocketOptions) => WebSocket);
+        const upstream = new Client(`ws://${target}`, { headers: Object.fromEntries(headers), protocols });
         upstream.binaryType = "arraybuffer";
         const attach = bufferUpstreamSocket(upstream);
         try {
