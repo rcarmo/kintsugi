@@ -772,7 +772,7 @@ async function initialize() {
   }
   resources = await initializeResources();
   const network = await createWorkspaceNetworkControl(resources.buildClientsCgroupParent);
-  workspaceResources = createWorkspaceResourceControl({ memory: resources.policy.memory, cpus: resources.effectiveCpus, swap: resources.swapBudget, swapSupported: resources.swapSupported, systemMemory: resources.effectiveMemory, cgroupParent: resources.workloadsCgroupParent, docker: (...args) => command(["docker", ...args], undefined, 10_000) });
+  workspaceResources = createWorkspaceResourceControl({ pids: resources.policy.pids, memory: resources.policy.memory, cpus: resources.effectiveCpus, swap: resources.swapBudget, swapSupported: resources.swapSupported, systemMemory: resources.effectiveMemory, cgroupParent: resources.workloadsCgroupParent, docker: (...args) => command(["docker", ...args], undefined, 10_000) });
   await startHostService({ resourceControl: request => {
     if (request.operation === "resource-policy") return request.action === "configure" ? workspaceResources!.configurePolicy(request.changes) : workspaceResources!.policy();
     if (request.action === "inspect") return workspaceResources!.inspect(request.workspaceId);

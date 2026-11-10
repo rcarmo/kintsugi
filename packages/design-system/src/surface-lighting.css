@@ -1,10 +1,10 @@
 /* Shared lighting roles. The standalone tuner overrides these images, not feature markup.
  * Light is background-only; each domain retains its base and semantic state colors. */
 :root {
-  --panel-inner-glow: radial-gradient(ellipse 80% 7px at 0% 0, rgb(255 255 255 / 11%), transparent 75%);
+  --panel-inner-glow: radial-gradient(ellipse 80% 7px at 0% 0, color-mix(in srgb, var(--light-source) 11%, transparent), transparent 75%);
   --panel-rim-reflection: radial-gradient(
     ellipse 133% 180px at 0% 0,
-    color-mix(in srgb, color-mix(in srgb, var(--text-muted) 86%, #fff) 28%, transparent),
+    color-mix(in srgb, color-mix(in srgb, var(--text-muted) 86%, var(--light-source)) 28%, transparent),
     transparent 85%
   );
   --panel-outline: linear-gradient(
@@ -12,36 +12,36 @@
     color-mix(in srgb, var(--text-muted) 36%, var(--panel))
   );
   /* 3.5% light × 12% strength; terminal uses the selected 99% multiplier. */
-  --panel-background-image: radial-gradient(ellipse 53% 300px at 27% 0, rgb(255 255 255 / .42%), transparent 85%);
+  --panel-background-image: radial-gradient(ellipse 53% 300px at 27% 0, color-mix(in srgb, var(--light-source) .42%, transparent), transparent 85%);
   --transcript-background-image: var(--panel-background-image);
   --files-background-image: var(--panel-background-image);
   --editor-background-image: var(--panel-background-image);
   --composer-background-image: var(--panel-background-image);
   --work-background-image: var(--panel-background-image);
-  --terminal-background-image: radial-gradient(ellipse 53% 300px at 27% 0, rgb(255 255 255 / .4158%), transparent 85%);
+  --terminal-background-image: radial-gradient(ellipse 53% 300px at 27% 0, color-mix(in srgb, var(--light-source) .4158%, transparent), transparent 85%);
 
   --content-row-rim-reflection: radial-gradient(
     ellipse 147% 21px at 21% 0,
-    color-mix(in srgb, color-mix(in srgb, var(--text-muted) 68%, #fff) 27%, transparent),
+    color-mix(in srgb, color-mix(in srgb, var(--text-muted) 68%, var(--light-source)) 27%, transparent),
     transparent 85%
   );
   --content-row-outline: linear-gradient(
     color-mix(in srgb, var(--text-muted) 12%, var(--panel)),
     color-mix(in srgb, var(--text-muted) 12%, var(--panel))
   );
-  --content-row-inner-glow: radial-gradient(ellipse 80% 2px at 21% 0, rgb(255 255 255 / 10%), transparent 75%);
+  --content-row-inner-glow: radial-gradient(ellipse 80% 2px at 21% 0, color-mix(in srgb, var(--light-source) 10%, transparent), transparent 75%);
 
   /* Companion rim: 27% reflection and 4% inner glow × 117% effect strength.
    * There is no added base outline; the Button keeps its semantic colored border. */
   --button-rim-reflection: radial-gradient(
     ellipse 147% 21px at 21% 0,
-    color-mix(in srgb, color-mix(in srgb, var(--text-muted) 68%, #fff) 31.59%, transparent),
+    color-mix(in srgb, color-mix(in srgb, var(--text-muted) 68%, var(--light-source)) 31.59%, transparent),
     transparent 85%
   );
-  --button-inner-glow: radial-gradient(ellipse 80% 2px at 21% 0, rgb(255 255 255 / 4.68%), transparent 75%);
+  --button-inner-glow: radial-gradient(ellipse 80% 2px at 21% 0, color-mix(in srgb, var(--light-source) 4.68%, transparent), transparent 75%);
   --button-rim-inset: -1px;
   --button-lighting-content: "";
   --button-engaged-lighting-content: "";
   /* 5% light × 26% background strength. */
-  --button-background-image: radial-gradient(ellipse 125% 45px at 20% 0, rgb(255 255 255 / 1.3%), transparent 85%);
+  --button-background-image: radial-gradient(ellipse 125% 45px at 20% 0, color-mix(in srgb, var(--light-source) 1.3%, transparent), transparent 85%);
 }

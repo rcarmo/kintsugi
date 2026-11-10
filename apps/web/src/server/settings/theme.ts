@@ -11,8 +11,12 @@ export function themeRegionHtml(theme: KintsugiTheme = readThemeSetting()): stri
 
 export async function renderThemeSettings(): Promise<string> {
   const current = readThemeSetting();
-  const options = kintsugiThemes.map(({ id, label }) => `<option value="${id}"${id === current ? " selected" : ""}>${escapeHtml(label)}</option>`).join("");
-  return `<section class="settings-sec settings-sec-inline settings-sec-theme" id="settings-sec-theme"><h2>Theme</h2><form method="post" action="/settings/theme" data-turbo="true" data-controller="settings-autosave" data-action="change->settings-autosave#save submit->settings-autosave#submit"><select class="settings-select popup-select" data-controller="popup-select" name="theme" aria-label="Theme">${options}</select></form></section>`;
+  const options = kintsugiThemes.map(({ id, label, appearance }) => `<label class="theme-choice">
+    <input type="radio" name="theme" value="${id}"${id === current ? " checked" : ""}>
+    <span class="theme-choice-label">${escapeHtml(label)}<small>${appearance === "light" ? "Light" : "Dark"}</small></span>
+    <span class="theme-palette" data-theme="${id}" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+  </label>`).join("");
+  return `<section class="settings-sec settings-sec-theme" id="settings-sec-theme"><h2 id="settings-theme-title">Theme</h2><form method="post" action="/settings/theme" data-turbo="true" data-controller="settings-autosave" data-action="change->settings-autosave#save submit->settings-autosave#submit"><fieldset class="theme-options" aria-labelledby="settings-theme-title">${options}</fieldset></form></section>`;
 }
 
 export async function handleThemeSettingsRequest(request: Request, url: URL, themeChanged: () => void): Promise<Response | undefined> {

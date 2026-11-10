@@ -817,3 +817,13 @@ test("saved workspace resource allocations refuse incompatible app/System replac
   }
   expect(run({installed:true,resourceDataVersion:1,systemCompatibility:"3",appResourceCompatibility:"1"}).status).toBe(0);
 });
+
+test("saved task settings require reader 3 and System 5 before update or rollback",()=>{
+  for(const action of ["update","rollback"]){
+    for(const target of [{systemCompatibility:"4",appResourceCompatibility:"3"},{systemCompatibility:"5",appResourceCompatibility:"2"}]){
+      const result=run({installed:true,resourceDataVersion:3,...target},["--non-interactive","--confirm-replace","--action",action]);
+      expect(result.status).not.toBe(0);expect(result.output).not.toContain("DOCKER stop --time 120");expect(result.output).not.toContain("DOCKER rm kintsugi-system");
+    }
+    expect(run({installed:true,resourceDataVersion:3,systemCompatibility:"5",appResourceCompatibility:"3"},["--non-interactive","--confirm-replace","--action",action]).status).toBe(0);
+  }
+});

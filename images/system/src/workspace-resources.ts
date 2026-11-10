@@ -16,13 +16,14 @@ type RecordState = Static<typeof recordSchema>;
 // Docker is a privileged external boundary. Do not return its Env/Cmd/Error or arbitrary image metadata in diagnostics.
 const inspectSchema = Type.Array(Type.Object({ Id: Type.String(), Name: Type.String(), Config: Type.Object({ Image: Type.Optional(Type.String()), ExposedPorts: Type.Optional(Type.Union([Type.Null(), Type.Record(Type.String(), Type.Unknown())])), Labels: Type.Union([Type.Null(), Type.Record(Type.String(), Type.String())]) }), State: Type.Object({ Running: Type.Boolean(), OOMKilled: Type.Boolean(), Pid: Type.Integer(), ExitCode: Type.Integer(), FinishedAt: Type.String(), StartedAt: Type.Optional(Type.String()), Status: Type.Optional(Type.String()) }), NetworkSettings: Type.Optional(Type.Object({ Networks: Type.Optional(Type.Record(Type.String(), Type.Object({ IPAddress: Type.Optional(Type.String()), GlobalIPv6Address: Type.Optional(Type.String()) }))), Ports: Type.Optional(Type.Union([Type.Null(), Type.Record(Type.String(), Type.Union([Type.Null(), Type.Array(Type.Object({ HostIp: Type.String(), HostPort: Type.String() }))]))])) })), RestartCount: Type.Integer(), HostConfig: Type.Object({ CpusetCpus: Type.Optional(Type.String()), RestartPolicy: Type.Optional(Type.Object({ Name: Type.String() })), Memory: Type.Number(), MemorySwap: Type.Number(), NanoCpus: Type.Number(), PidsLimit: Type.Union([Type.Null(), Type.Number()]) }) }));
 type Container = Static<typeof inspectSchema>[number];
-export function createWorkspaceResourceControl(options: { memory: number; cpus: number; swap?: number; swapSupported?: boolean; systemMemory?: number; sample?: (container: Container) => Promise<WorkspaceResourceUsage>; cgroupParent: string; docker(...args: string[]): Promise<string>; file?: string; appData?: string; policyFile?: string; park?: (id: string) => Promise<void>; readOom?: (container: Container) => Promise<number>; now?: () => number }) {
+export function createWorkspaceResourceControl(options: { memory: number; cpus: number; pids?: number; swap?: number; swapSupported?: boolean; systemMemory?: number; sample?: (container: Container) => Promise<WorkspaceResourceUsage>; cgroupParent: string; docker(...args: string[]): Promise<string>; file?: string; appData?: string; policyFile?: string; park?: (id: string) => Promise<void>; readOom?: (container: Container) => Promise<number>; now?: () => number }) {
   const file = options.file ?? "/data/supervisor/workspace-resources.json";
   const baseDefaults = workspaceResourceDefaults(options.memory, options.cpus);
-  const defaults = { ...baseDefaults };
+  const pidsCapacity = options.pids ?? 1024;
+  const defaults = { ...baseDefaults, pids: Math.min(baseDefaults.pids, pidsCapacity) };
   const capacity = Math.floor(options.memory * 0.8); // Leave shared capacity for source readers and image builds.
   const policyFile = options.policyFile ?? join(options.appData ?? "/data/app", "workspace-resource-policy.json");
-  let budget = capacity, configuredMaximumMemory: number | undefined;
+  let budget = capacity, configuredMaximumMemory: number | undefined, configuredDefaultPids: number | undefined;
   const serialize = createKeyedOperationQueue();
   // Track admitted starts until Docker reports them running, not capacity reservations.
   const pending = new Map<string, number>();
@@ -35,11 +36,13 @@ export function createWorkspaceResourceControl(options: { memory: number; cpus: 
     const text = await readTextIfExists(policyFile);
     const policy = text === undefined ? undefined : Value.Parse(workspaceMemoryPolicySchema, JSON.parse(text));
     configuredMaximumMemory = policy?.maximumMemory;
+    configuredDefaultPids = policy?.version === 3 ? policy.defaultPids : undefined;
+    defaults.pids = Math.min(configuredDefaultPids ?? baseDefaults.pids, pidsCapacity);
     budget = Math.min(capacity, configuredMaximumMemory ?? capacity);
     defaults.memory = Math.min(baseDefaults.memory, budget);
     state = records;
   }
-  const memoryPolicy = (): WorkspaceMemoryPolicySnapshot => ({ maximumMemory: budget, configuredMaximumMemory, capacity, defaultMemory: defaults.memory });
+  const memoryPolicy = (): WorkspaceMemoryPolicySnapshot => ({ maximumMemory: budget, configuredMaximumMemory, capacity, defaultMemory: defaults.memory, defaultPids: defaults.pids, configuredDefaultPids, pidsCapacity });
   const save = () => writeJsonAtomic(file, state, { mode: 0o600 });
   const idOf = (c: Container) => { const id = c.Config.Labels?.["com.kintsugi.workspace-id"]; return id && /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(id) && c.Config.Labels?.["com.kintsugi.type"] === "workspace" && c.Name === `/kintsugi-${id}` ? id : undefined; };
   async function containers() {
@@ -69,6 +72,7 @@ export function createWorkspaceResourceControl(options: { memory: number; cpus: 
   }
   async function apply(c: Container, e: RecordState) {
     const p = e.limits;
+    if (p.pids > pidsCapacity) throw Error("Task limit exceeds the installation task budget.");
     if (p.memory > budget) throw new Error(`RAM limit exceeds the per-workspace maximum of ${budget} bytes.`);
     if (p.memorySwap < p.memory || p.memorySwap - p.memory > (options.swap ?? 0) || (options.swapSupported === false && p.memorySwap > p.memory)) throw new Error("Additional swap limit exceeds the installation's shared workload swap capacity.");
     if (p.cpus > options.cpus) throw new Error("CPU limit exceeds the installation's effective CPU capacity.");
@@ -113,14 +117,14 @@ export function createWorkspaceResourceControl(options: { memory: number; cpus: 
     }
     e.observedOom = count;
   }
-  async function markPolicy(id: string) {
+  async function markPolicy(id: string, version = 1) {
     const { existsSync } = await import("node:fs");
     const directory = join(options.appData ?? "/data/app", "workspaces", id, "metadata");
     if (!existsSync(join(directory,".."))) return;
     const path = join(directory,"resource-policy.json");
     const previous = await readTextIfExists(path);
-    if (previous !== undefined) { Value.Parse(Type.Object({version:Type.Integer({minimum:1,maximum:1})}),JSON.parse(previous)); return; }
-    await writeJsonAtomic(path,{version:1},{mode:0o600}); await chown(path,1000,1000);
+    if (previous !== undefined && Value.Parse(Type.Object({version:Type.Integer({minimum:1,maximum:3})}),JSON.parse(previous)).version >= version) return;
+    await writeJsonAtomic(path,{version},{mode:0o600}); await chown(path,1000,1000);
   }
   async function markParked(id: string) {
     if (options.park) return options.park(id);
@@ -134,7 +138,7 @@ export function createWorkspaceResourceControl(options: { memory: number; cpus: 
   }
   async function stop(c: Container) { pending.delete(idOf(c)!); if (c.State.Running) await options.docker("stop", "--time", "3", c.Id); }
   const actual = (c: Container): WorkspaceResourceLimits => ({ memory: c.HostConfig.Memory, memorySwap: c.HostConfig.MemorySwap, cpus: c.HostConfig.NanoCpus / 1e9, pids: c.HostConfig.PidsLimit ?? 0 });
-  const withinCapacity = (limits: WorkspaceResourceLimits) => limits.memory <= budget && limits.memorySwap >= limits.memory && limits.memorySwap - limits.memory <= (options.swapSupported === false ? 0 : options.swap ?? 0) && limits.cpus <= options.cpus;
+  const withinCapacity = (limits: WorkspaceResourceLimits) => limits.pids <= pidsCapacity && limits.memory <= budget && limits.memorySwap >= limits.memory && limits.memorySwap - limits.memory <= (options.swapSupported === false ? 0 : options.swap ?? 0) && limits.cpus <= options.cpus;
   const sameLimits = (a: WorkspaceResourceLimits, b: WorkspaceResourceLimits) => a.memory === b.memory && (a.memorySwap === b.memorySwap || (options.swapSupported === false && b.memorySwap === b.memory)) && a.cpus === b.cpus && a.pids === b.pids;
   async function usage(c: Container): Promise<WorkspaceResourceUsage> {
     if (options.sample) return options.sample(c);
@@ -153,7 +157,7 @@ export function createWorkspaceResourceControl(options: { memory: number; cpus: 
       if(pids?.trim()!=="max"&&pids!==undefined)effectivePids=Math.min(effectivePids??Infinity,Number(pids));
       if(limit){const [q,p]=limit.trim().split(/\s+/);if(q!=="max")effectiveCpus=Math.min(effectiveCpus,Number(q)/Number(p));}
     }
-    return { memory,memoryPeak,swap,cpuCores:Math.max(0,(after-before)/((performance.now()-start)*1000)),effectiveMemory,effectiveAdditionalSwap:effectiveSwap,effectiveCpus,effectivePids };
+    return { tasks: await number("pids.current"), memory,memoryPeak,swap,cpuCores:Math.max(0,(after-before)/((performance.now()-start)*1000)),effectiveMemory,effectiveAdditionalSwap:effectiveSwap,effectiveCpus,effectivePids };
   }
   // Informational sums only: workspace limits overlap, they do not reserve shared capacity.
   function otherLimits(all: Container[], id: string) {
@@ -166,7 +170,7 @@ export function createWorkspaceResourceControl(options: { memory: number; cpus: 
     try { sample=await usage(c); } catch(error) { console.error("Workspace cgroup metrics unavailable",error); metricsError="Cgroup usage is unavailable. Refresh before lowering limits."; }
     const meminfo=await readFile("/proc/meminfo","utf8");
     return { workspaceId:id,containerId:c.Id,image:c.Config.Image ?? "",state:{running:c.State.Running,status:c.State.Status ?? (c.State.Running?"running":"stopped"),oomKilled:c.State.OOMKilled,exitCode:c.State.ExitCode,restartCount:c.RestartCount,restartPolicy:c.HostConfig.RestartPolicy?.Name ?? "",finishedAt:c.State.FinishedAt,startedAt:c.State.StartedAt ?? ""},desired:e.limits,applied:actual(c),usage:sample,
-      capacity:{hostMemory:Number(meminfo.match(/^MemTotal:\s+(\d+)/m)![1])*1024,hostAvailable:Number(meminfo.match(/^MemAvailable:\s+(\d+)/m)![1])*1024,systemMemory:options.systemMemory ?? options.memory,workspaceBudget:budget,otherCpus:all.filter(v=>idOf(v)!==id&&(v.State.Running||pending.has(idOf(v)!))).reduce((n,v)=>n+entry(v).limits.cpus,0),otherMemory:other.memory,swapSupported:options.swapSupported !== false,additionalSwapBudget:options.swap ?? 0,otherAdditionalSwap:other.swap,cpus:options.cpus},
+      capacity:{hostMemory:Number(meminfo.match(/^MemTotal:\s+(\d+)/m)![1])*1024,hostAvailable:Number(meminfo.match(/^MemAvailable:\s+(\d+)/m)![1])*1024,systemMemory:options.systemMemory ?? options.memory,workspaceBudget:budget,pidsBudget:pidsCapacity,otherCpus:all.filter(v=>idOf(v)!==id&&(v.State.Running||pending.has(idOf(v)!))).reduce((n,v)=>n+entry(v).limits.cpus,0),otherMemory:other.memory,swapSupported:options.swapSupported !== false,additionalSwapBudget:options.swap ?? 0,otherAdditionalSwap:other.swap,cpus:options.cpus},
       lastExit:e.lastExitAt?{code:e.lastExitCode??0,finishedAt:e.lastExitAt,reason:e.source??`Container exit ${e.lastExitCode??0}`}:undefined,oomKills:e.oomKills,restartSource:e.source,blockedAt:e.blockedAt,failure:e.applyError ?? (e.managed&&!withinCapacity(e.limits)?"Saved limits exceed the current installation capacity. Reduce them before retrying.":e.reason) ?? metricsError,inSync:sameLimits(actual(c),e.limits)&&!e.pending&&(!e.managed||withinCapacity(e.limits)),pending:(e.pending ?? false)||(!!e.managed&&!withinCapacity(e.limits)),affinity:c.HostConfig.CpusetCpus ?? "",
       addresses:Object.entries(c.NetworkSettings?.Networks ?? {}).slice(0,64).map(([network,v])=>({network,ipv4:v.IPAddress ?? "",ipv6:v.GlobalIPv6Address ?? ""})),
       publishedPorts:Object.entries(c.NetworkSettings?.Ports ?? {}).slice(0,256).flatMap(([containerPort,bindings])=>(bindings??[]).slice(0,16).map(b=>({containerPort,hostIp:b.HostIp,hostPort:b.HostPort}))),exposedPorts:Object.keys(c.Config.ExposedPorts ?? {}).slice(0,256) };
@@ -179,13 +183,18 @@ export function createWorkspaceResourceControl(options: { memory: number; cpus: 
       if (closing) throw Error("System resource control is stopping");
       const changes = Value.Parse(workspaceMemoryPolicyChangeSchema, input); await load();
       if (changes.maximumMemory > capacity) throw Error(`RAM cap exceeds the installation capacity of ${capacity} bytes.`);
+      if (changes.defaultPids !== undefined && changes.defaultPids > pidsCapacity) throw Error("Default task limit exceeds the installation task budget.");
       const conflicts = new Set(Object.entries(state).filter(([, saved]) => saved.managed && saved.limits.memory > changes.maximumMemory).map(([id]) => id));
       for (const c of await containers()) {
         const saved = entry(c);
         if ((saved.managed && saved.limits.memory > changes.maximumMemory) || (c.State.Running && (c.HostConfig.Memory === 0 || c.HostConfig.Memory > changes.maximumMemory))) conflicts.add(idOf(c)!);
       }
       if (conflicts.size) throw Error(`Lower workspace RAM limits before reducing the global cap: ${[...conflicts].sort().join(", ")}. No running limits were changed.`);
-      await writeJsonAtomic(policyFile, { version: 2, maximumMemory: changes.maximumMemory }, { mode: 0o600 });
+      // Preserve existing workspace defaults before changing the default for new IDs.
+      await save();
+      const nextPids = changes.defaultPids ?? configuredDefaultPids;
+      await writeJsonAtomic(policyFile, nextPids === undefined ? { version: 2, maximumMemory: changes.maximumMemory } : { version: 3, maximumMemory: changes.maximumMemory, defaultPids: nextPids }, { mode: 0o600 });
+      configuredDefaultPids = nextPids; defaults.pids = Math.min(nextPids ?? baseDefaults.pids, pidsCapacity);
       configuredMaximumMemory = changes.maximumMemory; budget = changes.maximumMemory; defaults.memory = Math.min(baseDefaults.memory, budget);
       await chown(policyFile, 1000, 1000);
       return memoryPolicy();
@@ -198,10 +207,12 @@ export function createWorkspaceResourceControl(options: { memory: number; cpus: 
       if(changes.memory>budget)throw Error(`RAM limit exceeds the per-workspace maximum of ${budget} bytes.`);
       if((options.swapSupported===false&&changes.additionalSwap>0)||changes.additionalSwap>(options.swap??0))throw Error("Additional swap limit exceeds the installation's shared workload swap capacity.");
       if(changes.cpus>options.cpus)throw Error("CPU limit exceeds the installation's effective CPU capacity.");
+      if (changes.pids !== undefined && changes.pids > pidsCapacity) throw Error("Task limit exceeds the installation task budget.");
       const sample=await usage(c);
+      if (changes.pids !== undefined && c.State.Running && (sample.tasks === undefined ? changes.pids < (c.HostConfig.PidsLimit > 0 ? c.HostConfig.PidsLimit : Infinity) : changes.pids < sample.tasks)) throw Error("Stop workspace processes before lowering the task limit below current or unknown usage.");
       if(c.State.Running && (sample.memory===undefined ? changes.memory<(c.HostConfig.Memory||Infinity) : changes.memory<sample.memory) && !changes.acknowledgeMemoryReduction)throw Error("Lowering RAM below current or unknown usage can kill processes. Confirm the reduction before applying.");
-      await markPolicy(workspaceId);
-      e.limits={memory:changes.memory,memorySwap:changes.memory+changes.additionalSwap,cpus:Math.floor(changes.cpus*1e9)/1e9,pids:e.limits.pids};e.managed=true;e.pending=true;delete e.applyError;await save();
+      await markPolicy(workspaceId, changes.pids === undefined ? 1 : 3);
+      e.limits={memory:changes.memory,memorySwap:changes.memory+changes.additionalSwap,cpus:Math.floor(changes.cpus*1e9)/1e9,pids:changes.pids??e.limits.pids};e.managed=true;e.pending=true;delete e.applyError;await save();
       try { await apply(c,e);e.pending=false; }catch(error){console.error("Workspace resource update failed",error);e.applyError="Docker refused the resource update. Desired settings are saved; effective settings may differ. Refresh and retry, or park/unpark.";}
       await save();const fresh=await containers();return snapshot(fresh.find(v=>idOf(v)===workspaceId)??c,fresh);
     }); },

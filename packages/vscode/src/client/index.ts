@@ -14,7 +14,7 @@ function addKintsugiThemeParams(url: URL): void {
   url.searchParams.set("kintsugiLine", cssVariable("--line"));
   url.searchParams.set("kintsugiAccent", cssVariable("--accent"));
   url.searchParams.set("kintsugiAccentContrast", cssVariable("--accent-contrast"));
-  for (const role of ["comment", "string", "keyword", "number", "function", "variable", "type", "punctuation"]) {
+  for (const role of ["comment", "string", "keyword", "number", "function", "variable", "type", "punctuation", "literal", "attribute", "tag", "constant", "link"]) {
     url.searchParams.set(`kintsugiSyntax-${role}`, cssVariable(`--syntax-${role}`));
   }
   for (const color of ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"]) {

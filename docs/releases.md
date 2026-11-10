@@ -46,17 +46,17 @@ version 0. Version 1 provides the compatibility foundation; version 2 adds optio
 listed-host policies; version 3 adds persistent resource admission and OOM
 containment; version 4 adds the optional installation-wide workspace RAM cap.
 The app minimum stays at 0, with explicit capability-2, capability-3 and capability-4
-gates for listed-host mode, resource controls and the global RAM cap. The
-network-policy reader stays at 2; the resource-policy reader is now 2. Configured
+gates for listed-host mode, resource controls and the global RAM cap. Version 5 adds editable task defaults and per-workspace process/thread limits. The
+network-policy reader stays at 2; the resource-policy reader is now 3. Configured
 inspector allocations require reader 1 and System 3; a saved global RAM cap
-requires reader 2 and System 4. App-only and paired preparation/activation/rollback
+requires reader 2 and System 4. Configured task defaults or per-workspace task overrides require reader 3 and System 5. App-only and paired preparation/activation/rollback
 and installer checks reject incompatible targets without resetting configuration.
 Saved custom sources, pins and the retained image-pair protocol are unchanged.
 
 Token telemetry is app-owned and opt-in. It introduces no new System operation or
 compatibility-counter change of its own. The current counters, including the RAM
-policy support above, are System 4, app minimum 0, network-policy reader 2 and
-resource-policy reader 2. Updating source does not enable an
+policy and task support above, are System 5, app minimum 0, network-policy reader 2 and
+resource-policy reader 3. Updating source does not enable an
 exporter or deploy an installation. Its private configuration/checkpoints live in
 app data and survive app replacement. An app that predates this feature does not export telemetry;
 image rollback is not a settings/checkpoint restore. Provider caching defaults,

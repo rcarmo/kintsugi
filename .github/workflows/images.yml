@@ -79,11 +79,11 @@ jobs:
           bun packages/workspace-image/scripts/build-context.mjs .ci-image-context/workspace
           mkdir -p .ci-image-context/system/.build
           cp images/system/Dockerfile images/system/.dockerignore .ci-image-context/system/
-          cp images/system/.build/{supervisor.js,client.js,design-system.css,host-updater.js,install.sh} .ci-image-context/system/.build/
+          cp images/system/.build/{supervisor.js,client.js,design-system.css,host-updater.js,install.sh,NOTICE} .ci-image-context/system/.build/
           mkdir -p .ci-image-context/system/.probe
           cp images/system/.build/{resource-control-probe.js,resource-budget-probe.js,control.sh,stress.c} .ci-image-context/system/.probe/
           signature=$(jq -er '.tag | select(startswith("kintsugi-workspace:")) | ltrimstr("kintsugi-workspace:")' .ci-image-context/workspace/metadata.json)
-          system_signature=$(sha256sum images/system/Dockerfile images/system/.build/{supervisor.js,client.js,design-system.css,host-updater.js,install.sh} | sha256sum | cut -d' ' -f1)
+          system_signature=$(sha256sum images/system/Dockerfile images/system/.build/{supervisor.js,client.js,design-system.css,host-updater.js,install.sh,NOTICE} | sha256sum | cut -d' ' -f1)
           owner='${{ github.repository_owner }}'
           {
             echo "commit=$(git rev-parse HEAD)"
@@ -330,7 +330,7 @@ jobs:
         if: needs.prepare.outputs.system_exists != 'true'
         run: |
           ref='ghcr.io/${{ github.repository_owner }}/kintsugi-system:content-${{ needs.prepare.outputs.system_signature }}-${{ matrix.arch }}'
-          docker run --rm --entrypoint /bin/sh "$ref" -ec 'test "$(uname -m)" = "${{ matrix.machine }}"; bun --version; tailscale version; kintsugi-dockerd /usr/local/bin/dockerd --version; test -s /opt/kintsugi-system/supervisor.js'
+          docker run --rm --entrypoint /bin/sh "$ref" -ec 'test "$(uname -m)" = "${{ matrix.machine }}"; bun --version; tailscale version; kintsugi-dockerd /usr/local/bin/dockerd --version; test -s /opt/kintsugi-system/supervisor.js; test -s /opt/kintsugi-system/NOTICE'
           test "$(docker inspect "$ref" --format '{{ index .Config.Labels "kintsugi.installer-config" }}')" = 1
       - name: Verify native resource containment and runtime bootstrap
         if: needs.prepare.outputs.system_exists != 'true'

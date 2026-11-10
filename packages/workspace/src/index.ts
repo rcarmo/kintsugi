@@ -13,7 +13,7 @@ import { workspaceTerminalProcesses } from "./terminal-processes.ts";
 import { errorMessage, isWorkspaceAppPort, workspaceGatewayPort, type WorkspaceGateway, type WorkspaceHttpAppBackend, type WorkspaceServerProvisioningHook } from "@kintsugi/shared";
 import { inspectWorkspaceImage, resolveWorkspaceImage } from "@kintsugi/workspace-image";
 import { gitCredentialHelperShellBody } from "@kintsugi/git-hosting";
-import { prepareWorkspaceSystemd } from "./systemd.ts";
+import { prepareWorkspaceSystemd, prepareWorkspaceTaskDefaults } from "./systemd.ts";
 import { closeWorkspaceHelperConnection, refreshWorkspaceHelper, requireRootInWorkspace, runInWorkspace, workspaceParentSocketDirectory } from "./helper.ts";
 import { createWorkspaceContainerLifecycle, workspaceConfigurationLabel } from "./container-lifecycle.ts";
 import { Type } from "typebox";
@@ -636,6 +636,8 @@ function workspaceContainerLifecycle(id: string, checkpointRequired: boolean, re
       if (resourceControl) await hostRequest({ operation: "resources", workspaceId: id, recover });
       const policy = await prepareWorkspaceNetwork(id);
       await configureWorkspaceDns(id, policy);
+      const taskDefaults = await prepareWorkspaceTaskDefaults(kintsugiDataPath(getKintsugiRuntimeContext(), "workspaces", id, "systemd"));
+      await requireDocker(["cp", taskDefaults, `${workspaceContainerName(id)}:/etc`]);
     },
   });
 }

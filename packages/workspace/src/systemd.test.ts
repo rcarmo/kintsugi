@@ -11,9 +11,10 @@ test("provisioning supplies setup and PID 1 requirements without replacing image
     const plan: WorkspaceDockerPlan = { labels: {}, env: {}, mounts: [], preloadImages: [], extraArgs: [], initScripts: [], containerFiles: [], cleanup: [] };
     await prepareWorkspaceSystemd(plan, directory, "echo setup");
     expect(plan.extraArgs).toEqual(["--security-opt", "writable-cgroups=true", "--cgroupns=private", "--tmpfs", "/run", "--stop-signal", "SIGRTMIN+3"]);
-    expect(plan.containerFiles).toEqual([{ source: join(directory, "kintsugi-helper.service"), target: "/usr/lib/systemd/system/kintsugi-helper.service" }, { source: join(directory, "init.sh"), target: "/.kintsugi/init.sh" }, { source: join(directory, "kintsugi"), target: "/etc" }]);
+    expect(plan.containerFiles).toEqual([{ source: join(directory, "kintsugi-helper.service"), target: "/usr/lib/systemd/system/kintsugi-helper.service" }, { source: join(directory, "systemd"), target: "/etc" }, { source: join(directory, "init.sh"), target: "/.kintsugi/init.sh" }, { source: join(directory, "kintsugi"), target: "/etc" }]);
     expect(await readFile(join(directory, "kintsugi", "docker-support"), "utf8")).toBe("disabled\n\n");
     expect(await readFile(join(directory, "init.sh"), "utf8")).toBe("echo setup");
+    expect(await readFile(join(directory, "systemd/system.conf.d/90-kintsugi-workspace-limits.conf"), "utf8")).toContain("DefaultTasksMax=infinity");
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 

@@ -29,3 +29,4 @@ const client = await Bun.build({
 });
 if (!client.success) throw new AggregateError(client.logs);
 await Bun.write(`${out}/design-system.css`, await inlineDesignSystemCss());
+await Bun.write(`${out}/NOTICE`, await Bun.file(new URL("../../NOTICE", import.meta.url)).text());

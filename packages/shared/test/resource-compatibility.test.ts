@@ -32,3 +32,17 @@ test("global RAM policy fences old app/System images even with no workspaces", a
     expect(() => assertResourceStateCompatible(2, { [resourcePolicyVersionLabel]: "2" }, { [systemVersionLabel]: "3" })).toThrow();
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("saved task defaults and overrides fence pre-task-policy app and System images",async()=>{
+ const root=await mkdtemp(join(tmpdir(),"task-resource-compatibility-"));
+ try{
+  await writeFile(join(root,"workspace-resource-policy.json"),JSON.stringify({version:3,maximumMemory:2*1024**3,defaultPids:2048}));
+  expect(await requiredAppResourceStateVersion(root)).toBe(3);
+  expect(()=>assertResourceStateCompatible(3,{[resourcePolicyVersionLabel]:"3"},{[systemVersionLabel]:"5"})).not.toThrow();
+  expect(()=>assertResourceStateCompatible(3,{[resourcePolicyVersionLabel]:"2"},{[systemVersionLabel]:"5"})).toThrow();
+  expect(()=>assertResourceStateCompatible(3,{[resourcePolicyVersionLabel]:"3"},{[systemVersionLabel]:"4"})).toThrow();
+  await rm(join(root,"workspace-resource-policy.json"));await mkdir(join(root,"workspaces/one/metadata"),{recursive:true});
+  await writeFile(join(root,"workspaces/one/metadata/resource-policy.json"),JSON.stringify({version:3}));
+  expect(await requiredAppResourceStateVersion(root)).toBe(3);
+ }finally{await rm(root,{recursive:true,force:true});}
+});

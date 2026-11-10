@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { isNotFoundError } from "@kintsugi/core";
-import { parseSystemVersion, resourcePolicyVersionLabel, resourceControlSystemVersion, workspaceMemoryPolicySystemVersion, systemVersionLabel } from "./system-version.ts";
+import { parseSystemVersion, resourcePolicyVersionLabel, resourceControlSystemVersion, workspaceMemoryPolicySystemVersion, workspaceTaskLimitsSystemVersion, systemVersionLabel } from "./system-version.ts";
 
 const markerSchema=Type.Object({version:Type.Integer({minimum:1,maximum:2147483647})},{additionalProperties:false});
 export async function requiredAppResourceStateVersion(appData:string):Promise<number>{
@@ -22,5 +22,5 @@ export async function requiredAppResourceStateVersion(appData:string):Promise<nu
 export async function requiredResourceStateVersion(systemData:string):Promise<number>{return requiredAppResourceStateVersion(join(systemData,"app"));}
 export function assertResourceStateCompatible(required:number,appLabels:Readonly<Record<string,string>>|null|undefined,systemLabels?:Readonly<Record<string,string>>|null):void{
   if(required===0)return;
-  if(parseSystemVersion(appLabels?.[resourcePolicyVersionLabel])<required||(systemLabels!==undefined&&parseSystemVersion(systemLabels?.[systemVersionLabel])<(required>=2?workspaceMemoryPolicySystemVersion:resourceControlSystemVersion)))throw Error("Saved workspace resource limits require resource-aware app and System images. Select compatible images; desired allocations were not changed. Image rollback does not restore configuration.");
+  if(parseSystemVersion(appLabels?.[resourcePolicyVersionLabel])<required||(systemLabels!==undefined&&parseSystemVersion(systemLabels?.[systemVersionLabel])<(required>=3?workspaceTaskLimitsSystemVersion:required>=2?workspaceMemoryPolicySystemVersion:resourceControlSystemVersion)))throw Error("Saved workspace resource limits require resource-aware app and System images. Select compatible images; desired allocations were not changed. Image rollback does not restore configuration.");
 }

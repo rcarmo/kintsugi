@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createWorkspaceResourceControl, workspaceResourceDefaults } from "./workspace-resources.ts";
@@ -22,7 +22,7 @@ async function setup() {
     if (args[0] === "update") { if(args.includes("--memory")) c.HostConfig.Memory = Number(args[args.indexOf("--memory")+1]); if(args.includes("--memory-swap")) c.HostConfig.MemorySwap = Number(args[args.indexOf("--memory-swap")+1]); if(args.includes("--cpus")) c.HostConfig.NanoCpus = Number(args[args.indexOf("--cpus")+1])*1e9; if(args.includes("--pids-limit")) c.HostConfig.PidsLimit = Number(args[args.indexOf("--pids-limit")+1]); return c.Id; }
     throw Error("Unexpected Docker operation");
   }
-  const create = (swap = 0, swapSupported = true) => createWorkspaceResourceControl({ policyFile: join(directory, "global-policy.json"), swap, swapSupported, memory: 8*GiB, cpus: 6, cgroupParent: "/fixture/workloads", file, docker, now: () => time, readOom: async c => kills.get(c.Id) ?? 0, sample: async c => c.State.Running ? {memory: 128*1024**2,memoryPeak:256*1024**2,swap:0,cpuCores:.5,effectiveMemory:c.HostConfig.Memory,effectiveAdditionalSwap:0,effectiveCpus:c.HostConfig.NanoCpus/1e9}: {}, park: async id => { parked.push(id); } });
+  const create = (swap = 0, swapSupported = true) => createWorkspaceResourceControl({ appData:join(directory,"app"), pids:4096, policyFile: join(directory, "global-policy.json"), swap, swapSupported, memory: 8*GiB, cpus: 6, cgroupParent: "/fixture/workloads", file, docker, now: () => time, readOom: async c => kills.get(c.Id) ?? 0, sample: async c => c.State.Running ? {tasks:64,memory: 128*1024**2,memoryPeak:256*1024**2,swap:0,cpuCores:.5,effectiveMemory:c.HostConfig.Memory,effectiveAdditionalSwap:0,effectiveCpus:c.HostConfig.NanoCpus/1e9}: {}, park: async id => { parked.push(id); } });
   return { directory, file, containers, calls, kills, parked, create, refuseUpdate: (value:boolean) => { failUpdate=value; }, advance: (ms: number) => { time += ms; } };
 }
 test("workspace defaults bound memory, CPU and processes on small and large installations", () => {
@@ -229,4 +229,53 @@ test("global RAM cap includes managed allocations whose containers are temporari
   const control = f.create(); await control.configure("a", { memory: 3 * GiB, additionalSwap: 0, cpus: 1 });
   f.containers.shift();
   await expect(control.configurePolicy({ maximumMemory: GiB })).rejects.toThrow("a");
+}));
+
+test("task defaults persist for new workspaces without resizing existing containers", () => fixture(async f => {
+  const control=f.create();await control.reconcile();const before=f.calls.length;
+  const policy=await control.configurePolicy({maximumMemory:4*GiB,defaultPids:2048});
+  expect(policy.defaultPids).toBe(2048);expect(policy.pidsCapacity).toBe(4096);
+  expect(f.calls.slice(before).some(c=>c[0]==="update"||c[0]==="stop")).toBe(false);
+  expect((await control.inspect("a")).desired.pids).toBe(1024);
+  f.containers.push(container("new"));await control.admit("new");
+  expect(f.containers.at(-1)!.HostConfig.PidsLimit).toBe(2048);
+  const restored=f.create();expect((await restored.policy()).defaultPids).toBe(2048);
+  await restored.configurePolicy({maximumMemory:4*GiB});
+  expect((await restored.policy()).defaultPids).toBe(2048);
+  expect(JSON.parse(await readFile(join(f.directory,"global-policy.json"),"utf8"))).toEqual({version:3,maximumMemory:4*GiB,defaultPids:2048});
+}));
+test("task overrides apply live, survive restart and do not restart or resize peers",()=>fixture(async f=>{
+  const control=f.create();await control.reconcile();f.containers[0]!.State.Running=true;
+  const before=f.calls.length,changed=await control.configure("a",{memory:4*GiB,additionalSwap:0,cpus:4,pids:2048});
+  expect(changed.applied.pids).toBe(2048);expect(changed.desired.pids).toBe(2048);expect(changed.inSync).toBe(true);
+  expect(f.calls.slice(before).filter(c=>c[0]==="update").every(c=>c.at(-1)==="a")).toBe(true);
+  expect(f.calls.slice(before).some(c=>c[0]==="stop"||c[0]==="start")).toBe(false);
+  expect((await f.create().inspect("a")).desired.pids).toBe(2048);
+  f.refuseUpdate(true);const failed=await control.configure("a",{memory:4*GiB,additionalSwap:0,cpus:4,pids:3072});
+  expect(failed.pending).toBe(true);expect(failed.desired.pids).toBe(3072);expect(failed.applied.pids).toBe(2048);
+}));
+test("task validation refuses zero, tiny, fractional and over-budget defaults and overrides",()=>fixture(async f=>{
+  const control=f.create();await control.configurePolicy({maximumMemory:4*GiB,defaultPids:1024});
+  for(const pids of [0,127,-1,128.5,NaN,Infinity,4097]){
+    await expect(control.configurePolicy({maximumMemory:4*GiB,defaultPids:pids})).rejects.toThrow();
+    await expect(control.configure("a",{memory:GiB,additionalSwap:0,cpus:1,pids})).rejects.toThrow();
+  }
+  expect((await control.policy()).defaultPids).toBe(1024);
+}));
+test("task overrides refuse reductions below current usage before Docker is changed",()=>fixture(async f=>{
+  const control=f.create();await control.reconcile();f.containers[0]!.State.Running=true;
+  // A cgroup snapshot with a real task count is independent of process names or terminal markup.
+  const busy=createWorkspaceResourceControl({memory:8*GiB,cpus:6,pids:4096,file:f.file,policyFile:join(f.directory,"global-policy.json"),cgroupParent:"/fixture/workloads",docker:async(...args)=>{f.calls.push(args);if(args[0]==="ps")return"a";if(args[0]==="inspect")return JSON.stringify([f.containers[0]]);throw Error("Docker must not be updated");},sample:async()=>({tasks:300,memory:128*1024**2})});
+  await expect(busy.configure("a",{memory:4*GiB,additionalSwap:0,cpus:4,pids:256})).rejects.toThrow("Stop workspace processes");
+}));
+
+test("explicit task settings retain their version-3 downgrade fence after later RAM-only changes",()=>fixture(async f=>{
+  await mkdir(join(f.directory,"app/workspaces/a"),{recursive:true});
+  const control=f.create();
+  await control.configure("a",{memory:GiB,additionalSwap:0,cpus:1,pids:2048});
+  const marker=join(f.directory,"app/workspaces/a/metadata/resource-policy.json");
+  expect(JSON.parse(await readFile(marker,"utf8"))).toEqual({version:3});
+  await control.configure("a",{memory:2*GiB,additionalSwap:0,cpus:1});
+  expect(JSON.parse(await readFile(marker,"utf8"))).toEqual({version:3});
+  expect((await f.create().inspect("a")).desired.pids).toBe(2048);
 }));

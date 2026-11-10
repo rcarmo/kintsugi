@@ -123,6 +123,11 @@ function themeDefaultsForRequest(request: Request): VSCodeThemeDefaults | undefi
     ["variable", ["variable", "variable.language", "variable.other.constant", "support.variable", "entity.name.variable", "meta.definition.variable.name", "meta.object-literal.key", "meta.template.expression", "entity.other.attribute-name"], ["variable", "parameter", "property"]],
     ["type", ["entity.name.type", "support.type", "support.class", "entity.name.tag"], ["type", "class", "interface", "enum", "struct", "typeParameter"]],
     ["punctuation", ["punctuation", "punctuation.definition.tag", "punctuation.definition.template-expression.begin", "punctuation.definition.template-expression.end", "punctuation.section.embedded", "keyword.operator"], ["operator"]],
+    ["literal", ["constant.language", "constant.language.boolean", "constant.language.null"], []],
+    ["attribute", ["entity.other.attribute-name", "meta.object-literal.key", "variable.other.property"], ["property"]],
+    ["tag", ["entity.name.tag"], []],
+    ["constant", ["constant.other", "variable.other.constant", "variable.other.enummember"], ["enumMember", "variable.readonly"]],
+    ["link", ["markup.underline.link", "markup.underline.link.markdown"], []],
   ];
   for (const [role, scope, types] of syntaxRoles) {
     const foreground = requestColor(url, `kintsugiSyntax-${role}`);

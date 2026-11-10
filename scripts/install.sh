@@ -802,7 +802,9 @@ if (operation === 'auth-check') {
  } else if (operation === 'resource-data-version') {
   let directories;
   try { directories = await fs.readdir('/data/app/workspaces', {withFileTypes:true}); } catch(error) {if(error.code!=='ENOENT')throw error;directories=[];}
-  let version=0;
+  const globalPolicy=await read('/data/app/workspace-resource-policy.json');
+  if(Object.keys(globalPolicy).length&&(!Number.isSafeInteger(globalPolicy.version)||globalPolicy.version<2))throw Error('Invalid global resource policy');
+  let version=globalPolicy.version??0;
   for(const entry of directories){if(!entry.isDirectory())continue;const marker=await read('/data/app/workspaces/'+entry.name+'/metadata/resource-policy.json');if(!Object.keys(marker).length)continue;if(!Number.isSafeInteger(marker.version)||marker.version<1)throw Error('Invalid resource-policy marker');version=Math.max(version,marker.version);}
   console.log(version);
 } else if (operation === 'network-data-version') {
@@ -931,7 +933,7 @@ case "$action" in
       network_data_version="$(release_plan "$old_system_image" network-data-version 2>>"$log_file")" || fail "Cannot verify network policy compatibility; nothing was replaced"
       case "$network_data_version" in 0|2) ;; *) fail "Invalid network policy compatibility state; nothing was replaced" ;; esac
       resource_data_version="$(release_plan "$old_system_image" resource-data-version 2>>"$log_file")" || fail "Cannot verify resource policy compatibility; nothing was replaced"
-      case "$resource_data_version" in 0|1) ;; *) fail "Resource settings require a newer installer; nothing was replaced" ;; esac
+      case "$resource_data_version" in 0|1|2|3) ;; *) fail "Resource settings require a newer installer; nothing was replaced" ;; esac
       plan_operation=plan; if [ "$action" = rollback ]; then plan_operation=rollback-plan; fi
       plan="$(release_plan "$old_system_image" "$plan_operation" 2>>"$log_file")" || fail "Cannot read the saved release source; nothing was replaced"
       plan_fields=(); while IFS= read -r field; do plan_fields+=("$field"); done <<<"$plan"
@@ -1123,7 +1125,9 @@ UPDATER_TMPFILES
     fi
     if [ "$installed" -eq 1 ] && [ "${resource_data_version:-0}" -gt 0 ]; then
       resource_system_version="$(docker image inspect --format '{{index .Config.Labels "org.kintsugi.system-version"}}' "$system_image")"
-      [[ "$resource_system_version" =~ ^[0-9]+$ ]] && [ "$resource_system_version" -ge 3 ] || fail "Saved resource limits require resource-aware installation images; nothing was replaced"
+      required_resource_system=3
+      if [ "$resource_data_version" -ge 3 ]; then required_resource_system=5; elif [ "$resource_data_version" -ge 2 ]; then required_resource_system=4; fi
+      [[ "$resource_system_version" =~ ^[0-9]+$ ]] && [ "$resource_system_version" -ge "$required_resource_system" ] || fail "Saved resource limits require resource-aware installation images; nothing was replaced"
       if [ "$(docker inspect --format '{{.State.Running}}' "$system_name")" = true ]; then
         resource_app_version="$(docker exec "$system_name" docker image inspect --format '{{index .Config.Labels "org.kintsugi.resource-policy-version"}}' "$pinned_app")" || fail "Cannot inspect resource reader compatibility; nothing was replaced"
         [[ "$resource_app_version" =~ ^[0-9]+$ ]] && [ "$resource_app_version" -ge "$resource_data_version" ] || fail "Saved resource limits require a resource-aware app image; nothing was replaced"

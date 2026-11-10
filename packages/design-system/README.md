@@ -8,7 +8,7 @@ Prefer consistency over feature-specific visual preservation.
 
 - **Humans:** run `bun run web`, open `/design-system-catalogue.html`.
   Search or scan live examples; expand **Usage & API** for contracts, executable
-  examples and authoritative source. Try all five themes, narrow containers,
+  examples and authoritative source. Try the available themes, narrow containers,
   RTL, browser zoom and reduced motion. Button specimens always show **Regular**
   and **Popular** side by side. Popular sizing activates on a narrow viewport or
   coarse pointer; desktop sizes remain identical (the Example width control alone
