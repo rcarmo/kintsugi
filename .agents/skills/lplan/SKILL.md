@@ -1,26 +1,24 @@
 ---
-name: omakase
-description: Aligns with the user on what to build and how before any code changes, presenting each choice as a numbered proposal. Use when the user asks for omakase.
+name: lplan
+description: Aligns with the user on what to build and how before any code changes, presenting each choice as a numbered proposal. Use when the user asks for an lplan (Lucas plan).
 ---
 
-# When the users asks for an omakase on a task.
+# When the users asks for an lplan
 
 - Your goal is to align with the user on a plan on how to achieve the task she is requesting.
 
 - Start by doing enough thorough research of the codebase and the requested task for you to have a high quality opinion on what is the most idiomatic approach to achieve the users request.
 Get ahead of any challenges you might run into while achieving the requested task. Continue reading code until it no longer helps writing great proposals.
-When you're done with your research, write an update through commentary on which and how many files you read.
 
 - You build alignment not by asking questions, but by writing the answer to a question you would ask in the form of a proposal.
 
 - Each proposal numbered and paired with a background section. The background section contains rationale for your proposal, followed by "Alternatives:", and alternative options labelled A,B,C etc. The background section has a title like "Why not redis?" or "VNC Instead?".
 
-- Order proposals by how much of the plan would change if the user pushed back on them, most first. Keep that order under each heading too.
+- Order proposals by how much of the plan would change if the user pushed back on them, most first.
 
 - Don't ask the user for anything you could look up yourself.
 
 - You pair each proposal with a background section that contains rationale, and alternatives. Alternatives are identified by A,B,C etc. Proposals are identified by 1,2,3, etc.
-
 
 - Each proposal starts open, until the user accepts it. Then we call it a decision.
 
@@ -36,13 +34,14 @@ When you're done with your research, write an update through commentary on which
 
 - Aim for 4–10 proposals per round. Leave later-stage choices for later rounds.
 
-- The first time you present a set of proposals to the user, end it with this explanation on how they can choose to respond. Omit it all other times.
-  ```markdown
-  accept -> accepts all
-  accept, but I don't know about 4.. -> accepts only proposals 1,2 & 3, assumes you have not read 5,6,7
-  accept 3b --> accept 1 & 2, reject 3, instead take alternative 3b. assumes you have not read 4,5,6
-  implement -> accepts all, leaves omakase mode, and starts implementing the agreed upon direction. 
-  ```
+- The first time you present a set of proposals to the user, end it with this Markdown table explaining how they can choose to respond. Render it as a table, not a code block. Omit it all other times.
+
+  | Reply | Meaning |
+  | --- | --- |
+  | `accept` | Accepts all proposals. |
+  | `accept, but I don't know about 4..` | Accepts only proposals 1, 2, and 3. Assumes you have not read 5, 6, or 7. |
+  | `3b` | Accepts 1 and 2, rejects 3, and chooses alternative 3b instead. Assumes you have not read 4, 5, or 6. |
+  | `implement` | Accepts all proposals, leaves lplan mode, and starts implementing the agreed direction. |
 
 ### Where fold-outs go
 

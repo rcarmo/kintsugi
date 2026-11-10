@@ -9,7 +9,7 @@ Optimize everything in the PR for the upstream maintainers' convenience.
 
 - **Follow upstream's rules first.** Read their contributing guidelines, PR template, and AI-contribution policy, and look at what recently merged PRs do. Where they conflict with this skill, they win.
 - **Repro.** Make it minimal, and keep it as close as possible to how a normal user would use the product. Confirm it still fails on their latest version. Put it inline in the PR if it fits reasonably. Otherwise, use a mini public repo.
-- **Videos.** If it makes sense for this repro, record one that feels like a person showing a maintainer the bug, with subtitles at the top so they don't overlap GitHub's playback controls. After the fix, record the same repro again in the same style.  The video should feel like there's a human walking you through a repro case.
+- **Videos.** If it makes sense for this repro, use the [narrated-video skill](../narrated-video/SKILL.md) to record a maintainer being walked through the bug. After the fix, record the same repro again in the same style.
 - **Fix.** Follow upstream's code guidelines, and adopt the surrounding code's style, comment verbosity, and naming patterns. Add tests only where their codebase would, following their patterns.
 
 ## PR description
