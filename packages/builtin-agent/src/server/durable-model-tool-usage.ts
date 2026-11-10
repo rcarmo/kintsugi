@@ -1,4 +1,4 @@
-import type { JsonRepresentation } from "@earendil-works/chord";
+import type { JsonRepresentation } from "@earendil-works/chord/json";
 import { defineDoc, type ToolRegistration } from "@earendil-works/pi-durable";
 import type { Usage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";

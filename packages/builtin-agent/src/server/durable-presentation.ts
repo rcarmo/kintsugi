@@ -1,4 +1,4 @@
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai/utils/transcript";
 import { type Conversation, type ConversationView, type WatchHandle } from "@earendil-works/pi-durable";
 import { StreamingMarkdownRenderer } from "@kintsugi/markdown";

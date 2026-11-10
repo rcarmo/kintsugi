@@ -4,7 +4,7 @@
 import { admitOneShotAgent, assertOneShotJson, OneShotBudget } from "./one-shot-limits.ts";
 import { withCancel, withoutAbortSignal } from "@earendil-works/chord/context";
 import { randomUUID } from "node:crypto";
-import type { JsonValue } from "@earendil-works/chord";
+import type { JsonValue } from "@earendil-works/chord/json";
 import { clampThinkingLevel, type Models, type ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { AgentDoc, configure, defineDoc, defineEntry, defineTool, UsageDoc, type ConversationId } from "@earendil-works/pi-durable";
 import { CODEMODE_TOOL_NAME } from "@earendil-works/pi-durable/codemode";

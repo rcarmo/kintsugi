@@ -1,7 +1,6 @@
 import { posix } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Context } from "@earendil-works/chord";
-import { awaitWithContext } from "@earendil-works/chord/context";
+import { awaitWithContext, type Context } from "@earendil-works/chord/context";
 import { err, ExecutionError, FileError, LineScanner, ok, type BinaryReader, type ExecutionEnv, type FileErrorCode, type FileInfo, type Result } from "@earendil-works/pi-durable/env";
 import { openFileInWorkspace, readFileInWorkspace, runInWorkspace, statFilesInWorkspace, workspaceRoot, WorkspaceHelperError, WorkspaceHelperStatus, writeFileInWorkspace, type WorkspaceFileStat } from "@kintsugi/workspace";
 

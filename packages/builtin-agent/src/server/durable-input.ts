@@ -1,4 +1,4 @@
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import type { ImageContent, Models, TextContent } from "@earendil-works/pi-ai";
 import { formatDimensionNote, resizeImage } from "@earendil-works/pi-coding-agent";
 import type { Conversation, InputSubmissionDraft } from "@earendil-works/pi-durable";

@@ -1,5 +1,5 @@
 import { awaitWithContext } from "@earendil-works/chord/context";
-import { copyJson } from "@earendil-works/chord";
+import { copyJson } from "@earendil-works/chord/json";
 import { defineTool, type ToolRegistration, type ConversationId } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { createEditTool, createReadTool, createWriteTool, type ImageProcessor } from "@earendil-works/pi-durable/tools";

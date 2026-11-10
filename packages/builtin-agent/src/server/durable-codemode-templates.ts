@@ -1,7 +1,7 @@
 import { contentText, createAssistantMessageEventStream, type AssistantMessage, type Message, type Models, type ToolCall } from "@earendil-works/pi-ai";
 import { CODEMODE_TOOL_NAME } from "@earendil-works/pi-durable/codemode";
 import { AssistantEntry, CompactionEntry, defineEntry, ResetEntry, defineExtension, GenerationTask, hook, LiveDoc, type ConversationId, type Cursor, type EntryId, type Harness, type ToolExecutionApi, type ToolRegistration, type Tx } from "@earendil-works/pi-durable";
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { KintsugiCoreError } from "@kintsugi/core";
 import { codemodeTemplateScript, type PromptTemplate } from "@kintsugi/agent/server/prompt-templates";
 import { withStreamSimple } from "./durable-models.ts";

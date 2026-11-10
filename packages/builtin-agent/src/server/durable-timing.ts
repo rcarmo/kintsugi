@@ -1,4 +1,4 @@
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { defineEntry, defineExtension, GenerationTask, hook, type ConversationId, type TypedEntryDraft } from "@earendil-works/pi-durable";
 import type { TurnTimingSummary } from "@kintsugi/agent/server/turn-timing";
 

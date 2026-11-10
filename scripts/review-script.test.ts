@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { Compile } from "typebox/compile";
 import type { TSchema } from "typebox";
-import type { JsonValue } from "@earendil-works/chord";
+import type { JsonValue } from "@earendil-works/chord/json";
 import { assertOneShotJson } from "../packages/codemode/src/server/one-shot-limits.ts";
 import { loadPromptTemplatesFromRoot } from "../packages/agent/src/server/prompt-templates.ts";
 

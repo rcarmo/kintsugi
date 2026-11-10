@@ -21,7 +21,7 @@ export const communicationStateEntry = defineEntry<{ id: string; change: Partial
 export const Delegation = defineDoc<{
   receipts: Record<string, Receipt>;
   assignments: Record<string, { recipient: ConversationId; status: "pending" | "completed" | "failed" | "interrupted"; result?: string }>;
-  operations: Record<string, { child?: string; previous?: import("@earendil-works/chord").JsonValue }>;
+  operations: Record<string, { child?: string; previous?: import("@earendil-works/chord/json").JsonValue }>;
 }>({ kind: "kintsugi.delegation", version: 1, scope: "session", initial: () => ({ receipts: {}, assignments: {}, operations: {} }), checkpointWhen: () => false, });
 export const Mailbox = defineDoc<{ receipts: Receipt[] }>({ kind: "kintsugi.mailbox", version: 1, scope: "conversation", history: "latest", fork: "initial", initial: () => ({ receipts: [] }), checkpointWhen: () => false, });
 

@@ -1,4 +1,4 @@
-import type { JsonValue } from "@earendil-works/chord";
+import type { JsonValue } from "@earendil-works/chord/json";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { defineDoc, defineExtension, GenerationTask, hook, UsageDoc, type TaskId, type Tx } from "@earendil-works/pi-durable";

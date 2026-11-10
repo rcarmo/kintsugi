@@ -1,5 +1,5 @@
 import { attributeModelToolUsage } from "@kintsugi/builtin-agent/server/model-tool-usage";
-import type { JsonValue } from "@earendil-works/chord";
+import type { JsonValue } from "@earendil-works/chord/json";
 import { defineEntry, type Extension, type JsonObject, type NestedToolExecutionResult, type ToolExecutionApi } from "@earendil-works/pi-durable";
 import { CODEMODE_TOOL_NAME, createCodemodeExtension, type CodemodeToolInput } from "@earendil-works/pi-durable/codemode";
 import type { CodemodeSandbox } from "@earendil-works/pi-codemode";

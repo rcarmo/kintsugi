@@ -1,5 +1,5 @@
 import type { TextContent, ImageContent, ThinkingContent, ToolCall } from "@earendil-works/pi-ai";
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { InboxDoc, type InboxState, type Conversation, type EntryId, type EntryRecord } from "@earendil-works/pi-durable";
 import { sessionImageResponse } from "./session-images.ts";
 

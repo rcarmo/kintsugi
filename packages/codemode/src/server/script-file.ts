@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { defineDoc, defineEntry, type ToolExecutionApi, type ToolExecutionResult } from "@earendil-works/pi-durable";
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import type { ScriptFileView } from "@kintsugi/agent/server/transcript";
 import { execWorkspaceCommand } from "@kintsugi/workspace";
 

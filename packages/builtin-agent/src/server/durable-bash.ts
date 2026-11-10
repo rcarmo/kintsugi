@@ -1,5 +1,5 @@
 import { createLegacyBashOperation } from "./legacy-bash-operation.ts";
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { defineDoc, defineExtension, defineTask, defineTool, type TaskId } from "@earendil-works/pi-durable";
 import type { TerminalProcesses } from "@kintsugi/observable-terminal/server";
 import { workspaceRoot, workspaceTerminalProcesses } from "@kintsugi/workspace";

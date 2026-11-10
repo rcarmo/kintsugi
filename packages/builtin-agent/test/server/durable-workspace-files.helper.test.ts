@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, truncate, writ
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { JsonValue } from "@earendil-works/chord";
+import type { JsonValue } from "@earendil-works/chord/json";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { createRegistry, defineExtension, type ToolRegistration } from "@earendil-works/pi-durable";

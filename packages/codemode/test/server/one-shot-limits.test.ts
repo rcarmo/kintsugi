@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { JsonValue } from "@earendil-works/chord";
+import type { JsonValue } from "@earendil-works/chord/json";
 import { assertOneShotJson } from "../../src/server/one-shot-limits.ts";
 
 test("one-shot schemas reject regex execution and recursive references on the host", () => {
