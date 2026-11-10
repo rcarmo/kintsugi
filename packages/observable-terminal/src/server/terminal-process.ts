@@ -373,10 +373,11 @@ export function createTerminalProcesses(options: { run: RunTerminalProcessComman
       const env = Object.entries({ ...observableTerminalEnvironment, ...start.env }).flatMap(([key, value]) => ["-e", `${key}=${value}`]);
       const pane = `exec sh ${dir}/run ${dir} ${session}`;
       // The prefixes keep each argument in place when tmux expands it to nothing.
-      const hook = `run-shell -b "sh ${dir}/finish ${dir} ${session} #{hook_pane} s#{pane_dead_status} g#{pane_dead_signal} >/dev/null 2>&1"`;
+      // A failed asynchronous callback makes tmux put an unrelated pane in view mode.
+      const hook = `run-shell -b "sh ${dir}/finish ${dir} ${session} #{hook_pane} s#{pane_dead_status} g#{pane_dead_signal} >/dev/null 2>&1 || :"`;
       // The timer outlives release. Guard before opening the script, under the same
       // root lock as release, so deletion cannot race the check or its execution.
-      const expiry = `flock ${options.root} sh -c ${shellQuote('if [ -f "$1/expire" ]; then . "$1/expire"; fi')} sh ${dir} ${session} >/dev/null 2>&1`;
+      const expiry = `flock ${options.root} sh -c ${shellQuote('if [ -f "$1/expire" ]; then . "$1/expire"; fi')} sh ${dir} ${session} >/dev/null 2>&1 || :`;
       await sh(startScript, [
         options.root, dir, session, requestDigest(start, cols, rows), start.cwd,
         String(cols), String(rows), String(observableTerminalHistoryLimit), start.deadline === undefined ? "" : String(start.deadline),
