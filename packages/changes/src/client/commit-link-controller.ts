@@ -1,7 +1,7 @@
 import type { WorkspaceClientControllerConstructor } from "@kintsugi/shared";
 
 interface CommitLinkLabel { found: boolean; html: string }
-/** Commits never change, so one lookup serves every link to them on the page. */
+/** Share lookups and cache found labels; a missing commit may become available later. */
 const labels = new Map<string, Promise<CommitLinkLabel>>();
 
 function label(url: string): Promise<CommitLinkLabel> {
@@ -9,7 +9,9 @@ function label(url: string): Promise<CommitLinkLabel> {
   if (!loaded) {
     loaded = fetch(url, { headers: { Accept: "text/html" } }).then(async result => {
       if (!result.ok && result.status !== 404) throw new Error(`Couldn’t load commit label: ${result.status}`);
-      return { found: result.ok, html: await result.text() };
+      const html = await result.text();
+      if (!result.ok) labels.delete(url);
+      return { found: result.ok, html: result.ok ? html : "" };
     });
     labels.set(url, loaded);
     loaded.catch(() => labels.delete(url));
@@ -35,14 +37,15 @@ export function createCommitLinkController(Controller: WorkspaceClientController
       if (!found) {
         this.element.removeAttribute("href");
         this.element.dataset.missing = "true";
+        this.element.title = "Commit details unavailable in this workspace’s repository.";
       }
-      this.shown = url;
+      this.shown = found ? url : undefined;
     }
 
     // A loaded link is browser-owned; morphing the same link would blank its label.
     preserve(event: CustomEvent<{ newElement: Element }>): void {
       const incoming = event.detail.newElement;
-      if (event.target === this.element && incoming instanceof HTMLElement && incoming.dataset.commitLinkUrlValue === this.shown) event.preventDefault();
+      if (this.shown !== undefined && event.target === this.element && incoming instanceof HTMLElement && incoming.dataset.commitLinkUrlValue === this.shown) event.preventDefault();
     }
   };
 }

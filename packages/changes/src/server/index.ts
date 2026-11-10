@@ -119,7 +119,7 @@ export const kintsugiServerModule: WorkspaceModule = {
       const root = workspaceRepository(workspaceId);
       if (linkRoute[1] === "commit-label") {
         const label = await commitLinkLabel(root, link);
-        return label === undefined ? response("Commit not found", { status: 404 }) : response(label, { headers: { "Cache-Control": "private, max-age=31536000, immutable" } });
+        return label === undefined ? response("Commit details unavailable in this workspace’s repository.", { status: 404, headers: { "Cache-Control": "no-store" } }) : response(label, { headers: { "Cache-Control": "private, max-age=31536000, immutable" } });
       }
       const state = await current(workspaceId), ticket = state.select(), previous = state.snapshot;
       // A later selection owns the comparison; still bring Changes forward.
