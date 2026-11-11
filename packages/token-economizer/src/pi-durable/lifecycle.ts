@@ -6,26 +6,26 @@ import { claimFold, deferFold, endSession, finishFold, prepareSession, recoverab
 import { scopeKey } from "../core/types.ts";
 import { KnowledgeDoc, ObservationsDoc, SessionsDoc, type Knowledge } from "./documents.ts";
 import type { HostDomain, HostSession, SessionStart, Trajectory } from "./domain.ts";
-export type FoldResult = Pick<Knowledge,"tools" | "render" | "injectedIds" | "environment" | "distiller"> & Partial<Pick<Knowledge,"novelty"|"renders">>;
-export type SessionFolder = (input: { session: LearningSession; host: HostSession; trajectory: Extract<Trajectory,{kind:"ready"}>; knowledge: Knowledge; policy: Policy; signal: AbortSignal }) => Promise<FoldResult>;
+export type FoldResult = Pick<Knowledge,"tools" | "render" | "injectedIds" | "environment" | "distiller"> & Partial<Pick<Knowledge,"novelty"|"renders">> & { learning?: NonNullable<LearningSession["learning"]> };
+export type SessionFolder = (input: { session: LearningSession; host: HostSession; trajectory: Extract<Trajectory,{kind:"ready"}>; knowledge: Knowledge; policy: Policy; signal: AbortSignal; incremental?: boolean }) => Promise<FoldResult>;
 export function createSessionLifecycle(options: { harness: () => Harness; backgroundOwner?:() => ConversationId; domain: HostDomain; policy: (key: string) => Policy; fold: SessionFolder; renderCached?:(text:string) => string; now?:() => number; onFolded?:(host:HostSession) => Promise<void> }) {
-  const task = defineTask<{ key: string; host: HostSession }, { phase: "fold" }, null>({
+  const task = defineTask<{ key: string; host: HostSession; incremental?: boolean }, { phase: "fold" }, null>({
     name: "token-economizer.fold", version: 1, initial: () => ({ phase: "fold" }),
     phases: { async fold(current,runtime,context) {
-      const { key,host } = current.input, claim = String(runtime.taskId);
+      const { key,host,incremental } = current.input, claim = String(runtime.taskId);
       await runtime.commit(async tx => {
         const sessions = await tx.doc(SessionsDoc), knowledge = await tx.doc(KnowledgeDoc,scopeKey(host.scope),host.scope), row = sessions.sessions[key];
-        if (!row || row.folded || !observing(options.policy(key))) return;
+        if (!row || row.folded && !incremental || !observing(options.policy(key))) return;
         if (row.claim === claim) return;
         if (knowledge.foldClaim !== null || knowledge.foldQueue[0] !== key) return;
-        const admitted = claimFold(row,claim,row.cutoff ?? "",runtime.now());
+        const admitted = claimFold(row,claim,row.cutoff ?? "",runtime.now(),incremental);
         if (admitted.kind === "admitted") { sessions.sessions[key] = admitted.session; knowledge.foldClaim = claim; sessions.claims[key] = runtime.taskId; }
       },context);
       const session = (await runtime.snapshot(SessionsDoc,context))!.sessions[key];
-      if (!session || session.folded || !observing(options.policy(key))) {
+      if (!session || session.folded && !incremental || !observing(options.policy(key))) {
         await runtime.commit(async tx => {
           const knowledge = await tx.doc(KnowledgeDoc,scopeKey(host.scope),host.scope), state = await tx.doc(SessionsDoc), row = state.sessions[key];
-          if (row && !row.folded && row.claim === claim) state.sessions[key] = deferFold(row,claim,runtime.now());
+          if (row && row.claim === claim) state.sessions[key] = deferFold(row,claim,runtime.now(),incremental);
           if (knowledge.foldClaim === claim) knowledge.foldClaim = null;
           knowledge.foldQueue = knowledge.foldQueue.filter(item => item !== key);
           return {status:"terminal",outcome:{status:"completed",result:null}};
@@ -34,11 +34,11 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
       if (session.claim !== claim) {
         await runtime.sleepUntil(runtime.now()+100,{phase:"fold"},context); return;
       }
-      const trajectory = await options.domain.trajectory(host,session.cutoff || null);
+      const trajectory = await options.domain.trajectory(host,session.cutoff || null,session.learning?.cutoff);
       if (trajectory.kind === "later") {
         await runtime.commit(async tx => {
           const sessions = await tx.doc(SessionsDoc), knowledge = await tx.doc(KnowledgeDoc,scopeKey(host.scope),host.scope);
-          sessions.sessions[key] = deferFold(sessions.sessions[key],claim,runtime.now()); knowledge.foldClaim = null; knowledge.foldQueue = knowledge.foldQueue.filter(item => item !== key);
+          sessions.sessions[key] = deferFold(sessions.sessions[key],claim,runtime.now(),incremental); knowledge.foldClaim = null; knowledge.foldQueue = knowledge.foldQueue.filter(item => item !== key);
           return { status:"terminal",outcome:{status:"completed",result:null} };
         },context); return;
       }
@@ -46,14 +46,14 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
       if (trajectory.kind === "ready") {
         await runtime.commit(async tx => { (await tx.doc(SessionsDoc)).sessions[key].cutoff = trajectory.cutoff; },context);
         const knowledge = await runtime.snapshot(KnowledgeDoc,scopeKey(host.scope),context);
-        try { result = await options.fold({ session,host,trajectory,knowledge:knowledge!,policy:options.policy(key),signal:runtime.signal }); }
+        try { result = await options.fold({ session,host,trajectory,knowledge:knowledge!,policy:options.policy(key),signal:runtime.signal,incremental }); }
         catch (error) {
           runtime.signal.throwIfAborted();
           const message = Error.isError(error) ? error.message : String(error);
           runtime.report(error);
           await runtime.commit(async tx => {
             const sessions = await tx.doc(SessionsDoc), knowledge = await tx.doc(KnowledgeDoc,scopeKey(host.scope),host.scope);
-            const row = deferFold(sessions.sessions[key],claim,runtime.now()); row.foldError = message; sessions.sessions[key] = row;
+            const row = deferFold(sessions.sessions[key],claim,runtime.now(),incremental); row.foldError = message; sessions.sessions[key] = row;
             knowledge.foldClaim = null; knowledge.foldQueue = knowledge.foldQueue.filter(item => item !== key);
             return {status:"terminal",outcome:{status:"failed",error:{message}}};
           },context); return;
@@ -62,15 +62,27 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
       await runtime.commit(async tx => {
         const sessions = await tx.doc(SessionsDoc), knowledge = await tx.doc(KnowledgeDoc,scopeKey(host.scope),host.scope), row = sessions.sessions[key];
         if (!observing(options.policy(key))) {
-          sessions.sessions[key] = deferFold(row,claim,runtime.now()); knowledge.foldClaim = null;
+          sessions.sessions[key] = deferFold(row,claim,runtime.now(),incremental); knowledge.foldClaim = null;
         } else {
           if (result) { knowledge.tools = result.tools; knowledge.render = result.render; knowledge.injectedIds = result.injectedIds; knowledge.environment = result.environment; knowledge.distiller = result.distiller;if (result.novelty) knowledge.novelty = result.novelty;if (result.renders) knowledge.renders = result.renders; }
-          sessions.sessions[key] = finishFold(row,claim,runtime.now(),trajectory.kind === "unreadable" || trajectory.kind === "absent" ? trajectory.reason : null);
+          if (incremental) {
+            row.claim = null;row.cutoff = null;row.recordActivity = runtime.now();
+            const checkpoint = result?.learning ?? session.learning;
+            if (checkpoint && trajectory.kind === "ready") row.learning = {...checkpoint,cutoff:trajectory.cutoff,processed:session.learning!.requested,finalRequested:row.learning?.finalRequested ?? false,requested:row.learning?.requested ?? checkpoint.requested,lastRun:row.learning?.lastRun ?? checkpoint.lastRun};
+            row.foldError = trajectory.kind === "ready" ? null : trajectory.reason;
+          } else {
+            if (result?.learning) row.learning = result.learning;
+            sessions.sessions[key] = finishFold(row,claim,runtime.now(),trajectory.kind === "unreadable" || trajectory.kind === "absent" ? trajectory.reason : null);
+          }
           const observations = await tx.doc(ObservationsDoc,key,null);
           observations.observations = observations.observations.slice(-256);observations.ids = observations.ids.slice(-256);
-          knowledge.foldOrder.push(key); knowledge.foldClaim = null;
+          if (!incremental) knowledge.foldOrder.push(key); knowledge.foldClaim = null;
         }
         knowledge.foldQueue = knowledge.foldQueue.filter(item => item !== key);
+        if (incremental && trajectory.kind === "ready" && observing(options.policy(key)) && (!row.folded && (row.ended !== null || row.learning?.finalRequested) || (row.learning?.requested ?? 0) > (row.learning?.processed ?? 0))) {
+          knowledge.foldQueue.push(key);
+          await tx.createTask(row.folded || row.ended === null && !row.learning?.finalRequested ? checkpointTask : task,{key,host,incremental:row.folded || row.ended === null && !row.learning?.finalRequested},{ownership:{kind:"conversation"},conversationId:options.backgroundOwner?.() ?? host.conversationId,background:true});
+        }
         return { status:"terminal",outcome:{status:"completed",result:null} };
       },context);
       if (observing(options.policy(key))) await options.onFolded?.(host);
@@ -79,23 +91,44 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
       await runtime.commit(async tx => {
         const sessions = await tx.doc(SessionsDoc), row = sessions.sessions[current.input.key];
         const knowledge = await tx.doc(KnowledgeDoc,scopeKey(current.input.host.scope),current.input.host.scope);
-        if (row?.claim === String(runtime.taskId)) sessions.sessions[current.input.key] = deferFold(row,String(runtime.taskId),runtime.now());
+        if (row?.claim === String(runtime.taskId)) sessions.sessions[current.input.key] = deferFold(row,String(runtime.taskId),runtime.now(),current.input.incremental);
         if (knowledge.foldClaim === String(runtime.taskId)) knowledge.foldClaim = null;
         knowledge.foldQueue = knowledge.foldQueue.filter(item => item !== current.input.key);
         return {status:"terminal",outcome:{status:"aborted",result:null,reason:"Fold cancelled"}};
       },context);
     },
   });
-  async function enqueue(key: string,host: HostSession) {
+  // A separate kind keeps older apps from interpreting a live checkpoint as a session end.
+  const checkpointTask = defineTask({...task.definition,name:"token-economizer.checkpoint"});
+  async function enqueue(key: string,host: HostSession,incremental = false) {
     await options.harness().commit(async tx => {
       const row = (await tx.doc(SessionsDoc)).sessions[key], knowledge = await tx.doc(KnowledgeDoc,scopeKey(host.scope),host.scope);
-      if (!row || row.folded || row.claim || knowledge.foldQueue.includes(key) || !observing(options.policy(key))) return;
+      if (!row || row.folded && !incremental || row.claim || knowledge.foldQueue.includes(key) || !observing(options.policy(key))) return;
       knowledge.foldQueue.push(key);
-      await tx.createTask(task,{key,host},{ownership:{kind:"conversation"},conversationId:options.backgroundOwner?.() ?? host.conversationId,background:true});
+      await tx.createTask(incremental ? checkpointTask : task,{key,host,incremental},{ownership:{kind:"conversation"},conversationId:options.backgroundOwner?.() ?? host.conversationId,background:true});
     },BACKGROUND_CONTEXT);
   }
+  async function requestCheckpoint(host:HostSession,runId:string|null) {
+      if (!options.domain.incrementalLearning || host.delegated || host.parent || !observing(options.policy(sessionKey(host.scope,host.id)))) return;
+      const key = sessionKey(host.scope,host.id);
+      const changed = await options.harness().commit(async tx => {
+        const row = (await tx.doc(SessionsDoc)).sessions[key];
+        if (!row || row.ended !== null || runId !== null && row.learning?.lastRun === runId) return false;
+        if (!row.learning) {
+          // Legacy folded journals lack per-fact credits. Conservatively protect all existing facts
+          // from gaining another independent vote from this same logical session.
+          const knowledge = await tx.doc(KnowledgeDoc,scopeKey(host.scope),host.scope);
+          const credited = row.folded ? [...knowledge.environment.facts.map(fact => `env:${fact.id}`),...knowledge.distiller.facts.map(fact => `fact:${fact.spec.id}`)] : [];
+          row.learning = {cutoff:row.folded ? row.cutoff : null,credits:{confirms:[...credited],contradicts:[],exercises:[...credited]},ticks:0,lastProposalAt:null,requested:0,processed:0,lastRun:null,toolCounted:row.folded};
+        }
+        if (row.folded && !row.claim) row.cutoff = null;
+        if (row.folded) row.learning.finalRequested = false;
+        row.learning.requested++;if (runId !== null) row.learning.lastRun = runId;return true;
+      },BACKGROUND_CONTEXT);
+      if (changed) await enqueue(key,host,true);
+  }
   return {
-    extension: defineExtension({name:"token-economizer.sessions",tasks:[task]}),
+    extension: defineExtension({name:"token-economizer.sessions",tasks:[task,checkpointTask]}),
     async sessionStarted(host: HostSession,start: SessionStart & { carriedIds: string[] }) {
       if (host.delegated) return null;
       const key = sessionKey(host.scope,host.id), now = (options.now ?? Date.now)();
@@ -114,7 +147,7 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
           const row = state.sessions[sessionId];if (!row) throw new Error("Missing claimed learning session");if (!row.claim) {delete state.claims[sessionId];continue;}
           const owner = await tx.task(taskId);if (!owner) throw new Error("Missing durable fold claim owner");
           if (owner.state.status !== "terminal") continue;
-          const knowledge = await tx.doc(KnowledgeDoc,scopeKey(row.scope),row.scope), released = deferFold(row,row.claim,(options.now ?? Date.now)());
+          const knowledge = await tx.doc(KnowledgeDoc,scopeKey(row.scope),row.scope), released = deferFold(row,row.claim,(options.now ?? Date.now)(),row.folded);
           if (knowledge.foldClaim !== row.claim) throw new Error("Repository fold claim ownership mismatch");
           released.foldError = owner.state.outcome.status === "failed" || owner.state.outcome.status === "faulted" ? owner.state.outcome.error.message : "Fold ended without its marker";
           state.sessions[sessionId] = released;knowledge.foldClaim = null;knowledge.foldQueue = knowledge.foldQueue.filter(item => item !== sessionId);delete state.claims[sessionId];
@@ -124,14 +157,16 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
       for (const row of recoverableSessions(Object.values(state!.sessions),host.scope,host.id,now)) {
         const source = state!.hosts[sessionKey(row.scope,row.id)];
         if (!source) throw new Error("Missing pinned learning session host");
-        await enqueue(sessionKey(row.scope,row.id),source);
+        await enqueue(sessionKey(row.scope,row.id),source,options.domain.incrementalLearning === true && row.learning !== undefined && !row.learning.finalRequested && row.ended === null);
       }
       return prepared;
     },
+    async runCompleted(host:HostSession,runId:string) {await requestCheckpoint(host,runId);},
     async sessionEnded(host: HostSession) {
       if (host.delegated) return;
       const key = sessionKey(host.scope,host.id);
       const prior = (await options.harness().snapshot(SessionsDoc,BACKGROUND_CONTEXT))?.sessions[key];
+      if (prior?.folded && options.domain.incrementalLearning) await requestCheckpoint(host,null);
       if (!prior) {
         const source = await options.domain.trajectory(host,null);if (source.kind === "absent") return;
         await options.harness().commit(async tx => {
@@ -142,9 +177,10 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
       const exists = await options.harness().commit(async tx => {
         const state = await tx.doc(SessionsDoc), row = state.sessions[key];
         if (!row) return false;
+        if (row.learning && !row.folded) row.learning.finalRequested = true;
         state.sessions[key] = endSession(row,(options.now ?? Date.now)()); return true;
       },BACKGROUND_CONTEXT);
-      if (exists) await enqueue(key,host);
+      if (exists) await enqueue(key,host,Boolean(prior?.folded && options.domain.incrementalLearning));
     },
     async transcriptChanged(host: HostSession,at = (options.now ?? Date.now)()) {
       const key = sessionKey(host.scope,host.id);

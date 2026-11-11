@@ -74,7 +74,7 @@ const disclosure = (label: string, body: string, open = false) => disclosureHtml
 const feedback = (view: View) => view.message ? `<p class="${view.error ? "settings-error" : "settings-help"}" role="${view.error ? "alert" : "status"}">${h(view.message)}</p>` : "";
 
 function modelOptions(catalogue: Catalogue, classifier: boolean, selected: ModelRef | null, none: string): Option[] {
-  const models = (classifier ? catalogue.getModelsOfType("classifier") : catalogue.getModels()).filter(model => catalogue.getProviderAuthStatus(model.provider).configured);
+  const models = (classifier ? catalogue.getModelsOfType("classifier") : catalogue.getModels()).filter(model => catalogue.configuredProviderIds.has(model.provider));
   const options: Option[] = [["", none], ...models.map((model): Option => [JSON.stringify({ provider: model.provider, id: model.id }), `${model.name || model.id} · ${model.provider}`])];
   const value = selected ? JSON.stringify(selected) : "";
   if (selected && !options.some(([option]) => option === value)) options.push([value, `${selected.id} · ${selected.provider} (not connected)`]);

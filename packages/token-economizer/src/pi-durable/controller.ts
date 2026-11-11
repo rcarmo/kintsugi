@@ -82,12 +82,13 @@ export function createTokenEconomizer(options:TokenEconomizerOptions) {
   }
   async function onLive(id:ConversationId,live:LiveState) {
     const host = await resolve(id);if (!host || host.delegated) return;
-    const key = sessionKey(host.scope,host.id), policy = policyFor(key);if (!observing(policy) || policy.loop === "off") return;
+    const key = sessionKey(host.scope,host.id), policy = policyFor(key);if (!observing(policy)) return;
     const current = await options.harness().snapshot(RunDoc,key,BACKGROUND_CONTEXT);
     if (current?.guard && !current.closed && (!live.run || runIdentity(live.run) !== current.guard.runId || live.run.afterRun)) await closeRun(host,!live.runFailure || runIdentity(live.runFailure) !== current.guard.runId);
+    if (!host.parent && (!live.run || live.run.afterRun) && current?.guard?.runId) await lifecycle.runCompleted(host,current.guard.runId);
     if (!live.run || live.run.afterRun || runIdentity(live.run) === null) return;
     await options.harness().commit(async tx => {
-      const run = await tx.doc(RunDoc,key,null);if (!observing(policyFor(key)) || policyFor(key).loop === "off") return;
+      const run = await tx.doc(RunDoc,key,null);if (!observing(policyFor(key))) return;
       if (run.guard?.runId !== runIdentity(live.run!)!) {run.guard = emptyGuard(runIdentity(live.run!)!);run.inputs = [...live.run!.inputs];run.closed = false;}
       for (const decision of run.decisions) if (decision.runId === runIdentity(live.run!) && decision.submissionId && live.run!.inputs.includes(decision.submissionId) && decision.status === "queued") decision.status = "consumed";
     },BACKGROUND_CONTEXT);

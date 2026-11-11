@@ -46,7 +46,7 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
   const hosts = new Map<ConversationId,HostSession>(), subagents = new Map<ConversationId,HostSession>(), excluded = new Set<ConversationId>(), modelFree = new Map<ConversationId,boolean>(), preparing = new Set<ConversationId>();let maintenance:ConversationId|undefined, stop:(() => void)|undefined, observer:(() => void)|undefined;
   let events = Promise.resolve();
   const chips = new Map<ConversationId,OptimizerChip>(), chipListeners = new Set<(id:ConversationId) => void>();
-  let chipRefresh:Promise<void>|null = null, chipAgain = false;
+  let chipRefresh:Promise<void>|null = null, chipAgain = false, detached = false;
   /** Reads only the session, repository and run records the chip needs, once per refresh pass. */
   async function summarize(host:HostSession,sessions:Record<string,LearningSession>,knowledge:Knowledge|undefined):Promise<OptimizerChip|null> {
     const policy = options.configuration.policy(options.workspaceId,actor(host));
@@ -58,11 +58,13 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
   }
   /** Recomputes attached Agents' chips after a short pause; overlapping requests coalesce into one more pass. */
   function refreshChips() {
+    if (detached) return Promise.resolve();
     if (chipRefresh) {chipAgain = true;return chipRefresh;}
     chipRefresh = (async () => {
       do {
         chipAgain = false;
         await new Promise(resolve => setTimeout(resolve,chipDelayMs));
+        if (detached) return;
         const sessions = (await options.harness().snapshot(SessionsDoc,context))?.sessions ?? {}, scope = [...hosts.values()][0]?.scope;
         const knowledge = scope ? await options.harness().snapshot(KnowledgeDoc,scopeKey(scope),context) : undefined;
         for (const [id,host] of [...hosts,...subagents]) {
@@ -118,11 +120,12 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
         owner.rendered = next;owner.owned = safe;
       },context);
     },
-    async trajectory(host,cutoff) {
+    incrementalLearning:true,
+    async trajectory(host,cutoff,after) {
       const record = (await options.harness().snapshot(NativeOptimizerSessions,context))?.sessions[host.id];if (!record) return {kind:"absent",reason:"No native logical session record"};
       const rootAgent = actor(host), agents = (await options.harness().snapshot(WorkspaceAgents,context))?.agents ?? [];
       const descendants = agents.filter(row => row.parentId && row.rootId === rootAgent).flatMap(row => [...new Set([row.durableId,...row.branches ?? []])]);
-      return nativeOptimizerTrajectory(options.harness(),host,record.begin,record.end,cutoff,descendants);
+      return nativeOptimizerTrajectory(options.harness(),host,record.begin,record.end,cutoff,descendants,after);
     },
   };
   const transport = createSdkModelTransport(options.models);
@@ -144,7 +147,7 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
         if (event === "fork" && !ancestors.length) throw new Error("Fork classification group has no native source boundary");
         sessions.sessions[epoch.id] = {host,begin:event === "fork" ? Math.min(...ancestors.map(row => row.begin)) : latest ?? 0,end:null};
       }
-      const row = sessions.sessions[epoch.id];if (!row) throw new Error("Missing native optimizer epoch");return detach(row.host);
+      const row = sessions.sessions[epoch.id];if (!row) throw new Error("Missing native optimizer epoch");row.end = null;return detach(row.host);
     },context);
     hosts.set(conversation.id,host);
     const assistant = view ? view.entries.findLast(entry => AssistantEntry.is(entry)) : await lastAssistantEntry(conversation);modelFree.set(conversation.id,assistant?.model?.some(message => message.role === "assistant" && message.provider === "kintsugi" && message.model === "codemode-template") ?? false);
@@ -165,6 +168,7 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
   }
   return {optimizer,domain,start,end,
     async attach() {
+      detached = false;
       maintenance = (await options.harness().root(context)).id;await optimizer.attach();
       const catalogue = await options.harness().snapshot(WorkspaceAgents,context), gates = await options.harness().snapshot(WorkspaceAdmission,context);
       if (!gates?.deleted) for (const record of catalogue?.agents ?? []) if (!record.readOnly && !record.parentId && !record.oneShotCallId && !gates?.closed.includes(record.durableId)) await start((await options.harness().conversation(record.durableId,context))!,record,"resume");
@@ -212,7 +216,7 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
       picks.set(id,{at:Date.now(),ms:Date.now()-began,hidden:outcome && "mask" in outcome ? outcome.mask : null,note:outcome === null ? "Took too long, so the prompt went ahead with the current tools." : "error" in outcome ? outcome.error : null});
     },
     host(id:ConversationId) {const host = hosts.get(id);if (!host) throw new Error("This Agent has no optimizer logical session");return host;},
-    async detach() {await events;stop?.();observer?.();await optimizer.close();if (active.get(options.workspaceId) === this) active.delete(options.workspaceId);},
+    async detach() {detached = true;await events;stop?.();observer?.();await optimizer.close();await chipRefresh;if (active.get(options.workspaceId) === this) active.delete(options.workspaceId);},
     async close() {await events;for (const id of [...hosts.keys()]) await end(id);await this.detach();},
   };
 }

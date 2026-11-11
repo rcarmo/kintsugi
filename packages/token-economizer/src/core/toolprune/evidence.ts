@@ -10,9 +10,9 @@ export function enoughEvidence(sessions: number, prompts: number, highRisk: bool
   const k = highRisk ? 3 : 1;
   return sessions >= policy.evidenceMinSessions && prompts >= policy.evidencePrompts * k || sessions >= policy.evidenceSessions * k;
 }
-/** One live fold. Caller deduplicates sessions, and never calls it for pruning Off. */
-export function foldEvidence(prior: ToolEvidence, usedTools: string[], catalogue: ToolInfo[], prompts: number | null, policy: Policy, now: number,unmasked = true): ToolEvidence {
-  if (prompts === 0 || !observing(policy) || policy.pruning === "off") return structuredClone(prior);
+/** One evidence update. Live checkpoints count their logical session only once; subsequent prompts add no session/streak vote. */
+export function foldEvidence(prior: ToolEvidence, usedTools: string[], catalogue: ToolInfo[], prompts: number | null, policy: Policy, now: number,unmasked = true,countSession = true): ToolEvidence {
+  if (prompts === 0 && countSession || !observing(policy) || policy.pruning === "off") return structuredClone(prior);
   const state = structuredClone(prior);
   state.used = [...new Set([...state.used, ...usedTools])].sort(compareCodePoints);
   const protectedNames = new Set(catalogue.filter(tool => tool.protected).map(tool => tool.name));
@@ -28,10 +28,10 @@ export function foldEvidence(prior: ToolEvidence, usedTools: string[], catalogue
   state.catalogue = state.catalogue.map(tool => ({...tool,protected:catalogue.find(current => current.name === tool.name)?.protected ?? tool.protected}));
   for (const tool of state.catalogue) {
     const used = usedTools.includes(tool.name);
-    state.streaks[tool.name] = used ? 0 : (state.streaks[tool.name] ?? 0) + 1;
+    state.streaks[tool.name] = used ? 0 : (state.streaks[tool.name] ?? 0) + (countSession ? 1 : 0);
     state.promptStreaks[tool.name] = used ? 0 : (state.promptStreaks[tool.name] ?? 0) + (prompts ?? 1);
   }
-  state.sessions++;
+  if (countSession) state.sessions++;
   state.prompts += prompts ?? 0;
   state.proposal = state.catalogue.filter(tool => !tool.protected && !state.used.includes(tool.name) && !state.kept.includes(tool.name) && !state.applied.includes(tool.name) && enoughEvidence(state.streaks[tool.name] ?? 0, state.promptStreaks[tool.name] ?? 0, tool.highRisk, policy)).map(t => t.name).sort(compareCodePoints);
   state.pending = state.proposal.length && policy.pruning === "auto" && policy.mode === "active" ? { items: [...state.proposal], since: prior.pending?.since ?? now } : null;

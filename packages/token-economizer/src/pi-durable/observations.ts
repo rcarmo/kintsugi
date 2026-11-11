@@ -130,6 +130,10 @@ export function createCommittedObservations(options: {harness:() => Harness;doma
         tracked.add(slot.taskId);
         queue(slot.taskId,{name:slot.name,structured:source.result.structuredOutput ?? null,details:source.result.details ?? null,output:"",isError:source.result.isError,diagnostics:source.result.diagnostics.map(d => ({code:d.code ?? "",message:d.message}))},false);
       }
+      // A crash can occur after the run's idle commit but before its observer queued learning.
+      // Reconcile the saved live boundary after receipt recovery; run identity deduplicates it.
+      await this.drained();
+      if (live) await options.onLive?.(host.conversationId,live);
     },
     async drained() {await new Promise<void>(resolve => queueMicrotask(resolve));await tail;},
   };

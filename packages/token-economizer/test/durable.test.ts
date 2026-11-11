@@ -14,7 +14,7 @@ import { createInferenceQueue } from "../src/pi-durable/sidecall.ts";
 import { createSessionLifecycle } from "../src/pi-durable/lifecycle.ts";
 import { decodeArguments, decodeResult } from "../src/pi-durable/decode.ts";
 import type { HostDomain, HostSession } from "../src/pi-durable/domain.ts";
-import type { InferenceResult, SideCall } from "../src/core/types.ts";
+import { scopeKey, type InferenceResult, type SideCall } from "../src/core/types.ts";
 const closes: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of closes.splice(0).reverse()) await close(); });
 const reply: InferenceResult = {text:"result",model:{provider:"fixture",id:"small"},usage:{input:4,output:2,cacheRead:0,cacheWrite:{default:0},reasoning:null},cost:.01,durationMs:1,authUnavailable:false,error:null};
@@ -39,10 +39,10 @@ async function setup(kind: "memory" | "sqlite" | "jsonl", sideCall: SideCall = a
   const host = (id: string): HostSession => ({id,conversationId:root.id,scope:{host:"portable-fixture",repository:"repo",environment:"v1"},repositoryRoot:"/repo",environmentRevision:"v1",classificationGroup:"group",delegated:false});
   const start = {event:"new" as const,visibleHistory:false,carriedSections:{},carriedIds:[]};
   async function settleFolds() {
-    const tasks = (await harness.inspect(context)).tasks.filter(row => row.record.kind === "token-economizer.fold");
+    const tasks = (await harness.inspect(context)).tasks.filter(row => ["token-economizer.fold","token-economizer.checkpoint"].includes(row.record.kind));
     for (const task of tasks) await harness.waitForTask(task.record.id,context);
   }
-  return {get harness() {return harness;},queue,policy,root,host,start,lifecycle,folds,trajectories,settleFolds,
+  return {get harness() {return harness;},domain,queue,policy,root,host,start,lifecycle,folds,trajectories,settleFolds,
     async reopen() {await harness.close(context);harness = await Harness.open(await openStorage(),{registry,models:createModels()},context);}};
 }
 for (const kind of ["memory","sqlite","jsonl"] as const) test(`portable ${kind}: automatic end, deferred recovery, once-only fold and stable render`, async () => {
@@ -97,4 +97,28 @@ test("restart during provider work records uncertain billing and never repeats a
   expect(state.budget.reserved.uncertain).toBeDefined(); expect(state.budget.ledger[0].cost).toBeNull();
   await f.queue.reconcile("uncertain",reply);
   expect((await f.harness.snapshot(JobsDoc,context))!.budget.ledger).toHaveLength(1);
+},15_000);
+
+for (const kind of ["memory","sqlite","jsonl"] as const) test(`portable ${kind}: live checkpoint replay is deduplicated and its cursor survives reopen`,async () => {
+  const f = await setup(kind);f.domain.incrementalLearning = true;
+  const cursors:(string|null|undefined)[] = [];
+  f.domain.trajectory = async (host,_cutoff,after) => {cursors.push(after);return {kind:"ready",cutoff:`end-${host.id}-${cursors.length}`,observations:[],prompts:1,transcriptActivity:0};};
+  await f.lifecycle.sessionStarted(f.host("live"),f.start);
+  await f.lifecycle.runCompleted(f.host("live"),"run-1");await f.settleFolds();
+  let row = (await f.harness.snapshot(SessionsDoc,context))!.sessions[sessionKey(f.host("live").scope,"live")];
+  expect(row.folded).toBe(false);expect(row.ended).toBeNull();expect(row.learning?.processed).toBe(1);
+  const cutoff = row.learning!.cutoff;
+  await f.lifecycle.runCompleted(f.host("live"),"run-1");await f.settleFolds();expect(f.folds).toHaveLength(1);
+  if (kind !== "memory") await f.reopen();
+  await f.lifecycle.sessionStarted(f.host("live"),{...f.start,event:"resume"});
+  await f.lifecycle.runCompleted(f.host("live"),"run-2");await f.settleFolds();
+  row = (await f.harness.snapshot(SessionsDoc,context))!.sessions[sessionKey(f.host("live").scope,"live")];
+  expect(row.learning?.processed).toBe(2);expect(cursors[1]).toBe(cutoff);expect(row.section).toBe("");
+  await f.lifecycle.sessionEnded(f.host("live"));await f.settleFolds();
+  expect((await f.harness.snapshot(KnowledgeDoc,scopeKey(f.host("live").scope),context))!.foldOrder).toHaveLength(1);
+  await f.harness.commit(async tx => {delete (await tx.doc(SessionsDoc)).sessions[sessionKey(f.host("live").scope,"live")].learning;},context);
+  await f.lifecycle.sessionStarted(f.host("live"),{...f.start,event:"resume"});
+  await f.lifecycle.runCompleted(f.host("live"),"legacy-resume");await f.settleFolds();
+  expect((await f.harness.snapshot(SessionsDoc,context))!.sessions[sessionKey(f.host("live").scope,"live")].learning?.toolCounted).toBe(true);
+  expect((await f.harness.snapshot(KnowledgeDoc,scopeKey(f.host("live").scope),context))!.foldOrder).toHaveLength(1);
 },15_000);

@@ -7,24 +7,40 @@ import { redact } from "../observations.ts";
 import { compareCodePoints, sliceCodePoints } from "../ordering.ts";
 import { compilePattern, detectorVerdict, DetectorSchema, extract, ExtractorSchema, featurize, reparseCommands, type ExtractorSpec, type FactDigest } from "./detectors.ts";
 import { checkCommand } from "./digest.ts";
-import { createLifecycle, injectable, updateLifecycle, type Lifecycle } from "./lifecycle.ts";
+import { createLifecycle, injectable, updateLifecycle, creditLearning, type LearningCredits, type Lifecycle } from "./lifecycle.ts";
 import { proposerSystem } from "./proposer-prompt.ts";
 export const FactSchema = Type.Object({id:Type.String({minLength:1,maxLength:160}),claim:Type.Optional(Type.String({maxLength:2000})),injection:Type.Optional(Type.String({maxLength:2000})),high_stakes:Type.Optional(Type.Boolean()),detector:DetectorSchema,cite:Type.Optional(Type.Array(Type.String())),rev:Type.Optional(Type.Integer({minimum:1}))},{additionalProperties:false});
 export type FactSpec = Static<typeof FactSchema>;
 export type LearnedFact = {spec:FactSpec;life:Lifecycle};
 export type Distiller = {now:number;last_propose:number;facts:LearnedFact[];extractors:ExtractorSpec[];window:FactDigest[];raw_window:{command:string;output:string}[][]};
 export function emptyDistiller(): Distiller {return {now:0,last_propose:-1,facts:[],extractors:[],window:[],raw_window:[]};}
-export function observeFact(fact: LearnedFact, now: number, digest: FactDigest): LearnedFact {
-  const verdict = detectorVerdict(fact.spec.detector,digest);
+export function observeFact(fact: LearnedFact, now: number, digest: FactDigest, credits?: LearningCredits): LearnedFact {
+  const detected = detectorVerdict(fact.spec.detector,digest);
+  const verdict = creditLearning(credits,`fact:${fact.spec.id}`,detected.verdict,detected.fired,detected.exercised);
   return {...fact,life:updateLifecycle(fact.life,now,verdict.verdict,verdict.fired,verdict.exercised,digest.edited_files)};
 }
 export type ProposerTick = {state:Distiller;prompt:string | null};
-export function updateDistiller(prior: Distiller, digest: FactDigest | null, commands: {command:string;output:string}[], cadence: number, runnerAvailable: boolean, repository: string, external: string[] = []): ProposerTick {
+export function updateDistiller(prior: Distiller, digest: FactDigest | null, commands: {command:string;output:string}[], cadence: number, runnerAvailable: boolean, repository: string, external: string[] = [], credits?: LearningCredits): ProposerTick {
   const state = structuredClone(prior);
   if (!digest) {state.now++;return {state,prompt:null};}
+  if (credits) {
+    const iid = digest.iid, previous = state.window.findIndex(row => row.iid === iid);
+    if (previous >= 0) {
+      const earlier = state.window[previous];
+      digest = {...digest,n_cmds:earlier.n_cmds+digest.n_cmds,
+        edited_files:[...new Set([...earlier.edited_files,...digest.edited_files])].slice(-256),
+        cmd_templates:[...new Set([...earlier.cmd_templates,...digest.cmd_templates])].slice(-12),
+        check_commands:[...new Set([...earlier.check_commands,...digest.check_commands])].slice(-6),
+        failed_commands:[...new Map([...earlier.failed_commands,...digest.failed_commands].map(row => [JSON.stringify(row),row])).values()].slice(-6),
+        missing_command:earlier.missing_command || digest.missing_command,missing_dependency:earlier.missing_dependency || digest.missing_dependency,bad_usage:earlier.bad_usage || digest.bad_usage,_ran_tests:earlier._ran_tests || digest._ran_tests,
+        _cmd_blob:[earlier._cmd_blob,digest._cmd_blob].join("\n").slice(-16_384),_out_blob:[earlier._out_blob,digest._out_blob].join("\n").slice(-16_384)};
+      commands = [...state.raw_window[previous],...commands].slice(-64);
+      state.window.splice(previous,1);state.raw_window.splice(previous,1);
+    }
+  }
   digest = featurize(digest,state.extractors,commands);
   state.raw_window = [...state.raw_window,commands].slice(-8);
-  state.facts = state.facts.map(fact => observeFact(fact,state.now,digest));
+  state.facts = state.facts.map(fact => observeFact(fact,state.now,digest,credits));
   state.window = [...state.window,digest].slice(-8); state.now++;
   if (!runnerAvailable || !state.window.length || state.now-state.last_propose < cadence) return {state,prompt:null};
   const covered = state.raw_window.map(calls => calls.length ? calls.filter(call => checkCommand.test(call.command) || state.extractors.some(spec => Boolean(extract(spec,[call])))).length/calls.length : 1);
@@ -63,7 +79,7 @@ export function admitFact(state: Distiller, spec: FactSpec): Admission {
     old.spec.rev = (old.spec.rev ?? 1)+1;
     return {accepted:true,reason:"revised-contradict"};
   }
-  const hits = (spec.cite ?? []).filter(iid => {const digest = state.window.find(row => row.iid === iid);return digest && detectorVerdict(spec.detector,digest).verdict === "confirm";}).length;
+  const hits = [...new Set(spec.cite ?? [])].filter(iid => {const digest = state.window.find(row => row.iid === iid);return digest && detectorVerdict(spec.detector,digest).verdict === "confirm";}).length;
   if (hits < 2) return {accepted:false,reason:`grounding-fail(${hits}/2)`};
   let fact: LearnedFact = {spec:{...structuredClone(spec),rev:spec.rev ?? 1},life:createLifecycle(spec.id,spec.high_stakes ?? false)};
   state.window.forEach((digest,index) => {fact = observeFact(fact,state.now-state.window.length+index,digest);});

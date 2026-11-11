@@ -211,9 +211,16 @@ export function claudeCodeHeaders(model: Model<Api>): ProviderHeaders | undefine
 }
 
 /** Settings catalogues must not refresh providers, resolve OAuth or start inference. */
-export async function readPiModelCatalogue():Promise<ModelRuntime> {
+export async function readPiModelCatalogue(): Promise<ModelRuntime & { configuredProviderIds: ReadonlySet<string> }> {
   await preparePiModelsJson();
-  return identifyAsKintsugi(await ModelRuntime.create({authPath:piAuthJsonPath(),modelsPath:piModelsJsonPath(),allowModelNetwork:false,refreshOnCreate:false}));
+  const runtime = identifyAsKintsugi(await ModelRuntime.create({authPath:piAuthJsonPath(),modelsPath:piModelsJsonPath(),allowModelNetwork:false,refreshOnCreate:false}));
+  // Without refresh, the SDK's auth-status snapshot omits stored credentials.
+  // Listing metadata is local and does not resolve or refresh OAuth tokens.
+  const configuredProviderIds = new Set((await runtime.listCredentials()).map(entry => entry.providerId));
+  for (const provider of runtime.getProviders()) {
+    if (runtime.getProviderAuthStatus(provider.id).configured) configuredProviderIds.add(provider.id);
+  }
+  return Object.assign(runtime, { configuredProviderIds });
 }
 export function createPiModelRuntime(): Promise<ModelRuntime> {
   return modelRuntime ??= (async () => {

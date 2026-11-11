@@ -13,6 +13,21 @@ export type Lifecycle = Static<typeof LifecycleSchema>;
 export type FactState = Lifecycle["state"];
 export const EnvironmentLifecycleSchema = Type.Object({ life: LifecycleSchema, contradictionStreak: Type.Number(), family: Type.String() });
 export type Verdict = "confirm" | "contradict" | null;
+/** Native incremental learning: each logical session supplies at most one vote/exercise per fact. */
+export type LearningCredits = { confirms: string[]; contradicts: string[]; exercises: string[] };
+export function creditLearning(credits: LearningCredits | undefined, key: string, verdict: Verdict, fired: boolean, exercised: boolean){
+  if (!credits) return { verdict, fired, exercised };
+  if (verdict) {
+    const votes = verdict === "confirm" ? credits.confirms : credits.contradicts;
+    if (votes.includes(key)) verdict = null;
+    else votes.push(key);
+  }
+  if (exercised) {
+    if (credits.exercises.includes(key)) { exercised = false; fired = false; }
+    else credits.exercises.push(key);
+  }
+  return { verdict, fired, exercised };
+}
 export function createLifecycle(key: string, high: boolean, drift = true): Lifecycle {
   return { key, high, drift, state: "CANDIDATE", confirms: [], contradicts: [], fire_num: 0, fire_den: 0, promoted_at: null, retired_at: null };
 }

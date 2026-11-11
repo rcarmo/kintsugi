@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getCustomModelsJson, getEnabledModels, loginPiOAuthProvider, readGitHubCopilotUsageToken, readGitHubCopilotUsageCredentials, setCustomModelsJson, setEnabledModels, validateModelProviderApiKey } from "../../src/server/pi-config-models.ts";
+import { readPiModelCatalogue, getCustomModelsJson, getEnabledModels, loginPiOAuthProvider, readGitHubCopilotUsageToken, readGitHubCopilotUsageCredentials, setCustomModelsJson, setEnabledModels, validateModelProviderApiKey } from "../../src/server/pi-config-models.ts";
 import { updateJsonSettings } from "@kintsugi/core/json-settings";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 let dataDir: string;
@@ -27,6 +27,35 @@ test("Copilot usage reads the stored GitHub token, never the inference or reposi
   expect(await readFile(path, "utf8")).toBe(before);
   await updateJsonSettings(path, stored => { stored["github-copilot"] = { type: "api_key", key: "api-token" }; });
   expect(await readGitHubCopilotUsageToken()).toBeUndefined();
+});
+
+test("offline settings catalogue includes stored OAuth and API-key providers without network or token refresh", async () => {
+  const path = join(dataDir, "pi-config", "auth.json");
+  await updateJsonSettings(path, stored => {
+    for (const provider of ["github-copilot", "openai-codex", "anthropic"]) {
+      stored[provider] = { type: "oauth", access: "expired-test-access", refresh: "test-refresh", expires: 0 };
+    }
+    stored.openai = { type: "api_key", key: "test-api-key" };
+  });
+  const before = await readFile(path, "utf8");
+  const realFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = Object.assign(async () => {
+    requests++;
+    throw new Error("Settings catalogue must not use the network");
+  }, { preconnect: realFetch.preconnect });
+  try {
+    const catalogue = await readPiModelCatalogue();
+    for (const provider of ["github-copilot", "openai-codex", "anthropic", "openai"]) {
+      expect(catalogue.configuredProviderIds.has(provider)).toBe(true);
+      expect(catalogue.getModels().filter(model => catalogue.configuredProviderIds.has(model.provider)).some(model => model.provider === provider)).toBe(true);
+    }
+    expect(catalogue.configuredProviderIds.has("not-connected")).toBe(false);
+    expect(requests).toBe(0);
+    expect(await readFile(path, "utf8")).toBe(before);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });
 
 describe("API key validation", () => {

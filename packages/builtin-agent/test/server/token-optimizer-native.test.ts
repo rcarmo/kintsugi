@@ -30,19 +30,27 @@ import { ids } from "@kintsugi/agent/server/render-context";
 import { TokenOptimizerConfiguration, tokenOptimizerConfiguration } from "../../src/server/token-optimizer-config.ts";
 const cleanups:(() => Promise<void>)[] = [];
 afterEach(async () => {for (const close of cleanups.splice(0).reverse()) await close();});
+async function settleLearning(harness:Harness) {
+  const waited = new Set<number>();
+  for (;;) {
+    const pending = (await harness.inspect(context)).tasks.filter(row => ["token-economizer.fold","token-economizer.checkpoint"].includes(row.record.kind) && !waited.has(row.record.id));
+    if (!pending.length) return;
+    for (const row of pending) {await harness.waitForTask(row.record.id,context);waited.add(row.record.id);}
+  }
+}
 async function setup(kind:"memory"|"sqlite"|"jsonl" = "memory",overrideConfig?:TokenOptimizerConfiguration) {
   const path = await mkdtemp(join(tmpdir(),"native-optimizer-"));cleanups.push(() => rm(path,{recursive:true,force:true}));
   const configuration = overrideConfig ?? new TokenOptimizerConfiguration(path);await configuration.load();
   const models = createModels(), faux = fauxProvider({tokensPerSecond:100_000});models.setProvider(faux.provider);
-  const registry = createRegistry();let harness:Harness, failing = false, gate:Promise<void>|null = null;const entered = Promise.withResolvers<void>();
+  const registry = createRegistry();let harness:Harness, failing = false, failureOutput = "AssertionError: repeated test failure", gate:Promise<void>|null = null;const entered = Promise.withResolvers<void>();
   registry.install(createWorkspaceCodemodeExtension("fixture",new CodemodeSandbox(),async () => ({text:""})));
-  registry.install(defineExtension({name:"fixture-tools",tools:[defineTool({name:"bash",description:"Run",parameters:Type.Object({command:Type.String()}),structuredOutputSchema:Type.Object({output:Type.String(),exitCode:Type.Integer(),aborted:Type.Boolean(),timedOut:Type.Boolean(),truncated:Type.Boolean()}),replay:"safe",async execute() {if (gate) {entered.resolve();await gate;gate = null;}return {structuredOutput:{output:failing ? "AssertionError: repeated test failure" : "passed",exitCode:failing ? 1 : 0,aborted:false,timedOut:false,truncated:false},details:{exitCode:failing ? 1 : 0,aborted:false,timedOut:false}};}}),defineTool({name:"rare",description:"Rare helper",parameters:Type.Object({}),execute:async () => ({output:[{type:"text",text:"done"}]})}),defineTool({name:"plan",description:"Plan",parameters:Type.Object({}),execute:async () => ({output:[{type:"text",text:"done"}]})})]}));
+  registry.install(defineExtension({name:"fixture-tools",tools:[defineTool({name:"bash",description:"Run",parameters:Type.Object({command:Type.String()}),structuredOutputSchema:Type.Object({output:Type.String(),exitCode:Type.Integer(),aborted:Type.Boolean(),timedOut:Type.Boolean(),truncated:Type.Boolean()}),replay:"safe",async execute() {if (gate) {entered.resolve();await gate;gate = null;}return {structuredOutput:{output:failing ? failureOutput : "passed",exitCode:failing ? 1 : 0,aborted:false,timedOut:false,truncated:false},details:{exitCode:failing ? 1 : 0,aborted:false,timedOut:false}};}}),defineTool({name:"rare",description:"Rare helper",parameters:Type.Object({}),execute:async () => ({output:[{type:"text",text:"done"}]})}),defineTool({name:"plan",description:"Plan",parameters:Type.Object({}),execute:async () => ({output:[{type:"text",text:"done"}]})})]}));
   const native = createNativeTokenOptimizer({workspaceId:"fixture",models,registry,harness:() => harness,configuration});registry.install(native.optimizer.extension);
   harness = await Harness.open(kind === "memory" ? new MemoryStorage() : kind === "sqlite" ? await openNodeSqliteStorage(join(path,"state.sqlite")) : await openNodeJsonlStorage(join(path,"journal"),context),{models,registry},context);cleanups.push(async () => {await native.close();await harness.close(context);});
   const root = await harness.commit(tx => tx.createConversation({ownership:{kind:"ownerless"}}),context), conversation = (await harness.conversation(root.id,context))!;
   await conversation.configure({model:{provider:"faux",modelId:"faux-1"},instructions:"Main instructions"},context);
   await native.attach();const host = (await native.start(conversation,{agentId:"agent"}))!;
-  return {native,configuration,harness,conversation,host,faux,models,fail:() => {failing = true;},hold:() => {const release = Promise.withResolvers<void>();gate = release.promise;cleanups.push(async () => release.resolve());return {entered:entered.promise,release:() => release.resolve()};}};
+  return {native,configuration,harness,conversation,host,faux,models,fail:(output = "AssertionError: repeated test failure") => {failing = true;failureOutput = output;},hold:() => {const release = Promise.withResolvers<void>();gate = release.promise;cleanups.push(async () => release.resolve());return {entered:entered.promise,release:() => release.resolve()};}};
 }
 for (const kind of ["memory","sqlite","jsonl"] as const) test(`native ${kind}: default Off, active receipts, once-only folding, protection and sticky restore`,async () => {
   const f = await setup(kind);expect((await f.conversation.agent(context)).callable.some(tool => tool.name === "rare")).toBe(true);
@@ -54,7 +62,7 @@ for (const kind of ["memory","sqlite","jsonl"] as const) test(`native ${kind}: d
   if (trajectory.kind !== "ready") throw new Error("Expected native trajectory");
   expect(trajectory.prompts).toBe(1);expect(trajectory.observations).toHaveLength(1);expect(trajectory.observations[0]).toMatchObject({tool:"bash",nested:true,exitCode:0,outcome:"success",coverage:"complete"});
   await f.native.end(f.conversation.id);
-  for (const task of (await f.harness.inspect(context)).tasks.filter(task => task.record.kind === "token-economizer.fold")) await f.harness.waitForTask(task.record.id,context);
+  await settleLearning(f.harness);
   expect((await f.native.optimizer.status(f.host)).session?.folded).toBe(true);
   expect((await f.native.optimizer.apply(f.host,["plan"])).added).toEqual([]);
   expect((await f.native.optimizer.apply(f.host,["rare"])).added).toEqual(["rare"]);
@@ -90,7 +98,7 @@ test("native host executes all four isolated generative paths through its SDK tr
   const f = await setup(), seen = new Set<string>();let mainCalls = 0;
   f.faux.setResponses(Array.from({length:20},() => (request) => {
     if (request.messages.some(message => message.role === "system" && JSON.stringify(message).includes("Main instructions"))) {
-      mainCalls++;return mainCalls === 1 ? fauxAssistantMessage([fauxToolCall("codemode",{code:"for(let i=0;i<45;i++) await tools.bash({command:'bun test'});"})],{stopReason:"toolUse"}) : fauxAssistantMessage("Done");
+      mainCalls++;return mainCalls === 1 || mainCalls === 3 ? fauxAssistantMessage([fauxToolCall("codemode",{code:mainCalls === 1 ? "for(let i=0;i<45;i++) await tools.bash({command:'bun test'});" : "await tools.bash({command:'bun test'});"})],{stopReason:"toolUse"}) : fauxAssistantMessage("Done");
     }
     expect(JSON.stringify(request)).not.toContain("Main instructions");const prompt = contentText(request.messages[0]?.content ?? "");
     if (prompt.includes("Return the JSON verdict:")) {seen.add("loop-judge");return fauxAssistantMessage(JSON.stringify({stuck:true,confidence:1,reason:"Repeated failure"}));}
@@ -102,11 +110,13 @@ test("native host executes all four isolated generative paths through its SDK tr
   const config = f.configuration.snapshot();Object.assign(config.policy,{enabled:true,microSkills:"both",loop:"judge",pruning:"propose",toolJudge:"generative",generativeModel:{provider:"faux",id:"faux-1"},thresholds:{min_turns:8,gate_min_turns:8,error_outputs:3}});await f.configuration.configure(config);const active = f.configuration.snapshot();active.policy.mode = "active";await f.configuration.configure(active);
   await f.harness.commit(async tx => {(await tx.doc(KnowledgeDoc,scopeKey(f.host.scope),f.host.scope)).envelope.resolved_turns = [20,20,20,20,20];},context);
   await f.native.prepare(f.host,"Run tests without the rare helper","task-native");f.fail();
-  const outcome = await (await f.conversation.submit({type:"input",content:"Run tests",requestId:"all-paths"},context)).wait(context);expect(outcome.status).toBe("done");await f.native.end(f.conversation.id);
-  for (const row of (await f.harness.inspect(context)).tasks.filter(row => row.record.kind === "token-economizer.fold")) await f.harness.waitForTask(row.record.id,context);
+  const outcome = await (await f.conversation.submit({type:"input",content:"Run tests",requestId:"all-paths"},context)).wait(context);expect(outcome.status).toBe("done");
+  for (const row of (await f.harness.inspect(context)).tasks.filter(row => row.record.kind === "token-economizer.guard-judge")) await f.harness.waitForTask(row.record.id,context);
+  await f.native.end(f.conversation.id);
+  await settleLearning(f.harness);
   await f.conversation.reset(undefined,context);await f.native.reset(f.conversation,{agentId:"agent"});
   await (await f.conversation.submit({type:"input",content:"Second session",requestId:"second"},context)).wait(context);await f.native.end(f.conversation.id);
-  for (const row of (await f.harness.inspect(context)).tasks.filter(row => row.record.kind === "token-economizer.fold")) await f.harness.waitForTask(row.record.id,context);
+  await settleLearning(f.harness);
   expect([...seen].sort()).toEqual(["loop-judge","proposer","tool-judge","writer"]);
   const ledger = (await f.harness.snapshot(JobsDoc,context))!.budget.ledger;expect(f.faux.state.callCount-mainCalls).toBe(ledger.length);expect(ledger.every(row => row.model.provider === "faux" && row.usage !== null)).toBe(true);
 },30_000);
@@ -124,7 +134,7 @@ test("native JSONL reopen preserves epochs and pending end folds; raw storage cl
   let owner = await open();let root = await owner.workspace.agent({agentId:"retained",label:"Root",title:"Reopen"},{model:{provider:"faux",modelId:"faux-1"}});
   const original = (await owner.native.start(root,{agentId:"retained"}))!;faux.setResponses([fauxAssistantMessage("Done")]);await (await root.submit({type:"input",content:"First",requestId:"one"},context)).wait(context);
   await owner.close(true);owner = await open();root = await owner.workspace.agent({agentId:"retained",label:"Root",title:"Reopen"});expect(owner.native.host(root.id).id).toBe(original.id);
-  for (const row of (await owner.workspace.harness.inspect(context)).tasks.filter(row => row.record.kind === "token-economizer.fold")) await owner.workspace.harness.waitForTask(row.record.id,context);
+  await settleLearning(owner.workspace.harness);
   expect((await owner.native.optimizer.status(original)).session?.folded).toBe(true);expect((await owner.native.optimizer.status(original)).knowledge?.foldOrder).toHaveLength(1);
   const second = await owner.workspace.agent({agentId:"crash",label:"Other",title:"Raw close"},{model:{provider:"faux",modelId:"faux-1"}}), pending = (await owner.native.start(second,{agentId:"crash"}))!;
   faux.setResponses([fauxAssistantMessage("Done")]);await (await second.submit({type:"input",content:"Unended",requestId:"two"},context)).wait(context);await owner.close(false);
@@ -152,7 +162,7 @@ test("native fork/rewind retains the visible frozen fact snapshot and IDs; real 
   f.native.domain.trajectory = async (host,cutoff) => {if (host.id === source.id) {entered.resolve();await release.promise;}return trajectory(host,cutoff);};
   await f.native.end(root.id);await entered.promise;await root.reset(undefined,context);const fresh = (await f.native.reset(root,{agentId:"timeline"}))!;
   const frozen = (await f.native.optimizer.status(fresh)).session!.section;expect(fresh.id).not.toBe(source.id);expect(frozen).toContain("Newer fact");
-  release.resolve();for (const row of (await f.harness.inspect(context)).tasks.filter(row => row.record.kind === "token-economizer.fold")) await f.harness.waitForTask(row.record.id,context);
+  release.resolve();await settleLearning(f.harness);
   expect((await f.native.optimizer.status(source)).session?.folded).toBe(true);expect((await f.native.optimizer.status(fresh)).session?.section).toBe(frozen);
 },20_000);
 test("Settings backend routes validate policies and native actions without starting an Agent or provider",async () => {
@@ -281,7 +291,7 @@ test("subagents see the root's facts and their tool use protects tools from bein
   expect(seen[0]).toContain("Root fact for everyone.");
   expect((await (await f.conversation.submit({type:"input",content:"Summarise",requestId:"root"},context)).wait(context)).status).toBe("done");
   await f.native.end(f.conversation.id);
-  for (const row of (await f.harness.inspect(context)).tasks.filter(row => row.record.kind === "token-economizer.fold")) await f.harness.waitForTask(row.record.id,context);
+  await settleLearning(f.harness);
   const tools = (await f.native.optimizer.status(f.host)).knowledge!.tools;
   expect(tools.used).toContain("rare");expect(tools.proposal).not.toContain("rare");
   expect((await f.native.optimizer.apply(f.host,["rare"])).added).toEqual([]);
@@ -361,3 +371,65 @@ test("the footer chip follows mode, facts, hidden tools and suggestions, and ope
   const off = service.snapshot();off.policy.enabled = false;await service.configure(off);
   await settle();expect(f.native.chip(f.conversation.id)).toBeUndefined();
 },30_000);
+
+for (const kind of ["memory","sqlite","jsonl"] as const) test(`native ${kind}: learns between runs with loop guard off, without closing, re-counting evidence or changing its prefix`,async () => {
+  const f = await setup(kind), config = f.configuration.snapshot();
+  Object.assign(config.policy,{enabled:true,microSkills:"envfacts",loop:"off",pruning:"propose"});
+  await f.configuration.configure(config);const active = f.configuration.snapshot();active.policy.mode = "active";await f.configuration.configure(active);
+  const original = (await f.native.optimizer.status(f.host)).session!.section;
+  f.fail("pytest: command not found");
+  for (let i = 0;i < 4;i++) {
+    f.faux.setResponses([fauxAssistantMessage([fauxToolCall("codemode",{code:"await tools.bash({command:'pytest'});"})],{stopReason:"toolUse"}),fauxAssistantMessage("Done")]);
+    await (await f.conversation.submit({type:"input",content:"Check tests",requestId:`learn-${i}`},context)).wait(context);
+    for (let wait = 0;wait < 200 && ((await f.native.optimizer.status(f.host)).session!.learning?.processed ?? 0) < i+1;wait++) {await settleLearning(f.harness);await Bun.sleep(5);}
+    expect((await f.native.optimizer.status(f.host)).session!.learning?.processed).toBe(i+1);
+    const status = await f.native.optimizer.status(f.host);
+    expect(status.session!.ended).toBeNull();expect(status.session!.folded).toBe(false);
+    expect(status.session!.section).toBe(original);
+    expect(status.knowledge!.tools.sessions).toBe(1);
+    expect(status.knowledge!.environment.facts.find(fact => fact.id === "absent_tool:pytest")!.life.confirms).toHaveLength(1);
+    expect(status.knowledge!.environment.facts.find(fact => fact.id === "absent_tool:pytest")!.life.fire_den).toBe(1);
+  }
+  expect(f.faux.state.callCount).toBe(8); // Only the Agent's own requests: Basic makes no learning calls.
+  const before = (await f.native.optimizer.status(f.host)).knowledge!.environment.now;
+  f.faux.setResponses([fauxAssistantMessage("A text-only answer")]);
+  await (await f.conversation.submit({type:"input",content:"Thanks",requestId:"empty-evidence"},context)).wait(context);
+  for (let wait = 0;wait < 200 && ((await f.native.optimizer.status(f.host)).session!.learning?.processed ?? 0) < 5;wait++) {await settleLearning(f.harness);await Bun.sleep(5);}
+  expect((await f.native.optimizer.status(f.host)).session!.learning?.processed).toBe(5);
+  expect((await f.native.optimizer.status(f.host)).knowledge!.environment.now).toBe(before);
+  await f.native.end(f.conversation.id);await settleLearning(f.harness);
+  const ended = await f.native.optimizer.status(f.host);
+  expect(ended.session!.folded).toBe(true);expect(ended.knowledge!.tools.sessions).toBe(1);expect(ended.knowledge!.tools.prompts).toBe(5);
+  expect(ended.knowledge!.environment.facts.find(fact => fact.id === "absent_tool:pytest")!.life.confirms).toHaveLength(1);
+  await f.native.start(f.conversation,{agentId:"agent"},"resume");
+  f.fail("ruff: command not found");
+  f.faux.setResponses([fauxAssistantMessage([fauxToolCall("codemode",{code:"await tools.bash({command:'ruff'});"})],{stopReason:"toolUse"}),fauxAssistantMessage("Done")]);
+  await (await f.conversation.submit({type:"input",content:"Check lint",requestId:"resumed-learning"},context)).wait(context);
+  for (let wait = 0;wait < 200 && ((await f.native.optimizer.status(f.host)).session!.learning?.processed ?? 0) < 6;wait++) {await settleLearning(f.harness);await Bun.sleep(5);}
+  const resumed = await f.native.optimizer.status(f.host);
+  expect(resumed.session!.learning?.processed).toBe(6);
+  expect(resumed.knowledge!.environment.facts.find(fact => fact.id === "absent_tool:ruff")!.life.confirms).toHaveLength(1);
+  expect(resumed.knowledge!.tools.sessions).toBe(1);expect(resumed.knowledge!.tools.prompts).toBe(6);expect(resumed.knowledge!.foldOrder).toHaveLength(1);
+},20_000);
+
+test("slow live learning does not block later prompts; completions coalesce and session end reconciles once",async () => {
+  const f = await setup(), config = f.configuration.snapshot();
+  Object.assign(config.policy,{enabled:true,microSkills:"envfacts",loop:"off",pruning:"propose"});
+  await f.configuration.configure(config);const active = f.configuration.snapshot();active.policy.mode = "active";await f.configuration.configure(active);
+  f.fail("pytest: command not found");
+  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();let block = true;
+  cleanups.push(async () => release.resolve());
+  const original = f.native.domain.trajectory;
+  f.native.domain.trajectory = async (host,cutoff,after) => {if (block) {block = false;entered.resolve();await release.promise;}return original(host,cutoff,after);};
+  for (let i = 0;i < 2;i++) {
+    f.faux.setResponses([fauxAssistantMessage([fauxToolCall("codemode",{code:"await tools.bash({command:'pytest'});"})],{stopReason:"toolUse"}),fauxAssistantMessage("Done")]);
+    expect((await (await f.conversation.submit({type:"input",content:"Check",requestId:`while-learning-${i}`},context)).wait(context)).status).toBe("done");
+    if (i === 0) await entered.promise;
+  }
+  await f.native.end(f.conversation.id);
+  expect((await f.harness.inspect(context)).tasks.filter(row => ["token-economizer.fold","token-economizer.checkpoint"].includes(row.record.kind))).toHaveLength(1);
+  release.resolve();await settleLearning(f.harness);
+  const status = await f.native.optimizer.status(f.host);
+  expect(status.session!.folded).toBe(true);expect(status.knowledge!.tools.sessions).toBe(1);expect(status.knowledge!.tools.prompts).toBe(2);
+  expect(status.knowledge!.environment.facts[0]!.life.confirms).toHaveLength(1);expect(f.faux.state.callCount).toBe(4);
+},20_000);

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Modified TypeScript port of Microsoft TokenEconomizer, revision 81e32e56bb3c4c1b4c9756b429be91e3960116ca; see ../../../LICENSE.
 // Ported from TokenEconomizer microskills/envfacts.py. Native privacy allowlisting is applied by the observer.
-import { createLifecycle, firingRate, injectable, updateEnvironmentLifecycle, type Lifecycle, type Verdict } from "./lifecycle.ts";
+import { createLifecycle, firingRate, injectable, updateEnvironmentLifecycle, creditLearning, type LearningCredits, type Lifecycle, type Verdict } from "./lifecycle.ts";
 import { compareCodePoints } from "../ordering.ts";
 import { factTextSafe } from "./distiller.ts";
 import { safeEnvironmentName, safeEnvironmentValue } from "../privacy.ts";
@@ -64,12 +64,13 @@ export function labelRule(a: string,b: string): [string,string] | null {
   for (const separator of [".","/"]) if (a.includes(separator)) {const prefix = a.split(separator)[0]+separator, rest = a.slice(prefix.length);if (rest && !b.startsWith(prefix) && (b === rest || rest.startsWith(b+separator) || b.startsWith(rest+separator))) return ["strip",prefix];}
   return null;
 }
-export function updateEnvironment(prior: EnvironmentState,digest: EnvironmentDigest | null,injectedIds: string[]): EnvironmentState {
+export function updateEnvironment(prior: EnvironmentState,digest: EnvironmentDigest | null,injectedIds: string[], credits?: LearningCredits): EnvironmentState {
   const state = structuredClone(prior), injected = new Set(injectedIds); state.lastInjected = [];
   if (!digest) {state.now++;return state;}
   digest = {...digest,env:digest.env.map(call => ({...call,need:call.need.filter(safeEnvironmentName),sets:Object.fromEntries(Object.entries(call.sets).filter(([key,value]) => safeEnvironmentValue(key,value)))}))};
   const obs = digest.obs, byIntent = (intent: string) => obs.filter(o => o.intent === intent);
   const fold = (fact: EnvironmentFact,verdict: Verdict,fired: boolean,exercised: boolean) => {
+    ({verdict,fired,exercised} = creditLearning(credits,`env:${fact.id}`,verdict,fired,exercised));
     const next = updateEnvironmentLifecycle({life:fact.life,contradictionStreak:fact.family === "form_repair" ? fact.params.contra_streak : 0,family:fact.family},state.now,verdict,fired,exercised,digest.edited);
     fact.life = next.life;if (fact.family === "form_repair") fact.params.contra_streak = next.contradictionStreak;
   };

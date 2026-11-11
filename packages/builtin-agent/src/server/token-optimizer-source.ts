@@ -91,11 +91,18 @@ function readSource(entries:readonly EntryRecord[],host:HostSession) {
  * Reads only the active fork's committed native source; never executes a tool or imports abandoned history. Subagent
  * and one-shot descendants contribute tool results from the same period (entry IDs are journal-wide), never prompts.
  */
-export async function nativeOptimizerTrajectory(harness:Harness,host:HostSession,begin:number,end:number|null,cutoff:string|null,descendants:readonly ConversationId[] = []):Promise<Trajectory> {
+export async function nativeOptimizerTrajectory(harness:Harness,host:HostSession,begin:number,end:number|null,cutoff:string|null,descendants:readonly ConversationId[] = [],after?:string|null):Promise<Trajectory> {
   const conversation = await harness.conversation(host.conversationId,context);if (!conversation) return {kind:"absent",reason:"Conversation is absent"};
+  if (after != null) {
+    const value = Number(after);if (!Number.isSafeInteger(value) || value < 0) throw new Error("Invalid optimizer learning cursor");
+    begin = Math.max(begin,value);
+  }
   let maximum = end ?? Infinity;
   if (cutoff !== null) {const value = Number(cutoff);if (!Number.isSafeInteger(value) || value < 0) throw new Error("Invalid saved optimizer source cutoff");maximum = Math.min(maximum,value);}
-  const root = readSource(await optimizerEntries(conversation,{after:begin,upTo:maximum}),host), latest = await latestOptimizerEntry(conversation);
+  // Freeze the source boundary before scanning: another prompt may already be appending entries.
+  const latest = await latestOptimizerEntry(conversation);
+  maximum = Math.min(maximum,latest ?? begin);
+  const root = readSource(await optimizerEntries(conversation,{after:begin,upTo:maximum}),host);
   if (root.kind === "unreadable") return root;
   if (root.unfinished) return (await harness.snapshot(LiveDoc,host.conversationId,context))?.run ? {kind:"later",reason:"Native calls are still running"} : {kind:"unreadable",reason:"Ended trajectory contains an unfinished native call"};
   const observations = [...root.observations];let activity = root.activity;

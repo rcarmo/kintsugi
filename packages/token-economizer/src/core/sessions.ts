@@ -7,9 +7,16 @@ export type LearningSession = {
   id: string; scope: Scope; conversation: string; group: string; started: number; ended: number | null;
   transcriptActivity: number; recordActivity: number; folded: boolean; foldedAt: number | null;
   cutoff: string | null; claim: string | null; foldError: string | null;
+  /** Optional for journals predating live learning. Cursor advances atomically with learned state. */
+  learning?: { cutoff: string | null; credits: import("./microskills/lifecycle.ts").LearningCredits; ticks: number; lastProposalAt: number | null; lastProposalDigest?: string; requested: number; processed: number; lastRun: string | null; toolCounted?: boolean; toolPrompts?: number; finalRequested?: boolean };
   section: string; injectedIds: string[]; frozenMask: string[]; appendedAfterFold: boolean;
 };
-function copySession(prior: LearningSession): LearningSession { return { ...prior, scope: { ...prior.scope }, injectedIds: [...prior.injectedIds], frozenMask: [...prior.frozenMask] }; }
+function copySession(prior: LearningSession): LearningSession {
+  const next = { ...prior, scope: { ...prior.scope }, injectedIds: [...prior.injectedIds], frozenMask: [...prior.frozenMask] };
+  if (prior.learning) next.learning = {...prior.learning,credits:{confirms:[...prior.learning.credits.confirms],contradicts:[...prior.learning.credits.contradicts],exercises:[...prior.learning.credits.exercises]}};
+  return next;
+}
+
 export type SessionPreparation = {
   id: string; scope: Scope; conversation: string; group: string; now: number;
   event: "startup" | "new" | "resume" | "fork" | "reload"; visibleHistory: boolean;
@@ -51,8 +58,8 @@ export function recoverableSessions(sessions: LearningSession[], scope: Scope, c
     .sort((a,b) => a.started-b.started || compareCodePoints(a.id,b.id));
 }
 export type FoldAdmission = { kind: "admitted"; session: LearningSession } | { kind: "folded" | "busy" };
-export function claimFold(prior: LearningSession, claim: string, cutoff: string, now: number): FoldAdmission {
-  if (prior.folded) return { kind: "folded" };
+export function claimFold(prior: LearningSession, claim: string, cutoff: string, now: number, incremental = false): FoldAdmission {
+  if (prior.folded && !incremental) return { kind: "folded" };
   if (prior.claim !== null) return { kind: "busy" };
   return { kind: "admitted", session: { ...copySession(prior), claim, cutoff, recordActivity: now } };
 }
@@ -60,8 +67,8 @@ export function finishFold(prior: LearningSession, claim: string, now: number, t
   if (prior.claim !== claim || prior.folded) throw new Error("Fold claim is not current");
   return { ...copySession(prior), claim: null, folded: true, foldedAt: now, foldError: terminalError, recordActivity: now };
 }
-export function deferFold(prior: LearningSession, claim: string, now: number): LearningSession {
-  if (prior.claim !== claim || prior.folded) throw new Error("Fold claim is not current");
+export function deferFold(prior: LearningSession, claim: string, now: number, incremental = false): LearningSession {
+  if (prior.claim !== claim || prior.folded && !incremental) throw new Error("Fold claim is not current");
   return { ...copySession(prior), claim: null, cutoff: null, recordActivity: now };
 }
 export function repositoryActivity(sessions: LearningSession[], scope: Scope): number {
