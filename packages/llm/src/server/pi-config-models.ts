@@ -210,6 +210,11 @@ export function claudeCodeHeaders(model: Model<Api>): ProviderHeaders | undefine
   return model.provider === "anthropic" ? { "User-Agent": "claude-cli/2.1.280", "x-app": "cli" } : undefined;
 }
 
+/** Settings catalogues must not refresh providers, resolve OAuth or start inference. */
+export async function readPiModelCatalogue():Promise<ModelRuntime> {
+  await preparePiModelsJson();
+  return identifyAsKintsugi(await ModelRuntime.create({authPath:piAuthJsonPath(),modelsPath:piModelsJsonPath(),allowModelNetwork:false,refreshOnCreate:false}));
+}
 export function createPiModelRuntime(): Promise<ModelRuntime> {
   return modelRuntime ??= (async () => {
     await preparePiModelsJson();

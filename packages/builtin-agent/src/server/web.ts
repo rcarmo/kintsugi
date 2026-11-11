@@ -1,3 +1,6 @@
+import { tokenOptimizerSettingsContribution, tokenOptimizerOpenApiPaths } from "./token-optimizer-settings.ts";
+import { tokenOptimizerIntegration } from "./token-optimizer.ts";
+import { registerBuiltinAgentIntegration, builtinAgentIntegrations } from "./integrations.ts";
 import { registerAgentRequestReceiptChecker } from "@kintsugi/agent/server/request-receipts";
 import { registerPlanAgentResolver } from "@kintsugi/agent/server/plan";
 import { KintsugiCoreError as PlanCoreError } from "@kintsugi/core";
@@ -94,6 +97,8 @@ async function applyNewAgentSettings(agent: WorkspaceAgentInfo, source: Workspac
 
 export const builtinAgentWorkspaceModule: WorkspaceModule = {
   id: "builtin-agent",
+  staticFiles: { "/token-optimizer.css": { url: new URL("../client/token-optimizer.css", import.meta.url), contentType: "text/css; charset=utf-8" } },
+  settingsContributions:[tokenOptimizerSettingsContribution],
   cableChannels: [{
     name: "agent",
     async subscribe(identifier, listener, events, shown) {
@@ -119,6 +124,7 @@ export const builtinAgentWorkspaceModule: WorkspaceModule = {
     },
   }],
   openApiPaths: {
+    ...tokenOptimizerOpenApiPaths,
     "/agent-notifications/public-key": { get: {
       summary: "Get this Kintsugi installation's VAPID public key for browser PushManager subscription",
       responses: { "200": { description: "Public application-server key", content: { "application/json": { schema: { type: "object", properties: { publicKey: { type: "string" } } } } } } },
@@ -198,6 +204,7 @@ export const builtinAgentWorkspaceModule: WorkspaceModule = {
       catch (error) { if (error instanceof KintsugiCoreError && error.code === "agent_not_found") return undefined; throw error; }
       return knownWorkspaceAgentRequest(agent, requestId, { events: agentEvents });
     });
+    if (!builtinAgentIntegrations().some(integration => integration.id === tokenOptimizerIntegration.id)) registerBuiltinAgentIntegration(tokenOptimizerIntegration);
     registerWorkspaceAgentTool("list_credentials", workspaceId => createCredentialCatalogueTool(workspaceId));
     // SAFETY: The module boundary validates or constructs this value with the asserted domain shape.
     const events = context.events as KintsugiEventBus;

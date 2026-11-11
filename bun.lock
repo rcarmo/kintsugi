@@ -521,6 +521,20 @@
         "@pierre/highlights": "0.3.0",
       },
     },
+    "packages/token-economizer": {
+      "name": "@kintsugi/token-economizer",
+      "version": "0.1.0",
+      "dependencies": {
+        "@noble/hashes": "2.4.0",
+        "re2js": "2.10.0",
+        "typebox": "^1.0.57",
+      },
+      "peerDependencies": {
+        "@earendil-works/chord": "1.5.2",
+        "@earendil-works/pi-ai": "1.5.2",
+        "@earendil-works/pi-durable": "1.5.2",
+      },
+    },
     "packages/update": {
       "name": "@kintsugi/update",
       "dependencies": {
@@ -815,6 +829,8 @@
     "@kintsugi/subagents": ["@kintsugi/subagents@workspace:packages/subagents"],
 
     "@kintsugi/syntax": ["@kintsugi/syntax@workspace:packages/syntax"],
+
+    "@kintsugi/token-economizer": ["@kintsugi/token-economizer@workspace:packages/token-economizer"],
 
     "@kintsugi/update": ["@kintsugi/update@workspace:packages/update"],
 
@@ -1389,6 +1405,8 @@
     "range-parser": ["range-parser@1.3.0", "", {}, "sha512-hek2mFQpPuI4E1BBKrSto+BU3e3x4xuarsbiwr3+lf7p44juvFMV0XFWQAP3xUyqXA4RrXLIoaSUGbSt056ZMw=="],
 
     "raw-body": ["raw-body@3.0.2", "", { "dependencies": { "bytes": "~3.1.2", "http-errors": "~2.0.1", "iconv-lite": "~0.7.0", "unpipe": "~1.0.0" } }, "sha512-K5zQjDllxWkf7Z5xJdV0/B0WTNqx6vxG70zJE4N0kBs4LovmEYWJzQGxC9bS9RAKu3bgM40lrd5zoLJ12MQ5BA=="],
+
+    "re2js": ["re2js@2.10.0", "", {}, "sha512-/P6FNnLbHjXJMRF1dPoZoVTyHvFcuVhbDpzml9DPMlbeErYlZ18GueAaG9GhYhAm/9AN7i7Y6crmDrLX0DeJ4Q=="],
 
     "readable-stream": ["readable-stream@2.3.8", "", { "dependencies": { "core-util-is": "~1.0.0", "inherits": "~2.0.3", "isarray": "~1.0.0", "process-nextick-args": "~2.0.0", "safe-buffer": "~5.1.1", "string_decoder": "~1.1.1", "util-deprecate": "~1.0.1" } }, "sha512-8p0AUk4XODgIewSi0l8Epjs+EVnWiK7NoDIEGU0HhE7+ZyY8D1IMY7odu5lRrFXGg71L15KG8QrPmum45RTtdA=="],
 

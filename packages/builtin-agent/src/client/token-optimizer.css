@@ -1,0 +1,46 @@
+/* Token optimizer Settings: presets first, details on demand. */
+.token-optimizer { display: grid; gap: 24px; min-width: 0; }
+.token-optimizer p { margin: 0; line-height: var(--leading-copy); }
+.token-optimizer__form { min-width: 0; }
+.token-optimizer__group { display: grid; gap: 8px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.token-optimizer__legend { padding: 0; margin-bottom: 8px; color: var(--text-bright); font-weight: var(--weight-bold); }
+.token-optimizer__choices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; min-width: 0; }
+.token-optimizer__choice { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 8px; align-items: start; min-width: 0; padding: 12px; border: 1px solid var(--button-border); border-radius: var(--radius-control); background: var(--panel); background-image: var(--button-background-image); cursor: pointer; }
+.token-optimizer__choice:hover { border-color: var(--button-hover-border); background-color: var(--elev); }
+.token-optimizer__choice:has(:checked) { border-color: var(--accent); background-color: var(--accent-soft); }
+.token-optimizer__choice:has(:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.token-optimizer__choice input { width: 16px; height: 16px; margin: 3px 0 0; accent-color: var(--accent); }
+.token-optimizer__choice-label { min-width: 0; color: var(--text-bright); line-height: var(--leading-tight); overflow-wrap: anywhere; }
+.token-optimizer__choice-label small, .token-optimizer__row-label small { display: block; margin-top: 4px; color: var(--text); font-size: var(--text-code); line-height: var(--leading-copy); }
+.token-optimizer__row { min-width: 0; }
+.token-optimizer__row-label { min-width: 0; color: var(--text-bright); }
+.token-optimizer__row > :last-child { flex: 0 0 auto; max-width: 60%; }
+.token-optimizer__number { width: 9em; }
+.token-optimizer__subheading { margin: 8px 0 0; color: var(--text-bright); font-size: var(--text-body); font-weight: var(--weight-bold); }
+.token-optimizer__stacked { display: grid; gap: 6px; color: var(--text-bright); }
+.token-optimizer__json, .token-optimizer__raw { font-family: var(--font-mono); font-size: var(--text-code); }
+.token-optimizer__raw { max-height: 320px; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.token-optimizer__save { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }
+.token-optimizer__save > p { flex: 1 1 240px; }
+
+/* Progressive disclosure without client code: features follow the selected choices. */
+.token-optimizer__form:has(input[name="mode"][value="off"]:checked) .token-optimizer__when-on,
+.token-optimizer__model, .token-optimizer__custom { display: none; }
+.token-optimizer__form:has(input[name="preset"][value="assisted"]:checked) .token-optimizer__model,
+.token-optimizer__form:has(input[name="preset"][value="custom"]:checked) :is(.token-optimizer__model, .token-optimizer__custom) { display: grid; }
+
+.token-optimizer__agents-head, .token-optimizer__workspace-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.token-optimizer__agents-head h3, .token-optimizer__workspace-head h4 { margin: 0; color: var(--text-bright); font-size: var(--text-body); font-weight: var(--weight-bold); }
+.token-optimizer__workspace { display: grid; gap: 8px; min-width: 0; padding-top: 16px; border-top: 1px solid var(--line); }
+.token-optimizer__workspace-head h4 { font-weight: var(--weight-medium); overflow-wrap: anywhere; }
+.token-optimizer__override { margin: 0; }
+.token-optimizer__status { display: grid; gap: 4px; margin: 0; padding-inline-start: 18px; color: var(--text); }
+.token-optimizer__action { display: grid; gap: 8px; margin: 0; min-width: 0; }
+.token-optimizer__action:has(> .token-optimizer__row, > .token-optimizer__stacked, > p) > .button { justify-self: end; }
+
+@media (max-width: 700px) {
+  .token-optimizer__choices { grid-template-columns: minmax(0, 1fr); }
+  .token-optimizer__row > :last-child { max-width: none; }
+  .token-optimizer__number { width: 100%; }
+  .token-optimizer__row:has(> input[type="checkbox"]) { flex-direction: row; align-items: center; }
+}

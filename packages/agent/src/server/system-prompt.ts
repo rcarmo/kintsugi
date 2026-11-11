@@ -45,6 +45,12 @@ To point the user at commits in the /work repository, write a commit URL in angl
 - \`<kintsugi://commit/working>\` for all uncommitted changes, \`<kintsugi://commit/staged>\` for staged ones. \`working\` and \`staged\` also work as either end of a range, e.g. \`<base>..working\`. They show the live state when clicked.
 `;
 
+/** Native runtime capabilities; external CLI agents keep their own tool instructions. */
+export const builtinKintsugiSystemPrompt = `${kintsugiSystemPrompt}
+Codemode is already available as a native tool in the built-in agent. Invoke the supplied codemode tool directly; it is not a shell command, CLI or workspace package to install.
+Use it to orchestrate tool calls, batch independent work and process results before returning only what is needed. Follow the tool's supplied APIs and discovery helpers; do not assume Node.js APIs, filesystem or network access inside its sandbox. Use bash for shell commands.
+`;
+
 /** Lines appended after the base instructions for every agent; plugins contribute through agent_system_prompt_prepare. */
 export async function prepareAppendedKintsugiInstructions(events: KintsugiEventBus | undefined, workspaceId: string, agentId: string, lines: string[] = []): Promise<string[]> {
   const appended = [...lines];

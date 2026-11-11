@@ -9,6 +9,7 @@ import { createDurableWorkspaceRegistry, prepareDurableAgent } from "../../src/s
 import { openDurableWorkspace, type DurableWorkspace } from "../../src/server/durable-workspace.ts";
 import { workspaceSkillsFromFiles } from "@kintsugi/agent/server/skills";
 import { registerWorkspaceAgentTool } from "@kintsugi/agent/server/tools";
+import { builtinKintsugiSystemPrompt, kintsugiSystemPrompt, sharedKintsugiInstructions } from "@kintsugi/agent/server/system-prompt";
 import { defineWorkspaceTool } from "@kintsugi/agent/server/workspace-tool";
 import { Type } from "typebox";
 
@@ -48,6 +49,10 @@ test("prepares workspace instructions and skill discovery without loading skill 
   expect(agent.cwd).toBe("/work");
   expect(agent.thinkingLevel).toBe("medium");
   expect(agent.instructions).toContain("online coding tool called Kintsugi");
+  expect(agent.instructions).toContain(builtinKintsugiSystemPrompt);
+  expect(agent.instructions).toContain("Codemode is already available as a native tool");
+  expect(agent.instructions).toContain("not a shell command, CLI or workspace package to install");
+  expect(agent.instructions).toContain("do not assume Node.js APIs, filesystem or network access inside its sandbox");
   expect(agent.instructions).toContain("/kintsugi/session-share/builtin-durable/assembly-workspace");
   expect(agent.instructions).toContain('Kintsugi Agent ID is "tab"');
   expect(agent.instructions).toContain("matching seq and ordinal");
@@ -63,6 +68,13 @@ test("prepares workspace instructions and skill discovery without loading skill 
   expect(explicit.thinkingLevel).toBe("high");
 });
 
+test("native codemode guidance does not leak into external agent prompts", () => {
+  for (const instructions of [kintsugiSystemPrompt, sharedKintsugiInstructions]) {
+    expect(instructions).not.toContain("Codemode is already available as a native tool");
+  }
+  expect(builtinKintsugiSystemPrompt.startsWith(kintsugiSystemPrompt)).toBe(true);
+});
+
 test("assembled native Harness uses the committed prompt and model across reopen, not new host defaults", async () => {
   const path = await mkdtemp(join(tmpdir(), "kintsugi-durable-assembly-"));
   paths.push(path);
@@ -71,6 +83,7 @@ test("assembled native Harness uses the committed prompt and model across reopen
   models.setProvider(faux.provider);
   faux.setResponses([(request) => {
     expect(JSON.stringify(request)).toContain("Keep the important invariant.");
+    expect(JSON.stringify(request)).toContain("Codemode is already available as a native tool");
     expect(JSON.stringify(request)).not.toContain("Changed host instructions");
     return fauxAssistantMessage("Native assembly works.");
   }]);

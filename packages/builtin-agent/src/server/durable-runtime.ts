@@ -56,6 +56,8 @@ export async function openDurableAgentRuntime(
   }, () => workspace.harness);
   const workspace = await openDurableWorkspace(directory, workspaceId, harnessOptions);
   const { harness } = workspace;
+  const tokenOptimizer = harnessOptions.tokenOptimizer;
+  await tokenOptimizer?.attach();
   const agents = new Map<string, Promise<Awaited<ReturnType<typeof controller>>>>();
   const observers = new Set<() => Promise<void>>();
   observers.add(await registerDurableTelemetry(harness, workspaceId));
@@ -118,6 +120,7 @@ export async function openDurableAgentRuntime(
   }
 
   async function controller(conversation: Conversation, identity: AgentIdentity) {
+    await tokenOptimizer?.start(conversation,identity);
     // Only host commands queue here, never generation/tool execution. Different
     // roots prepare independently, while model changes cannot race image sizing
     // and skill expansion for this root's next admission.
@@ -231,7 +234,10 @@ export async function openDurableAgentRuntime(
         current.durableId = fork.id;
         return fork.id;
       }, context);
+      const group = tokenOptimizer?.lookup(conversation.id)?.classificationGroup;
+      await tokenOptimizer?.end(conversation.id);
       conversation = (await harness.conversation(next, context))!;
+      await tokenOptimizer?.start(conversation,identity,"fork",group);
       await observe();
       await Promise.all([...selectionListeners].map(listener => listener()));
     }
@@ -344,6 +350,7 @@ export async function openDurableAgentRuntime(
         closed.add(conversation.id);
         return closing ??= (async () => {
           await tail;
+          await tokenOptimizer?.end(conversation.id);
           for (const id of await branches()) closed.add(id);
           await persistGates();
           for (const id of closed) await settleTasks(id);
@@ -496,6 +503,7 @@ export async function openDurableAgentRuntime(
           await readyForExecution();
           assertAdmission();
           await conversation.reset(undefined, context);
+          await tokenOptimizer?.reset(conversation,identity);
         });
       },
     };
@@ -589,6 +597,7 @@ export async function openDurableAgentRuntime(
     /** Host shutdown/unload: stop observation and scheduling, not the task's effects. */
     async suspend() {
       suspended = true;
+      await tokenOptimizer?.close();
       await Promise.all([...observers].map(stop => stop()));
       await workspace.close();
     },

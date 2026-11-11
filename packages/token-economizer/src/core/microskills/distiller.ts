@@ -1,0 +1,95 @@
+// SPDX-License-Identifier: Apache-2.0
+// Modified TypeScript port of Microsoft TokenEconomizer, revision 81e32e56bb3c4c1b4c9756b429be91e3960116ca; see ../../../LICENSE.
+// Ported from TokenEconomizer microskills/distiller.py; IO is expressed as a proposal effect.
+import { Type, type Static } from "typebox";
+import { Value } from "typebox/value";
+import { redact } from "../observations.ts";
+import { compareCodePoints, sliceCodePoints } from "../ordering.ts";
+import { compilePattern, detectorVerdict, DetectorSchema, extract, ExtractorSchema, featurize, reparseCommands, type ExtractorSpec, type FactDigest } from "./detectors.ts";
+import { checkCommand } from "./digest.ts";
+import { createLifecycle, injectable, updateLifecycle, type Lifecycle } from "./lifecycle.ts";
+import { proposerSystem } from "./proposer-prompt.ts";
+export const FactSchema = Type.Object({id:Type.String({minLength:1,maxLength:160}),claim:Type.Optional(Type.String({maxLength:2000})),injection:Type.Optional(Type.String({maxLength:2000})),high_stakes:Type.Optional(Type.Boolean()),detector:DetectorSchema,cite:Type.Optional(Type.Array(Type.String())),rev:Type.Optional(Type.Integer({minimum:1}))},{additionalProperties:false});
+export type FactSpec = Static<typeof FactSchema>;
+export type LearnedFact = {spec:FactSpec;life:Lifecycle};
+export type Distiller = {now:number;last_propose:number;facts:LearnedFact[];extractors:ExtractorSpec[];window:FactDigest[];raw_window:{command:string;output:string}[][]};
+export function emptyDistiller(): Distiller {return {now:0,last_propose:-1,facts:[],extractors:[],window:[],raw_window:[]};}
+export function observeFact(fact: LearnedFact, now: number, digest: FactDigest): LearnedFact {
+  const verdict = detectorVerdict(fact.spec.detector,digest);
+  return {...fact,life:updateLifecycle(fact.life,now,verdict.verdict,verdict.fired,verdict.exercised,digest.edited_files)};
+}
+export type ProposerTick = {state:Distiller;prompt:string | null};
+export function updateDistiller(prior: Distiller, digest: FactDigest | null, commands: {command:string;output:string}[], cadence: number, runnerAvailable: boolean, repository: string, external: string[] = []): ProposerTick {
+  const state = structuredClone(prior);
+  if (!digest) {state.now++;return {state,prompt:null};}
+  digest = featurize(digest,state.extractors,commands);
+  state.raw_window = [...state.raw_window,commands].slice(-8);
+  state.facts = state.facts.map(fact => observeFact(fact,state.now,digest));
+  state.window = [...state.window,digest].slice(-8); state.now++;
+  if (!runnerAvailable || !state.window.length || state.now-state.last_propose < cadence) return {state,prompt:null};
+  const covered = state.raw_window.map(calls => calls.length ? calls.filter(call => checkCommand.test(call.command) || state.extractors.some(spec => Boolean(extract(spec,[call])))).length/calls.length : 1);
+  const excerpts = covered.reduce((a,b) => a+b,0)/covered.length < .5 ? [...new Set(state.raw_window.flat().filter(call => !checkCommand.test(call.command) && !state.extractors.some(spec => Boolean(extract(spec,[call])))).map(call => sliceCodePoints(call.command.replace(/\s+/g," ").trim(),0,100)))].filter(Boolean).slice(0,3) : [];
+  return {state,prompt:buildProposerPrompt(repository,state,excerpts,external)};
+}
+type ProposerView = Omit<FactDigest,"_ran_tests" | "_cmd_blob" | "_out_blob">;
+function pythonJson(value: ProposerView[]): string {return JSON.stringify(value,null,1).replace(/[\u007f-\uffff]/g,char => `\\u${char.charCodeAt(0).toString(16).padStart(4,"0")}`);}
+export function buildProposerPrompt(repository: string, state: Distiller, excerpts: string[], external: string[]): string {
+  const known = [...state.facts].sort((a,b) => compareCodePoints(a.spec.id,b.spec.id)).map(f => `  - ${f.spec.id}: ${f.spec.claim ?? f.spec.id}`).join("\n") || "(none)";
+  let prompt = proposerSystem + `\n\nRepo: ${repository}`
+    + "\n\nExisting facts, as `id: claim` (do NOT restate or paraphrase one under a NEW id; re-emit an id with ONLY detector.contradict changed to revise its contradiction condition, else use a NEW id for a fact not listed here):\n"+known
+    + "\n\nExisting feature names:\n"+(state.extractors.map(spec => spec.name).sort(compareCodePoints).join(", ") || "(none)")
+    + "\n\nTask digests (chronological):\n"+pythonJson(state.window.map(({_ran_tests: _tests,_cmd_blob: _commands,_out_blob: _outputs,...view}) => view));
+  if (excerpts.length) prompt += "\n\nRAW command excerpts from recent tasks the current extractors did NOT cover (author extractors to reach these if they hide a durable fact):\n"+excerpts.map(command => `  $ ${command}`).join("\n");
+  if (external.length) prompt += "\n\nFacts ALREADY injected before every task by a separate layer (do NOT restate or paraphrase them; author only facts beyond these):\n"+external.map(claim => `  - ${claim}`).join("\n");
+  return prompt+"\n\nReturn the JSON object {extractors, facts}:";
+}
+export type Admission = {accepted:boolean;reason:string};
+function frozen(spec: FactSpec): string {
+  const detector = Object.entries(spec.detector).filter(([key]) => key !== "contradict").sort(([a],[b]) => compareCodePoints(a,b));
+  return JSON.stringify([spec.claim ?? null,spec.injection ?? null,spec.high_stakes ?? false,detector]);
+}
+export function factTextSafe(text: string): boolean {
+  return !text.includes("[REDACTED]") && !/\b(?:API_KEY|ACCESS_TOKEN|PASSWORD|PRIVATE_KEY|AUTHORIZATION)\b/i.test(text) && redact(text) === text && !/\b(skip|no need|don'?t|do not|stop|done|completed?|finish(?:ed)?|verify|verification|instead of (?:running|testing))\b/i.test(text);
+}
+export function admitFact(state: Distiller, spec: FactSpec): Admission {
+  if (!factTextSafe(spec.claim ?? spec.id) || !factTextSafe(spec.injection ?? spec.claim ?? spec.id)) return {accepted:false,reason:"unsafe-fact-text"};
+  for (const [key,value] of Object.entries(spec.detector)) if (value && !["scope","fired"].includes(key) && compilePattern(value).kind !== "valid") return {accepted:false,reason:"unsupported-detector"};
+  const old = state.facts.find(fact => fact.spec.id === spec.id);
+  if (old) {
+    if (frozen(old.spec) !== frozen(spec)) return {accepted:false,reason:"revise-not-contradict-only"};
+    if (old.spec.detector.contradict === spec.detector.contradict) return {accepted:false,reason:"revise-noop"};
+    if (spec.detector.contradict === undefined) delete old.spec.detector.contradict;
+    else old.spec.detector.contradict = spec.detector.contradict;
+    old.spec.rev = (old.spec.rev ?? 1)+1;
+    return {accepted:true,reason:"revised-contradict"};
+  }
+  const hits = (spec.cite ?? []).filter(iid => {const digest = state.window.find(row => row.iid === iid);return digest && detectorVerdict(spec.detector,digest).verdict === "confirm";}).length;
+  if (hits < 2) return {accepted:false,reason:`grounding-fail(${hits}/2)`};
+  let fact: LearnedFact = {spec:{...structuredClone(spec),rev:spec.rev ?? 1},life:createLifecycle(spec.id,spec.high_stakes ?? false)};
+  state.window.forEach((digest,index) => {fact = observeFact(fact,state.now-state.window.length+index,digest);});
+  state.facts.push(fact); return {accepted:true,reason:"admitted"};
+}
+export type ProposalCompletion = {state:Distiller;diagnostics:string[]};
+/** Call after an actual attempt, including a failed/empty reply. No runner makes no cadence change. */
+export function completeProposal(prior: Distiller, reply: string | null): ProposalCompletion {
+  const state = structuredClone(prior), diagnostics: string[] = []; state.last_propose = state.now;
+  const object = reply?.match(/\{[\s\S]*\}/)?.[0];
+  if (!object) return {state,diagnostics:["missing-proposal-object"]};
+  const schema = Type.Object({extractors:Type.Array(ExtractorSchema),facts:Type.Array(FactSchema)},{additionalProperties:false});
+  let payload: Static<typeof schema>;
+  try {const parsed: unknown = JSON.parse(object);Value.Assert(schema,parsed);payload = parsed;}
+  catch {return {state,diagnostics:["invalid-proposal-object"]};}
+  for (const spec of payload.extractors) {
+    if (state.extractors.length >= 12 || state.extractors.some(prior => prior.name === spec.name)) continue;
+    const compiled = compilePattern(spec.pattern);
+    if (compiled.kind === "invalid") {diagnostics.push(compiled.reason);continue;}
+    state.extractors.push(spec);
+    state.window = state.window.map(digest => ({...digest,features:{...digest.features,[spec.name]:extract(spec,reparseCommands(digest))}}));
+  }
+  for (const spec of payload.facts.slice(0,4)) {const admitted = admitFact(state,spec);if (!admitted.accepted) diagnostics.push(admitted.reason);}
+  return {state,diagnostics};
+}
+export function renderDistiller(state: Distiller, repository: string): string {
+  const lines = state.facts.filter(fact => injectable(fact.life)).map(fact => fact.spec.injection ?? fact.spec.claim ?? fact.spec.id);
+  return lines.length ? `# repo operating manual (${repository.split("/").at(-1)}) — learned from earlier sessions in this repository\n${lines.map(line => `- ${line}`).join("\n")}\n` : "";
+}

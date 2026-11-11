@@ -1,3 +1,4 @@
+import { nativeOptimizerOptions, type createNativeTokenOptimizer } from "./token-optimizer.ts";
 import { createNativePlanExtension } from "./durable-plan.ts";
 import { durablePromptCache } from "./durable-prompt-cache.ts";
 import { createNativeAgentIdentityResolver } from "./durable-agent-identity.ts";
@@ -18,7 +19,7 @@ import { listPromptTemplates } from "@kintsugi/agent/server/prompt-templates";
 import { durableJournalInstructions } from "./durable-storage.ts";
 import { formatProjectInstructions, loadWorkspaceAgentsFiles } from "@kintsugi/agent/server/workspace-agents-files";
 import { loadWorkspaceSkills } from "@kintsugi/agent/server/skills";
-import { kintsugiSystemPrompt, prepareAppendedKintsugiInstructions } from "@kintsugi/agent/server/system-prompt";
+import { builtinKintsugiSystemPrompt, prepareAppendedKintsugiInstructions } from "@kintsugi/agent/server/system-prompt";
 import { launchComposerThinkingSettings, resolveNewWorkspaceAgentModel } from "@kintsugi/agent/server/model-state";
 import type { WorkspaceAgentToolOptions } from "@kintsugi/agent/server/tools";
 
@@ -32,7 +33,7 @@ export function createDurableWorkspaceRegistry(workspaceId: string, options: Wor
 
 /** No AgentSession, delegation coordinator, or host-local filesystem environment. */
 /** Our Harness always gets one `Models`, never a function returning the current one. */
-export type DurableHarnessOptions = HarnessOptions & { models: Models };
+export type DurableHarnessOptions = HarnessOptions & { models: Models; tokenOptimizer?:ReturnType<typeof createNativeTokenOptimizer> };
 
 export async function createDurableHarnessOptions(workspaceId: string, options: WorkspaceAgentToolOptions, writeTiming: WriteDurableTiming, harness: () => Harness): Promise<DurableHarnessOptions> {
   const models = await createPiModelRuntime();
@@ -48,7 +49,10 @@ export async function createDurableHarnessOptions(workspaceId: string, options: 
   registry.install(durableTiming(writeTiming));
   const templates = createCodemodeTemplates(() => listPromptTemplates(workspaceId), harness);
   registry.install(templates.extension);
+  const tokenOptimizer = await nativeOptimizerOptions(workspaceId,harness,models,registry);
+  registry.install(tokenOptimizer.optimizer.extension);
   return {
+    tokenOptimizer,
     models: templates.models(delegation?.models ?? models),
     registry,
     settings: { documentRetentionMs: 60_000, stream: { cacheRetention: "short" }, compaction: { enabled: true, keepRecentTokens: 6000 } },
@@ -90,7 +94,7 @@ export async function prepareDurableAgent(
   const thinking = initial.thinkingLevel !== undefined ? initial.thinkingLevel
     : (await load.thinking(selectedModel ? { provider: selectedModel.provider, id: selectedModel.modelId } : undefined)).selected;
   const instructions = [
-    kintsugiSystemPrompt,
+    builtinKintsugiSystemPrompt,
     codemodeTemplatesInstructions,
     ...appended,
     ...agents.map(formatProjectInstructions),
