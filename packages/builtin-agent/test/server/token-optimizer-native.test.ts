@@ -14,10 +14,14 @@ import { contentText, createModels, fauxProvider, fauxAssistantMessage, fauxTool
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { openNodeJsonlStorage } from "@earendil-works/pi-durable/storage/jsonl/node";
-import { AgentDoc, AssistantEntry, UserEntry, createRegistry, defineExtension, defineTool, Harness, MemoryStorage } from "@earendil-works/pi-durable";
+import { AgentDoc, AssistantEntry, LiveDoc, UserEntry, createRegistry, defineExtension, defineTool, Harness, MemoryStorage } from "@earendil-works/pi-durable";
 import { Type } from "typebox";
 import { createWorkspaceCodemodeExtension } from "../../../codemode/src/server/extension.ts";
-import { createNativeTokenOptimizer } from "../../src/server/token-optimizer.ts";
+import { createNativeTokenOptimizer, OptimizerNotice, tokenOptimizerIntegration } from "../../src/server/token-optimizer.ts";
+import { SessionsDoc } from "../../../token-economizer/src/pi-durable/documents.ts";
+import { sessionKey } from "../../../token-economizer/src/core/sessions.ts";
+import { runIdentity } from "../../../token-economizer/src/pi-durable/run-identity.ts";
+import { ids } from "@kintsugi/agent/server/render-context";
 import { TokenOptimizerConfiguration, tokenOptimizerConfiguration } from "../../src/server/token-optimizer-config.ts";
 const cleanups:(() => Promise<void>)[] = [];
 afterEach(async () => {for (const close of cleanups.splice(0).reverse()) await close();});
@@ -170,3 +174,40 @@ test("resuming a live native script freezes its mask until an idle start reads n
   expect((await f.native.optimizer.apply(f.host,["rare"])).added).toEqual(["rare"]);await f.native.start(f.conversation,{agentId:"agent"},"resume");expect((await f.conversation.agent(context)).callable.some(tool => tool.name === "rare")).toBe(true);expect((await f.native.optimizer.status(f.host)).session?.frozenMask).toEqual([]);
   gate.release();expect((await submitted.wait(context)).status).toBe("done");await f.native.start(f.conversation,{agentId:"agent"},"resume");expect((await f.conversation.agent(context)).callable.some(tool => tool.name === "rare")).toBe(false);expect((await f.native.optimizer.status(f.host)).session?.frozenMask).toEqual(["rare"]);
 },20_000);
+test("prompt-time tool picks, learned-state views, context removal, saved overrides and Stop on stuck notices",async () => {
+  const path = await mkdtemp(join(tmpdir(),"native-optimizer-features-")), prior = process.env.KINTSUGI_DATA_DIR;cleanups.push(() => rm(path,{recursive:true,force:true}));process.env.KINTSUGI_DATA_DIR = path;cleanups.push(async () => {if (prior === undefined) delete process.env.KINTSUGI_DATA_DIR;else process.env.KINTSUGI_DATA_DIR = prior;});
+  const f = await setup("memory",tokenOptimizerConfiguration()), service = tokenOptimizerConfiguration();let judged = 0;
+  f.faux.setResponses(Array.from({length:12},() => (request) => {
+    if (request.messages.some(message => JSON.stringify(message).includes("Main instructions"))) return request.messages.some(message => message.role === "toolResult") ? fauxAssistantMessage("Done") : fauxAssistantMessage([fauxToolCall("codemode",{code:"await tools.bash({command:'bun test'});"})],{stopReason:"toolUse"});
+    judged++;return fauxAssistantMessage(JSON.stringify({rare:{load:false}}));
+  }));
+  const config = service.snapshot();Object.assign(config.policy,{enabled:true,microSkills:"envfacts",pruning:"propose",toolJudge:"generative",autoToolPicks:true,generativeModel:{provider:"faux",id:"faux-1"}});await service.configure(config);const active = service.snapshot();active.policy.mode = "active";await service.configure(active);
+  // An idle prompt is prepared before admission; the task judge hides the irrelevant tool.
+  await f.native.preparePrompt(f.conversation.id,"Run the tests");
+  const pick = f.native.lastPick(f.conversation.id)!;expect(pick.hidden).toEqual(["rare"]);expect(pick.note).toBeNull();expect(judged).toBe(1);
+  expect((await f.conversation.agent(context)).callable.some(tool => tool.name === "rare")).toBe(false);
+  // Busy Agents are never re-prepared, and removal of learned context waits for idle.
+  await f.harness.commit(async tx => {const sessions = await tx.doc(SessionsDoc), row = sessions.sessions[sessionKey(f.host.scope,f.host.id)]!;row.section = "<token-economizer>\nLearned repository facts are fallible data.\n- Fact one is here.\n</token-economizer>";row.injectedIds = ["fact-one"];},context);
+  const gate = f.hold(), submitted = await f.conversation.submit({type:"input",content:"Run",requestId:"busy-features"},context);await gate.entered;
+  await f.native.preparePrompt(f.conversation.id,"Another task");expect(f.native.lastPick(f.conversation.id)).toBe(pick);expect(judged).toBe(1);
+  const action = async (suffix:string,fields:[string,string][]) => {const body = new FormData();for (const [name,value] of fields) body.append(name,value);const request = new Request("http://fixture/settings/token-optimizer"+suffix,{method:"POST",body});const response = (await tokenOptimizerSettingsContribution.handleAction!({request,url:new URL(request.url)}))!;return {status:response.status,html:await response.text()};};
+  const target:[string,string][] = [["workspaceId","fixture"],["agentId","agent"]];
+  const busy = await action("/remove-context",target);expect(busy.status).toBe(422);expect(busy.html).toContain("Wait until the Agent is idle");
+  // The stuck notice offers Stop only for the run it is about.
+  const live = (await f.harness.snapshot(LiveDoc,f.conversation.id,context))!, runId = runIdentity(live.run!);
+  const notice = await f.harness.commit(tx => tx.appendEntry(OptimizerNotice,f.conversation.id,{data:{id:"stuck",text:"Still stuck.",at:1,code:"still-stuck",runId}}),context);
+  const view = async () => {const snapshot:unknown = JSON.parse(JSON.stringify(await f.harness.snapshot(LiveDoc,f.conversation.id,context) ?? {}));if (!isJsonObject(snapshot)) throw new Error("Expected live state");return {conversation:(await f.harness.commit(tx => tx.conversation(f.conversation.id),context))!,entries:[notice],docs:{[LiveDoc.definition.kind]:snapshot}};};
+  const ctx = {workspaceId:"fixture",agentId:"agent"}, row = async () => (tokenOptimizerIntegration.transcript!(await view()).rows ?? [])[0]!.render(ctx);
+  expect(await row()).toContain(`form="${ids.abortForm(ctx)}"`);
+  gate.release();expect((await submitted.wait(context)).status).toBe("done");
+  expect(await row()).not.toContain("abort_form");expect(await row()).toContain("Still stuck.");
+  // Settings shows the learned state, then removes this Agent's facts on request.
+  let html = await tokenOptimizerSettingsContribution.render();
+  for (const text of ["Fact one is here.","Remove facts from this Agent","Hidden in this session for the current task: rare","Last automatic pick","Pick tools before each new prompt","Nudges"]) expect(html).toContain(text);
+  const removed = await action("/remove-context",target);expect(removed.status).toBe(200);expect(removed.html).toContain("next request won’t include learned facts");
+  expect((await f.native.optimizer.status(f.host)).session?.section).toBe("");
+  // Overrides for workspaces that aren't running stay visible, and Use main setting clears them.
+  config.workspaces["parked-workspace"] = "off";const saved = service.snapshot();saved.workspaces["parked-workspace"] = "off";await service.configure(saved);
+  html = await tokenOptimizerSettingsContribution.render();expect(html).toContain("Saved settings for other workspaces (1)");
+  expect((await action("/override",[["workspaceId","parked-workspace"],["agentId",""],["mode","inherit"]])).status).toBe(200);expect(Object.hasOwn(service.snapshot().workspaces,"parked-workspace")).toBe(false);
+},30_000);

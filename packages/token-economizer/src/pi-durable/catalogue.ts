@@ -26,7 +26,7 @@ export function createCataloguePublication(options: {harness:() => Harness;backg
       const added = applyTools(next,names,named);next.pending = null;next.refusal = null;knowledge.tools = next;
       return {added,reason:null};
     },BACKGROUND_CONTEXT);
-    if (result.added.length || result.reason) await options.onNotice({id:JSON.stringify([scopeKey(item.scope),"publication",result.added,result.reason]),code:result.reason ? "tool-publication-refused" : "tools-applied",text:result.reason ?? `Applied ${result.added.length} tool exclusions for the next start or resume. A changed toolset can rebuild the prompt cache.`,sessionId:item.host.id,runId:null});
+    if (result.added.length || result.reason) await options.onNotice({id:JSON.stringify([scopeKey(item.scope),"publication",result.added,result.reason]),code:result.reason ? "tool-publication-refused" : "tools-applied",text:result.reason ?? `Hid ${result.added.length === 1 ? "1 unused tool" : `${result.added.length} unused tools`} from the next session or resume. Restore them any time in Settings.`,sessionId:item.host.id,runId:null});
     return result;
   }
   const waiter = defineTask<{repository:string},{phase:"wait"},null>({name:"token-economizer.auto-publication",version:1,initial:() => ({phase:"wait"}),phases:{async wait(task,runtime,context) {
@@ -56,7 +56,7 @@ export function createCataloguePublication(options: {harness:() => Harness;backg
   return {extension:defineExtension({name:"token-economizer.catalogue",tasks:[waiter]}),apply,
     async restore(host:HostSession,names?:string[]) {
       const removed = await options.harness().commit(async tx => {const knowledge = await tx.doc(KnowledgeDoc,scopeKey(host.scope),host.scope), next = detach(knowledge.tools), removed = restoreTools(next,names);next.pending = null;knowledge.tools = next;return removed;},BACKGROUND_CONTEXT);
-      if (removed.length) await options.onNotice({id:JSON.stringify([scopeKey(host.scope),"restore",removed]),code:"tools-restored",text:`Restored ${removed.length} owned exclusions for the next start or resume. Automatic pruning will retain them until a named Apply.`,sessionId:host.id,runId:null});return removed;
+      if (removed.length) await options.onNotice({id:JSON.stringify([scopeKey(host.scope),"restore",removed]),code:"tools-restored",text:`Restored ${removed.length === 1 ? "1 hidden tool" : `${removed.length} hidden tools`} from the next session or resume. They won’t be hidden again unless you ask.`,sessionId:host.id,runId:null});return removed;
     },
     async wait(item:AutoWaiterItem) {
       await options.harness().commit(async tx => {

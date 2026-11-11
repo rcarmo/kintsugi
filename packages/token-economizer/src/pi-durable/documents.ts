@@ -35,7 +35,9 @@ export const ContextSnapshotEntry = defineEntry<{sessionId:string;section:string
 export type AutoWaiterItem = {scope:Scope;sessionKey:string;host:HostSession};
 export const AutoWaitersDoc = defineDoc<{repositories:Record<string,{task:TaskId|null;items:AutoWaiterItem[]}>}>({kind:"token-economizer.auto-waiters",version:1,scope:"session",initial:() => ({repositories:{}}),checkpointWhen:() => false});
 export const NoticesDoc = defineDoc<{items:Record<string,{notice:import("../core/types.ts").Notice;delivered:boolean}>}>({kind:"token-economizer.notices",version:1,scope:"session",initial:() => ({items:{}}),checkpointWhen:() => false});
-export type GuardDecisionRecord = {id:string;runId:string;action:"redirect"|"notice";mode:"observe"|"active";status:"proposed"|"queued"|"consumed"|"simulated"|"undelivered";submissionId:SubmissionId|null;reason:string};
+export type GuardDecisionRecord = {id:string;runId:string;action:"redirect"|"notice";mode:"observe"|"active";status:"proposed"|"queued"|"consumed"|"simulated"|"undelivered";submissionId:SubmissionId|null;reason:string;
+  /** Added after v1 records existed: older decisions lack the text and time. */
+  text?:string;at?:number};
 export const RunDoc = defineDocFamily<{guard:Guard|null;inputs:SubmissionId[];closed:boolean;decisions:GuardDecisionRecord[]},null>({kind:"token-economizer.run",version:1,scope:"session",family:true,initial:() => ({guard:null,inputs:[],closed:true,decisions:[]}),checkpointWhen:() => false});
 export type GuardJob = {effect:GuardEffect;host:HostSession;sessionKey:string;model:ModelRef|null;writerModel:ModelRef|null;classifier:ModelRef|null;threshold:number;template:boolean;status:"queued"|"running"|"complete";result:BackgroundVerdict|null;features:number[]|null;revision:string;artifactId:string|null;sampleId:string;reuse:{key:string;canonical:string}|null;compactFull:string|null};
 export const GuardJobsDoc = defineDoc<{jobs:Record<string,GuardJob>}>({kind:"token-economizer.guard-jobs",version:1,scope:"session",initial:() => ({jobs:{}}),checkpointWhen:() => false});

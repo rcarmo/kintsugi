@@ -62,6 +62,8 @@ test("installed optimizer: live nested observations, isolated judge/writer, task
   expect(f.calls.some(call => call.purpose === "writer")).toBe(true);
   expect(f.calls.some(call => call.purpose === "tool-judge")).toBe(true);
   expect(status.run?.decisions.some(decision => decision.submissionId !== null)).toBe(true);
+  // Settings shows what each nudge said and when.
+  expect(status.run?.decisions.every(decision => Boolean(decision.text) && Number.isFinite(decision.at))).toBe(true);
   expect(f.calls.every(call => !call.prompt.includes("PRIVATE_MAIN_AGENT_INSTRUCTIONS"))).toBe(true);
   const next = {...f.host,id:"second",classificationGroup:"second"};f.setHost(next);await f.optimizer.sessionStarted(next,f.start);await f.optimizer.sessionEnded(next);
   for (const row of (await f.harness.inspect(context)).tasks.filter(row => row.record.kind === "token-economizer.fold")) await f.harness.waitForTask(row.record.id,context);

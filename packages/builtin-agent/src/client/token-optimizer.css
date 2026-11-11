@@ -38,6 +38,17 @@
 .token-optimizer__action { display: grid; gap: 8px; margin: 0; min-width: 0; }
 .token-optimizer__action:has(> .token-optimizer__row, > .token-optimizer__stacked, > p) > .button { justify-self: end; }
 
+.token-optimizer__details { display: grid; gap: 4px; min-width: 0; }
+.token-optimizer__details .disclosure-content > .form-stack, .token-optimizer__saved { gap: 8px; }
+.token-optimizer__list { display: grid; gap: 8px; margin: 0; padding-inline-start: 18px; color: var(--text-bright); overflow-wrap: anywhere; }
+.token-optimizer__list small { display: block; margin-top: 2px; color: var(--text); font-size: var(--text-code); line-height: var(--leading-copy); }
+.token-optimizer__quote { margin: 6px 0 0; padding: 4px 10px; border-inline-start: 3px solid var(--line-strong); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.token-optimizer__saved { display: grid; min-width: 0; }
+
+/* Transcript notices from the optimizer. */
+.token-optimizer-note { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.token-optimizer-note > p { flex: 1 1 240px; margin: 0; }
+
 @media (max-width: 700px) {
   .token-optimizer__choices { grid-template-columns: minmax(0, 1fr); }
   .token-optimizer__row > :last-child { max-width: none; }

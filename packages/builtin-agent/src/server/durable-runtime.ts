@@ -397,6 +397,8 @@ export async function openDurableAgentRuntime(
           await load.validateModel((await conversation.agent(context)).model);
           await readyForExecution();
           assertAdmission();
+          if (!identity.readOnly) await tokenOptimizer?.preparePrompt(conversation.id, input.text);
+          assertAdmission();
           return submitDurableInput(conversation, workspaceId, harnessOptions.models, input, context, async (id, text) => {
             const expanded = await load.expand(id, text);
             assertAdmission();

@@ -16,6 +16,7 @@ export * from "./microskills/digest.ts";
 export * from "./microskills/distiller.ts";
 export * from "./microskills/envfacts.ts";
 export * from "./microskills/observe.ts";
+export * from "./describe.ts";
 export * from "./loopguard/state.ts";
 export * from "./loopguard/shell-edits.ts";
 export * from "./loopguard/verification.ts";

@@ -610,6 +610,12 @@ export async function deleteWorkspace(id: string, options: DeleteWorkspaceOption
   return null;
 }
 
+/** The saved display title from metadata alone, without container checks; null when untitled. */
+export async function readWorkspaceTitle(id: string): Promise<string | null> {
+  assertValidWorkspaceId(id);
+  return await readTitle(getKintsugiRuntimeContext(), id);
+}
+
 export async function getWorkspaceTitle(id: string): Promise<string | null> {
   await resolveWorkspace(id);
   return await readTitle(getKintsugiRuntimeContext(), id);

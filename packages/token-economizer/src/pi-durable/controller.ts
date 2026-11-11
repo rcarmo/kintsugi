@@ -32,6 +32,7 @@ const sourceIdentitySchema = Type.Tuple([Type.String(),Type.String(),Type.Union(
 export const SteeringEntry = defineEntry<{decisionId:string;runId:string}>("token-economizer.redirect");
 type NoticeDelivery = {notice:Notice|null};
 export type TokenEconomizerOptions = {harness:() => Harness;backgroundOwner?:() => ConversationId;domain:HostDomain;policy:(host:HostSession) => Policy;sideCall:SideCall;decisionClassifier?:DecisionClassifier;maximumCost?:(request:import("../core/types.ts").InferenceRequest) => number|null;onNotice?:(notice:Notice) => Promise<void>;onError?:(error:Error) => void;now?:() => number};
+const stillStuck = "This run still looks stuck after a nudge. You can stop it if it isn’t getting anywhere.";
 export function createTokenEconomizer(options:TokenEconomizerOptions) {
   const hosts = new Map<string,HostSession>(), conversations = new Map<ConversationId,HostSession>(), clock = options.now ?? Date.now;
   let lastError: string|null = null, detachObserver:(() => void)|null = null;
@@ -106,18 +107,18 @@ export function createTokenEconomizer(options:TokenEconomizerOptions) {
       const decision = folded.state.held;
       if (decision && toolBoundary) {
         const previous = run.decisions.find(item => item.id === decision.id);
-        const entry:GuardDecisionRecord = previous ?? {id:decision.id,runId:observation.runId,action:decision.action,mode:policy.mode === "observe" ? "observe" : "active",status:"proposed",submissionId:null,reason:decision.reason};
+        const entry:GuardDecisionRecord = previous ?? {id:decision.id,runId:observation.runId,action:decision.action,mode:policy.mode === "observe" ? "observe" : "active",status:"proposed",submissionId:null,reason:decision.reason,text:decision.action === "redirect" ? decisionText(folded.state) : stillStuck,at:clock()};
         if (!previous || previous.status === "proposed") {
           // Admission must precede this transaction's first table write. All earlier mutations are document drafts.
           if (emitting(policyFor(key)) && decision.action === "redirect" && run.inputs.every(input => live.run!.inputs.includes(input))) {
             entry.submissionId = await handle.submit(tx,{type:"input",content:decisionText(folded.state),whenBusy:"steer",whenIdle:"reject",requestId:`token-economizer-${fingerprint(decision.id)}`,entry:{kind:SteeringEntry.kind,data:{decisionId:decision.id,runId:observation.runId}}});entry.status = "queued";
           } else if (emitting(policyFor(key)) && decision.action === "notice") {
-            delivery.notice = {id:decision.id,code:"still-stuck",text:"This run still looks stuck after its redirects. You can stop it with the existing Stop control.",sessionId:host.id,runId:observation.runId};entry.status = "queued";
+            delivery.notice = {id:decision.id,code:"still-stuck",text:stillStuck,sessionId:host.id,runId:observation.runId};entry.status = "queued";
           } else entry.status = "simulated";
           if (!previous) run.decisions.push(entry);run.guard = consumeDecision(folded.state);
         }
       }
-      if (decision && !toolBoundary && !run.decisions.some(item => item.id === decision.id)) run.decisions.push({id:decision.id,runId:observation.runId,action:decision.action,mode:policy.mode === "observe" ? "observe" : "active",status:"proposed",submissionId:null,reason:decision.reason});
+      if (decision && !toolBoundary && !run.decisions.some(item => item.id === decision.id)) run.decisions.push({id:decision.id,runId:observation.runId,action:decision.action,mode:policy.mode === "observe" ? "observe" : "active",status:"proposed",submissionId:null,reason:decision.reason,text:decision.action === "redirect" ? decisionText(folded.state) : stillStuck,at:clock()});
       if (folded.judge) {
         const features = folded.state.featureCoverage ? loopFeatures(folded.state.window,{repositoryRoot:host.repositoryRoot,calls:folded.state.cum_turns,callsSinceGreen:folded.state.callsSinceGreen,callsSinceNewFailure:folded.state.sinceNewFailure,p90:percentile(knowledge.envelope.resolved_turns,90)}) : null;
         const fullDigest = folded.judge.digest;
@@ -150,7 +151,7 @@ export function createTokenEconomizer(options:TokenEconomizerOptions) {
       if (!previous && prepared.section) await options.harness().commit(tx => tx.appendEntry(ContextSnapshotEntry,host.conversationId,{data:{sessionId:host.id,section:prepared.section,injectedIds:prepared.injectedIds}}),BACKGROUND_CONTEXT);
       await options.domain.setTools(host,prepared.frozenMask);
       await recorder.recover(host);
-      if (!previous && prepared.section && emitting(policyFor(key))) await notice({id:fingerprint(JSON.stringify([scopeKey(host.scope),"facts",prepared.section])),code:"facts-selected",text:"Learned repository facts are included in this session. They remain fallible data, not permission to skip verification.",sessionId:host.id,runId:null});
+      if (!previous && prepared.section && emitting(policyFor(key))) await notice({id:fingerprint(JSON.stringify([scopeKey(host.scope),"facts",prepared.section])),code:"facts-selected",text:`Added ${prepared.injectedIds.length === 1 ? "1 learned repository fact" : `${prepared.injectedIds.length} learned repository facts`} to this session. They’re hints, not guarantees.`,sessionId:host.id,runId:null});
       return prepared;
     },
     async sessionEnded(host:HostSession,completedNormally = false) {await recorder.drained();await closeRun(host,completedNormally,true);await lifecycle.sessionEnded(host);},
@@ -175,6 +176,15 @@ export function createTokenEconomizer(options:TokenEconomizerOptions) {
     async status(host:HostSession) {
       const key = sessionKey(host.scope,host.id), knowledge = await options.harness().snapshot(KnowledgeDoc,scopeKey(host.scope),BACKGROUND_CONTEXT), sessions = await options.harness().snapshot(SessionsDoc,BACKGROUND_CONTEXT), run = await options.harness().snapshot(RunDoc,key,BACKGROUND_CONTEXT), jobs = await options.harness().snapshot(JobsDoc,BACKGROUND_CONTEXT), classifiers = await options.harness().snapshot(ClassifiersDoc,scopeKey(host.scope),BACKGROUND_CONTEXT);
       return {policy:options.policy(host),session:sessions?.sessions[key] ?? null,knowledge:knowledge ?? null,run:run ?? null,jobs:Object.values(jobs?.jobs ?? {}).filter(job => job.sessionKey === key),ledger:jobs?.budget.ledger.filter(row => row.sessionId === key) ?? [],accounting:{calls:jobs?.budget.calls[key] ?? 0,dailyCalls:jobs?.budget.dailyCalls[new Date(clock()).toISOString().slice(0,10)] ?? 0,reservations:Object.entries(jobs?.budget.reserved ?? {}).filter(([,row]) => row.session === key).map(([id,row]) => ({id,cost:row.cost})),authPaused:(jobs?.paused.length ?? 0) > 0},classifiers:classifiers ?? null,lastError};
+    },
+    /** Explicit removal for one session; repository knowledge and future fresh sessions are unchanged. */
+    async removeContext(host:HostSession) {
+      const key = sessionKey(host.scope,host.id);
+      return options.harness().commit(async tx => {
+        if ((await tx.doc(LiveDoc,host.conversationId)).run) throw new Error("Wait until the Agent is idle, then remove learned facts.");
+        const state = await tx.doc(SessionsDoc), row = state.sessions[key];if (!row) throw new Error("This Agent has no optimizer session");
+        const removed = row.injectedIds.length;row.section = "";row.injectedIds = [];return removed;
+      },BACKGROUND_CONTEXT);
     },
     async proposals(host:HostSession) {return (await options.harness().snapshot(KnowledgeDoc,scopeKey(host.scope),BACKGROUND_CONTEXT))?.tools.proposal ?? [];},
     apply(host:HostSession,names:string[]) {return publication.apply({host,scope:host.scope,sessionKey:sessionKey(host.scope,host.id)},names,true);},
