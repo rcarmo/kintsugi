@@ -2,11 +2,12 @@ import { tokenOptimizerSettingsContribution } from "../../src/server/token-optim
 import { carriedSnapshotIds, latestOptimizerEntry, optimizerEntries, optimizerMessageSections } from "../../src/server/token-optimizer-source.ts";
 import { openDurableWorkspace, WorkspaceAgents } from "../../src/server/durable-workspace.ts";
 import { openDurableAgentRuntime } from "../../src/server/durable-runtime.ts";
+import { renderAgentPaneComposerFooter } from "../../src/server/render-composer.ts";
 import type { WorkspaceAgentToolOptions } from "@kintsugi/agent/server/tools";
 import type { WriteDurableTiming } from "../../src/server/durable-timing.ts";
 import { stream } from "@earendil-works/pi-ai/api/anthropic-messages";
 import { isJsonObject, type JsonObject } from "@kintsugi/core";
-import { ContextSnapshotEntry, KnowledgeDoc, JobsDoc } from "../../../token-economizer/src/pi-durable/documents.ts";
+import { ContextSnapshotEntry, KnowledgeDoc, JobsDoc, RunDoc } from "../../../token-economizer/src/pi-durable/documents.ts";
 import { scopeKey } from "../../../token-economizer/src/core/types.ts";
 import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -17,12 +18,13 @@ import { contentText, createModels, fauxProvider, fauxAssistantMessage, fauxTool
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { openNodeJsonlStorage } from "@earendil-works/pi-durable/storage/jsonl/node";
-import { AgentDoc, AssistantEntry, LiveDoc, UserEntry, type AgentChange, createRegistry, defineExtension, defineTool, Harness, MemoryStorage } from "@earendil-works/pi-durable";
+import { AgentDoc, AssistantEntry, LiveDoc, UserEntry, type AgentChange, type ConversationId, createRegistry, defineExtension, defineTool, Harness, MemoryStorage } from "@earendil-works/pi-durable";
 import { Type } from "typebox";
 import { createWorkspaceCodemodeExtension } from "../../../codemode/src/server/extension.ts";
 import { createNativeTokenOptimizer, OptimizerNotice, tokenOptimizerIntegration } from "../../src/server/token-optimizer.ts";
 import { SessionsDoc } from "../../../token-economizer/src/pi-durable/documents.ts";
 import { sessionKey } from "../../../token-economizer/src/core/sessions.ts";
+import { emptyGuard } from "../../../token-economizer/src/core/loopguard/turn.ts";
 import { runIdentity } from "../../../token-economizer/src/pi-durable/run-identity.ts";
 import { ids } from "@kintsugi/agent/server/render-context";
 import { TokenOptimizerConfiguration, tokenOptimizerConfiguration } from "../../src/server/token-optimizer-config.ts";
@@ -328,4 +330,34 @@ test("the real submission path picks tools for an idle prompt, with attachments,
   expect((await submitted.wait(context)).status).toBe("done");
   expect(order).toEqual(["judge","main"]);expect(judged).toContain("Summarise the attached chart");
   expect(mainTools).toContain("bash");expect(mainTools).not.toContain("rare");
+},30_000);
+test("the footer chip follows mode, facts, hidden tools and suggestions, and opens the Agent's Settings row",async () => {
+  const path = await mkdtemp(join(tmpdir(),"native-optimizer-chip-")), prior = process.env.KINTSUGI_DATA_DIR;cleanups.push(() => rm(path,{recursive:true,force:true}));process.env.KINTSUGI_DATA_DIR = path;cleanups.push(async () => {if (prior === undefined) delete process.env.KINTSUGI_DATA_DIR;else process.env.KINTSUGI_DATA_DIR = prior;});
+  const f = await setup("memory",tokenOptimizerConfiguration()), service = tokenOptimizerConfiguration(), changed:ConversationId[] = [];
+  const unsubscribe = f.native.subscribeChips(id => changed.push(id));cleanups.push(async () => unsubscribe());
+  // Chips refresh after a short debounce once optimizer state or Settings change.
+  const settle = () => Bun.sleep(600);
+  await settle();expect(f.native.chip(f.conversation.id)).toBeUndefined();
+  const config = service.snapshot();Object.assign(config.policy,{enabled:true,microSkills:"envfacts",pruning:"propose"});await service.configure(config);
+  await settle();expect(f.native.chip(f.conversation.id)).toMatchObject({mode:"observe",facts:0,hidden:0,suggestions:0,nudged:false,focus:JSON.stringify(["fixture","agent"])});
+  changed.length = 0;
+  await f.harness.commit(async tx => {
+    const row = (await tx.doc(SessionsDoc)).sessions[sessionKey(f.host.scope,f.host.id)]!;row.injectedIds = ["one","two"];row.frozenMask = ["rare"];
+    (await tx.doc(KnowledgeDoc,scopeKey(f.host.scope),f.host.scope)).tools.proposal = ["bash"];
+  },context);
+  await settle();expect(changed).toContain(f.conversation.id);
+  expect(f.native.chip(f.conversation.id)).toMatchObject({facts:2,hidden:1,suggestions:1});
+  const footer = renderAgentPaneComposerFooter({workspaceId:"fixture",agentId:"agent"},{contextPercent:null,compactAvailable:false,inputTokens:null,outputTokens:null,cost:null,modelName:"faux-1",thinkingLevel:"off",thinkingLevels:[],models:[],optimizer:f.native.chip(f.conversation.id)});
+  expect(footer).toContain("✦</span>Watching · 2 facts · 1 hidden");expect(footer).toContain('data-footer-drop="0"');expect(footer).toContain("token-optimizer-chip--attention");
+  expect(footer).toContain(`href="/settings?section=token-optimizer&amp;focus=${encodeURIComponent(JSON.stringify(["fixture","agent"]))}"`);expect(footer).toContain("1 tool suggestion waiting.");
+  expect(renderAgentPaneComposerFooter({workspaceId:"fixture",agentId:"agent"},{contextPercent:null,compactAvailable:false,inputTokens:null,outputTokens:null,cost:null,modelName:"faux-1",thinkingLevel:"off",thinkingLevels:[],models:[]})).not.toContain("token-optimizer-chip");
+  // A decision in the still-open run lights the attention dot; Watch only says it would have nudged.
+  await f.harness.commit(async tx => {const run = await tx.doc(RunDoc,sessionKey(f.host.scope,f.host.id),null);run.guard = emptyGuard("run-1");run.closed = false;run.decisions = [{id:"d",runId:"run-1",action:"redirect",mode:"observe",status:"simulated",submissionId:null,reason:"envelope",text:"Try another approach.",at:1}];},context);
+  await settle();expect(f.native.chip(f.conversation.id)?.nudged).toBe(true);
+  expect(renderAgentPaneComposerFooter({workspaceId:"fixture",agentId:"agent"},{contextPercent:null,compactAvailable:false,inputTokens:null,outputTokens:null,cost:null,modelName:"faux-1",thinkingLevel:"off",thinkingLevels:[],models:[],optimizer:f.native.chip(f.conversation.id)})).toContain("Would have nudged this run.");
+  // The focused Settings view opens this Agent's row.
+  const focused = await tokenOptimizerSettingsContribution.renderFocused!(JSON.stringify(["fixture","agent"]));
+  expect(focused).toMatch(/<details class="disclosure" open>[\s\S]*?agent/);
+  const off = service.snapshot();off.policy.enabled = false;await service.configure(off);
+  await settle();expect(f.native.chip(f.conversation.id)).toBeUndefined();
 },30_000);

@@ -11,7 +11,7 @@ import { destructiveConfirmationHtml } from "@kintsugi/design-system/destructive
 import { Icons } from "@kintsugi/design-system/icons";
 import { createPiModelRuntime, modelsDialogId, popularProviderIds, setEnabledModels } from "@kintsugi/llm/server";
 import { kintsugiEnv, invalidArguments } from "@kintsugi/core";
-import { errorMessage, escapeHtml, providerBadgeHtml } from "@kintsugi/shared";
+import { errorMessage, escapeHtml, providerBadgeHtml, type SettingsContribution } from "@kintsugi/shared";
 import { clearGitHostingCredential, gitHostingProviders } from "@kintsugi/git-hosting";
 import { kintsugiUrl } from "@kintsugi/proxy-ingress";
 import { clearCommitIdentity, getStoredCommitIdentity, setCommitIdentity } from "@kintsugi/workspace-templates";
@@ -108,19 +108,23 @@ export const appSettingsFrameId = "app_settings_frame";
 const disclosureSections = new Set(["credentials", "network", "workspace-resources", "models", "telemetry", "token-optimizer", globalWorkspaceSettingsSectionId, "host", "developer-tools"]);
 const sectionFrameId = (id: string) => `app_settings_section_${id}`;
 
+function renderSection(section: SettingsContribution, focus: string | null): Promise<string> {
+  return focus && section.renderFocused ? section.renderFocused(focus) : section.render();
+}
+
 async function renderSettingsSectionFrame(id: string, request: Request): Promise<string> {
   if (id === browserTransportSectionId) return `<turbo-frame class="app-settings-section-frame" id="${sectionFrameId(id)}">${renderBrowserTransportSettings(request)}</turbo-frame>`;
   const section = listSettingsContributions().find(contribution => contribution.id === id);
   if (!section && id !== "developer-tools") throw invalidArguments(`settings section not found: ${id}`);
   const content = id === "developer-tools"
     ? `${await renderDeveloperTools()}${actionLinkHtml({ href: "/design-system-catalogue.html", variant: "secondary", content: { kind: "caption", caption: "Design system catalogue" }, attributesHtml: 'data-turbo="false"' })}${renderBuildIdentity()}`
-    : await section!.render();
+    : await renderSection(section!, new URL(request.url).searchParams.get("focus"));
   return `<turbo-frame class="app-settings-section-frame" id="${sectionFrameId(id)}">${disclosureSections.has(id) ? `<div class="app-settings-expanded">${content}</div>` : content}</turbo-frame>`;
 }
 
 export async function renderSettingsFrame(request: Request, sectionId?: string): Promise<string> {
   if (sectionId === "git-identity") sectionId = "commit-identity";
-  const contributions = listSettingsContributions();
+  const contributions = listSettingsContributions(), focus = new URL(request.url).searchParams.get("focus");
   if (sectionId && !contributions.some(contribution => contribution.id === sectionId) && sectionId !== "developer-tools" && sectionId !== "url" && sectionId !== browserTransportSectionId) throw invalidArguments(`settings section not found: ${sectionId}`);
   // Opening the panel never waits for a contribution's I/O. Each section owns its request.
   const inline = new Map(contributions
@@ -134,7 +138,7 @@ export async function renderSettingsFrame(request: Request, sectionId?: string):
       label: { kind: "text", text: label },
       trailingHtml: id === "models" ? popularProviderIds.map(provider => providerBadgeHtml(provider, provider, "settings-provider-icon")).join("") : undefined,
     },
-    bodyHtml: `<turbo-frame class="app-settings-section-frame" id="${sectionFrameId(id)}" src="/settings/sections/${id}" loading="lazy"><span role="status">Loading…</span></turbo-frame>`,
+    bodyHtml: `<turbo-frame class="app-settings-section-frame" id="${sectionFrameId(id)}" src="/settings/sections/${id}${sectionId === id && focus ? `?focus=${encodeURIComponent(focus)}` : ""}" loading="lazy"><span role="status">Loading…</span></turbo-frame>`,
   });
   const versionFooter = `<footer class="app-settings-version" aria-label="Kintsugi version">${escapeHtml(kintsugiVersion)}</footer>`;
   // The recovery destination loads no other sections: hung section requests

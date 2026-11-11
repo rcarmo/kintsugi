@@ -296,6 +296,8 @@ export interface SettingsContribution {
   icon?: string;
   order?: number;
   render(): Promise<string>;
+  /** Renders with one item revealed, named by `?focus=` in a Settings link. */
+  renderFocused?(focus: string): Promise<string>;
   handleAction?(context: SettingsActionContext): Promise<Response | undefined>;
 }
 

@@ -285,6 +285,9 @@ export async function openDurableAgentRuntime(
     return {
       subscribeSelection(listener: () => Promise<void>) { selectionListeners.add(listener); return () => { selectionListeners.delete(listener); }; },
       subscribeStatus(listener: () => void) { statusListeners.add(listener); return () => { statusListeners.delete(listener); }; },
+      /** The token optimizer's footer status for this Agent; absent while it is off. */
+      optimizerChip() { return tokenOptimizer?.chip(conversation.id); },
+      subscribeOptimizer(listener: () => void) { return tokenOptimizer ? tokenOptimizer.subscribeChips(id => { if (id === conversation.id) listener(); }) : () => {}; },
       settings: () => conversation.agent(context),
       get hasStoppableWork() {
         const scope = stopScope();

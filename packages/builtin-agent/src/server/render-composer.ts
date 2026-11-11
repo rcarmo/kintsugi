@@ -1,3 +1,4 @@
+import type { OptimizerChip } from "./token-optimizer.ts";
 import { activityButtonHtml } from "@kintsugi/design-system/activity-button";
 import { buttonHtml } from "@kintsugi/design-system/button";
 import { createPiModelRuntime, hasConnectedModelProvider, modelRefValue, parseModelRef, renderLaunchModelSettings, renderSharedComposerSelections, type ComposerModelOption } from "@kintsugi/llm/server";
@@ -28,6 +29,8 @@ export interface AgentStatsView {
   thinkingLevels: string[];
   models: ComposerModelOption[];
   connectedProvider?: boolean;
+  /** Token optimizer status for this Agent; absent while it is off. */
+  optimizer?: OptimizerChip;
 }
 
 interface AgentPaneState {
@@ -153,6 +156,20 @@ function renderComposerActions(sendHtml: string): string {
     <span class="composer-connect-action">${buttonHtml({ type: "button", variant: "primary", content: { kind: "caption", caption: "Connect to send" }, attributesHtml: 'data-action="agent-model-setup#open"' })}</span>`;
 }
 
+/** A compact optimizer status that opens this Agent's row in Settings; it is the first item to drop when space is short. */
+function renderOptimizerChip(chip: OptimizerChip): string {
+  const parts = [chip.mode === "active" ? "On" : "Watching", chip.facts ? `${chip.facts} ${chip.facts === 1 ? "fact" : "facts"}` : "", chip.hidden ? `${chip.hidden} hidden` : ""].filter(Boolean);
+  const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+  const title = [`Token optimizer: ${chip.mode === "active" ? "On" : "Watch only"}.`,
+    chip.facts ? `${plural(chip.facts, "learned fact")} in this session.` : "",
+    chip.hidden ? `${plural(chip.hidden, "tool")} hidden.` : "",
+    chip.suggestions ? `${plural(chip.suggestions, "tool suggestion")} waiting.` : "",
+    chip.nudged ? (chip.mode === "active" ? "Nudged this run." : "Would have nudged this run.") : "",
+    "Click for details."].filter(Boolean).join(" ");
+  const attention = chip.nudged || chip.suggestions > 0;
+  return `<a class="agent-stat token-optimizer-chip${attention ? " token-optimizer-chip--attention" : ""}" data-footer-drop="0" href="/settings?section=token-optimizer&amp;focus=${escapeHtml(encodeURIComponent(chip.focus))}" data-turbo-stream="true" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"><span aria-hidden="true">✦</span>${escapeHtml(parts.join(" · "))}</a>`;
+}
+
 export function renderAgentPaneComposerFooter(ctx: AgentRenderContext, stats: AgentStatsView): string {
   const percent = stats.contextPercent;
   const contextTitle = stats.nativeBranchUsage ? "Estimated context window used" : "Context window used";
@@ -172,6 +189,7 @@ ${stats.inputTokens === null ? "" : `<span class="agent-stat" data-footer-drop="
 ${stats.outputTokens === null ? "" : `<span class="agent-stat" data-footer-drop="1" title="Tokens down (output)${stats.nativeBranchUsage ? " on this branch" : ""}">↓ <b>${formatTokens(stats.outputTokens)}</b></span>`}
 ${stats.cost === null ? "" : `<span class="agent-stat" data-footer-drop="2" title="${stats.nativeBranchUsage ? `This branch cost, including compaction and recorded attempts.${stats.descendantCost === undefined ? "" : " Plus what its subagents and its scripts' one-shot agents cost, excluding inherited usage."} Updated when usage commits.` : "Agent cost. Updated at agent turn end."}"><b>${formatCost(stats.cost)}${stats.descendantCost === undefined ? "" : ` + ${formatCost(stats.descendantCost)}`}</b></span>`}
 <span class="agent-stat" data-footer-drop="2" title="CH: provider-reported prompt-token hit rate${stats.nativeBranchUsage ? " on this branch, including compaction and model tools; excluding descendants" : " for this session"}${stats.familyCacheHitPercent === undefined ? "" : ". Second percentage: this branch plus all delegated and one-shot descendants; token-weighted, each branch counted once"}. Reused input divided by all prompt tokens, including writes. Output tokens are excluded. N/A means no usable usage data; providers may report unavailable hits as zero.">CH <b>${stats.cacheHitPercent == null ? "N/A" : `${stats.cacheHitPercent.toFixed(0)}%`}${stats.familyCacheHitPercent === undefined ? "" : ` / ${stats.familyCacheHitPercent === null ? "N/A" : `${stats.familyCacheHitPercent.toFixed(0)}%`}`}</b></span>
+${stats.optimizer ? renderOptimizerChip(stats.optimizer) : ""}
 ${selectionForms}
 ${renderSharedComposerSelections({
     modelFormId,

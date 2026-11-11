@@ -31,6 +31,7 @@ export class AgentPresentation {
   private unsubscribeUsage!: () => void;
   private descendantUsage?: DescendantUsage;
   private unsubscribeStatus!: () => void;
+  private unsubscribeOptimizer?: () => void;
   private unsubscribeSelection!: () => void;
   model?: { provider: string; id: string };
   private thinkingLevel = "off";
@@ -70,6 +71,7 @@ export class AgentPresentation {
       runtime.unsubscribeUsage = controller.subscribeUsage(() => { void runtime.refreshUsage().catch(error => console.error("Could not refresh descendant usage", error)); });
       await runtime.refreshUsage();
       runtime.unsubscribeStatus = controller.subscribeStatus(() => runtime.chrome.invalidate());
+      runtime.unsubscribeOptimizer = controller.subscribeOptimizer(() => runtime.chrome.invalidate());
       runtime.unsubscribeSelection = controller.subscribeSelection(() => runtime.attachSelectedBranch());
       await runtime.committed();
       if (!runtime.readOnly) await runtime.refreshModelConfiguration();
@@ -145,7 +147,7 @@ export class AgentPresentation {
       cacheHitPercent: promptCacheHitPercent(buckets),
       familyCacheHitPercent: this.descendantUsage ? promptCacheHitPercent([...buckets, this.descendantUsage]) : undefined,
       cost: buckets.reduce((sum, item) => sum + item.cost.total, 0), modelName: this.model?.id,
-      thinkingLevel: this.thinkingLevel, thinkingLevels: this.availableThinkingLevels(), models: this.models.map(model => ({ ...model, selected: model.provider === this.model?.provider && model.id === this.model.id })) };
+      optimizer: this.controller.optimizerChip(), thinkingLevel: this.thinkingLevel, thinkingLevels: this.availableThinkingLevels(), models: this.models.map(model => ({ ...model, selected: model.provider === this.model?.provider && model.id === this.model.id })) };
   }
   subscribeLivePresentation(listener: AgentLivePresentationListener, shown?: LiveRegionDigests) {
     this.assertOpen();
@@ -180,6 +182,7 @@ export class AgentPresentation {
     this.chrome.dispose();
     this.unsubscribeSelection?.();
     this.unsubscribeStatus?.();
+    this.unsubscribeOptimizer?.();
     this.unsubscribeUsage?.();
     this.unsubscribeWork?.();
     this.publishBusy(false);

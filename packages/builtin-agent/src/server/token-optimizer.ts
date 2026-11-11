@@ -1,16 +1,12 @@
+import { contextSection, fingerprint, scopeKey, sessionKey, type AttachmentType, type LearningSession } from "@kintsugi/token-economizer/core";
+import { createSdkModelTransport, createTokenEconomizer, decodeArguments, decodeResult, detach, KnowledgeDoc, RunDoc, runIdentity, SessionsDoc, type HostDomain, type HostSession, type Knowledge } from "@kintsugi/token-economizer/pi-durable";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import { detach } from "@kintsugi/token-economizer/pi-durable";
 import type { Models } from "@earendil-works/pi-ai";
 import { AgentDoc, AssistantEntry, CompactionEntry, defineDoc, defineEntry, LiveDoc, SystemEntry, type LiveState, type AgentState, type Conversation, type ConversationId, type Harness, type RegistryReader } from "@earendil-works/pi-durable";
 import { errorMessage, escapeHtml } from "@kintsugi/shared";
 import type { BuiltinAgentIntegration } from "./integrations.ts";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { createTokenEconomizer, createSdkModelTransport } from "@kintsugi/token-economizer/pi-durable";
-import { fingerprint } from "@kintsugi/token-economizer/core";
-import { contextSection, sessionKey } from "@kintsugi/token-economizer/core";
-import { SessionsDoc } from "@kintsugi/token-economizer/pi-durable";
-import type { HostDomain, HostSession } from "@kintsugi/token-economizer/pi-durable";
 import { carriedSnapshotIds, lastAssistantEntry, latestOptimizerEntry, nativeOptimizerTool, nativeOptimizerTrajectory, optimizerSections, optimizerMessageSections } from "./token-optimizer-source.ts";
 import { tokenOptimizerConfiguration, type TokenOptimizerConfiguration } from "./token-optimizer-config.ts";
 import { WorkspaceAdmission } from "./durable-lifecycle.ts";
@@ -19,8 +15,6 @@ import { readWorkspaceTitle } from "@kintsugi/workspace";
 import { buttonHtml } from "@kintsugi/design-system/button";
 import { ids } from "@kintsugi/agent/server/render-context";
 import { transcriptRow } from "@kintsugi/agent/server/render-markup";
-import { runIdentity } from "@kintsugi/token-economizer/pi-durable";
-import type { AttachmentType } from "@kintsugi/token-economizer/core";
 import type { DurableAgentRecord } from "./durable-workspace.ts";
 const NativeNotices = defineDoc<{ids:string[]}>({kind:"kintsugi.token-optimizer.notices",version:1,scope:"session",initial:() => ({ids:[]}),checkpointWhen:() => false});
 /** `code` and `runId` were added later; older notices render as plain text. */
@@ -38,6 +32,10 @@ export const NativeOptimizerSessions = defineDoc<{sessions:Record<string,{host:H
 const NativeEpoch = defineDoc<{id:string|null}>({kind:"kintsugi.token-optimizer.epoch",version:1,scope:"conversation",history:"latest",fork:"initial",initial:() => ({id:null}),checkpointWhen:() => false});
 type Filter = NonNullable<AgentState["tools"]>|null;
 const NativeMask = defineDoc<{initialized:boolean;baseline:Filter;rendered:Filter;owned:string[]}>({kind:"kintsugi.token-optimizer.mask",version:1,scope:"conversation",history:"latest",fork:"current",initial:() => ({initialized:false,baseline:null,rendered:null,owned:[]}),checkpointWhen:() => false});
+/** Footer chips refresh at most this often while optimizer state changes. */
+const chipDelayMs = 250;
+/** What an Agent's composer footer shows; `focus` opens that Agent's row in Settings. */
+export type OptimizerChip = {mode:"observe"|"active";facts:number;hidden:number;suggestions:number;nudged:boolean;focus:string};
 /** Automatic picks wait this long before a prompt goes ahead without them. */
 const promptPickLimitMs = 20_000;
 const actorSchema = Type.Tuple([Type.String(),Type.String()]);
@@ -47,6 +45,36 @@ export function nativeTokenOptimizers() {return [...active.entries()];}
 export function createNativeTokenOptimizer(options:{workspaceId:string;harness:() => Harness;models:Models;registry:RegistryReader;configuration:TokenOptimizerConfiguration;workspaceTitle?:() => Promise<string|null>}) {
   const hosts = new Map<ConversationId,HostSession>(), subagents = new Map<ConversationId,HostSession>(), excluded = new Set<ConversationId>(), modelFree = new Map<ConversationId,boolean>(), preparing = new Set<ConversationId>();let maintenance:ConversationId|undefined, stop:(() => void)|undefined, observer:(() => void)|undefined;
   let events = Promise.resolve();
+  const chips = new Map<ConversationId,OptimizerChip>(), chipListeners = new Set<(id:ConversationId) => void>();
+  let chipRefresh:Promise<void>|null = null, chipAgain = false;
+  /** Reads only the session, repository and run records the chip needs, once per refresh pass. */
+  async function summarize(host:HostSession,sessions:Record<string,LearningSession>,knowledge:Knowledge|undefined):Promise<OptimizerChip|null> {
+    const policy = options.configuration.policy(options.workspaceId,actor(host));
+    if (!policy.enabled || policy.mode === "off") return null;
+    const session = sessions[sessionKey(host.scope,host.parent ?? host.id)], run = await options.harness().snapshot(RunDoc,sessionKey(host.scope,host.id),context);
+    const current = run && !run.closed ? run.decisions.filter(decision => decision.runId === run.guard?.runId) : [];
+    const nudged = current.some(decision => decision.status === "queued" || decision.status === "consumed" || decision.status === "simulated");
+    return {mode:policy.mode,facts:session?.injectedIds.length ?? 0,hidden:host.parent ? 0 : session?.frozenMask.length ?? 0,suggestions:host.parent ? 0 : knowledge?.tools.proposal.length ?? 0,nudged,focus:JSON.stringify([options.workspaceId,actor(host)])};
+  }
+  /** Recomputes attached Agents' chips after a short pause; overlapping requests coalesce into one more pass. */
+  function refreshChips() {
+    if (chipRefresh) {chipAgain = true;return chipRefresh;}
+    chipRefresh = (async () => {
+      do {
+        chipAgain = false;
+        await new Promise(resolve => setTimeout(resolve,chipDelayMs));
+        const sessions = (await options.harness().snapshot(SessionsDoc,context))?.sessions ?? {}, scope = [...hosts.values()][0]?.scope;
+        const knowledge = scope ? await options.harness().snapshot(KnowledgeDoc,scopeKey(scope),context) : undefined;
+        for (const [id,host] of [...hosts,...subagents]) {
+          const next = await summarize(host,sessions,knowledge), previous = chips.get(id);
+          if (JSON.stringify(next ?? null) === JSON.stringify(previous ?? null)) continue;
+          if (next) chips.set(id,next);else chips.delete(id);
+          for (const listener of chipListeners) listener(id);
+        }
+      } while (chipAgain);
+    })().catch(error => console.error("Token optimizer status refresh failed",error)).finally(() => {chipRefresh = null;});
+    return chipRefresh;
+  }
   const picks = new Map<ConversationId,{at:number;ms:number;hidden:string[]|null;note:string|null}>();
   async function prepare(host:HostSession,task:string,requestId:string,attachments:AttachmentType[] = []) {
     if ((await options.harness().snapshot(LiveDoc,host.conversationId,context))?.run) throw new Error("Wait for the Agent to become idle before picking tools for a task");
@@ -125,6 +153,7 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
     const live = await options.harness().snapshot(LiveDoc,conversation.id,context), mask = await options.harness().snapshot(NativeMask,conversation.id,context);
     const runningMask = live?.run && !live.run.afterRun && live.run.inputs.length > 0 ? existing?.frozenMask ?? mask?.owned ?? [] : undefined;
     preparing.add(conversation.id);
+    queueMicrotask(() => void refreshChips());
     try {await optimizer.sessionStarted(host,{event,visibleHistory:view ? view.entries.some(entry => (entry.model?.length ?? 0) > 0) : true,carriedSections:carried,carriedIds,runningMask});} finally {preparing.delete(conversation.id);}
     return host;
   }
@@ -139,8 +168,10 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
       maintenance = (await options.harness().root(context)).id;await optimizer.attach();
       const catalogue = await options.harness().snapshot(WorkspaceAgents,context), gates = await options.harness().snapshot(WorkspaceAdmission,context);
       if (!gates?.deleted) for (const record of catalogue?.agents ?? []) if (!record.readOnly && !record.parentId && !record.oneShotCallId && !gates?.closed.includes(record.durableId)) await start((await options.harness().conversation(record.durableId,context))!,record,"resume");
-      stop = options.configuration.watch(() => optimizer.updatePolicy(true));active.set(options.workspaceId,this);
+      stop = options.configuration.watch(async () => {await optimizer.updatePolicy(true);void refreshChips();});active.set(options.workspaceId,this);
       const source = options.harness().observeCommits({advance(publication) {
+        // Optimizer state changed: refresh the footer chips after this publication, never inside it.
+        if (publication.changes.some(change => change.type === "document" && /^(token-economizer|kintsugi\.token-optimizer)\./.test(change.record.kind))) queueMicrotask(() => void refreshChips());
         for (const change of publication.changes) if (change.type === "entry" && AssistantEntry.is(change.value)) modelFree.set(change.value.conversationId,change.value.model?.some(message => message.role === "assistant" && message.provider === "kintsugi" && message.model === "codemode-template") ?? false);
         for (const change of publication.changes) if (change.type === "entry" && (SystemEntry.is(change.value) || CompactionEntry.is(change.value))) {
           const entry = change.value, host = hosts.get(entry.conversationId);if (!host) continue;
@@ -155,6 +186,10 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
     async optimizerSessions() {return [...hosts.values()];},
     prepare,
     lookup(id:ConversationId) {return hosts.get(id);},
+    /** The footer chip for an Agent or subagent conversation; absent while the optimizer is off for it. */
+    chip(id:ConversationId) {return chips.get(id);},
+    /** Called with a conversation ID whenever that Agent's chip changes. */
+    subscribeChips(listener:(id:ConversationId) => void) {chipListeners.add(listener);void refreshChips();return () => {chipListeners.delete(listener);};},
     /** Subagents seen for a root session, with their catalogue labels, for Settings. */
     async subagentsOf(host:HostSession) {const agents = (await options.harness().snapshot(WorkspaceAgents,context))?.agents ?? [];return [...subagents.values()].filter(row => row.parent === host.id).map(row => ({host:row,label:agents.find(agent => agent.durableId === row.conversationId || agent.branches?.includes(row.conversationId))?.label ?? "Subagent"}));},
     /** Display name for Settings; the catalogue is the source of Agent titles. */
@@ -181,5 +216,4 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
     async close() {await events;for (const id of [...hosts.keys()]) await end(id);await this.detach();},
   };
 }
-import { decodeArguments, decodeResult } from "@kintsugi/token-economizer/pi-durable";
 export async function nativeOptimizerOptions(workspaceId:string,harness:() => Harness,models:Models,registry:RegistryReader) {const configuration = tokenOptimizerConfiguration();await configuration.load();return createNativeTokenOptimizer({workspaceId,harness,models,registry,configuration,workspaceTitle:() => readWorkspaceTitle(workspaceId)});}

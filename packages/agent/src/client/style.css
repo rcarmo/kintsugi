@@ -181,7 +181,7 @@
 .content-row__icon .agent-slash-command-source-icon :is(img, svg) { width: 20px; height: 20px; }
 .agent-slash-command-preview { margin: 0; padding: 12px; font-family: var(--font-mono); line-height: var(--leading-standard); color: var(--text-bright); background: var(--panel); }
 .kintsugi-fullscreen-html .agent-slash-command-preview { max-width: 980px; margin: 0 auto; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-surface); }
-.agent-stat { height: 24px; display: inline-flex; align-items: center; gap: 4px; line-height: 24px; white-space: nowrap; }
+.agent-stat { height: 24px; display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-code); line-height: 24px; white-space: nowrap; }
 .agent-stat b { color: inherit; font: inherit; }
 .agent-ctx-meter { width: 46px; height: 4px; overflow: hidden; border-radius: var(--radius-indicator); background: var(--line); }
 .agent-ctx-meter i { display: block; height: 100%; border-radius: var(--radius-indicator); background: var(--text-muted); }

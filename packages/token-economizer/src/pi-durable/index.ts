@@ -3,6 +3,6 @@ export type { HostSession, CatalogueSnapshot, Trajectory, SessionStart, ReceiptA
 export { createTokenEconomizer, SteeringEntry, type TokenEconomizerOptions } from "./controller.ts";
 export { createSdkModelTransport } from "./sdk-models.ts";
 export { decodeArguments, decodeResult } from "./decode.ts";
-export { ContextSnapshotEntry, KnowledgeDoc, SessionsDoc, ObservationsDoc, RunDoc, JobsDoc, ClassifiersDoc, NoticesDoc, type GuardDecisionRecord } from "./documents.ts";
+export { ContextSnapshotEntry, KnowledgeDoc, SessionsDoc, ObservationsDoc, RunDoc, JobsDoc, ClassifiersDoc, NoticesDoc, type GuardDecisionRecord, type Knowledge } from "./documents.ts";
 export { runIdentity } from "./run-identity.ts";
 export { detach } from "./detach.ts";
