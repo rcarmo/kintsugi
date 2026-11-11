@@ -9,6 +9,25 @@ async function root(previews: ReturnType<typeof createWorkspacePathPreviews>, id
   return new URL(body.match(/\/~preview\/[a-zA-Z0-9_-]{43}\//)![0], "https://dynamic.example");
 }
 
+test("management file-browser routes bypass preview handling, while explicit file paths remain previews", async () => {
+  const checks: string[] = [];
+  const previews = createWorkspacePathPreviews({
+    publicOrigin: () => "https://dynamic.example", resolveWorkspace(workspaceId) { checks.push(workspaceId); },
+    resolveApp() { throw new Error("Canonical routing must not read workspace bytes"); },
+    resolvePort() { throw new Error("No port preview requested"); },
+  });
+  for (const suffix of ["", "?filesView=workspace", "?filesView=view-2&path=%2Fwork&view=inline", "?filesView=view-2&path=%2Fwork%2Fsrc&view=collapsed", "?filesView=view-2&q=README"]) {
+    const request = new Request(`https://dynamic.example/workspaces/one/files${suffix}`, { headers: { "turbo-frame": "requested-files-frame" } });
+    expect(await previews.canonical(request)).toBeUndefined();
+  }
+  for (const method of ["HEAD", "POST"]) expect(await previews.canonical(new Request("https://dynamic.example/workspaces/one/files", { method }))).toBeUndefined();
+  expect(checks).toEqual([]);
+  const preview = (await previews.canonical(new Request("https://dynamic.example/workspaces/one/files/work/diagram.html")))!;
+  expect(preview.status).toBe(200);
+  expect(preview.headers.get("content-type")).toStartWith("text/html");
+  expect(checks).toEqual(["one"]);
+});
+
 test("HTTPS preview capabilities bind all backend selection to one workspace and never fall back to management", async () => {
   const reads: Array<{ workspaceId: string; path: string }> = [];
   const previews = createWorkspacePathPreviews({

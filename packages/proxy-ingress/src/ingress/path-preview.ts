@@ -167,6 +167,9 @@ export function createWorkspacePathPreviews(options: WorkspacePathPreviewOptions
       const url = new URL(request.url);
       const match = url.pathname.match(/^\/workspaces\/([^/]+)\/(apps\/([^/]+)|ports\/(\d+)|files)(\/.*)?$/);
       if (!match) return;
+      // The exact /files URL is the management file-browser endpoint. Only
+      // /files/<path> contains workspace bytes that need preview isolation.
+      if (match[2] === "files" && !match[5]) return;
       let workspaceId: string, key: string;
       try { workspaceId = decodeURIComponent(match[1]!); key = match[3] ? decodeURIComponent(match[3]) : match[4] ? `port-${match[4]}` : "file"; }
       catch { return new Response("Invalid preview path", { status: 400 }); }
