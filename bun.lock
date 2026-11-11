@@ -123,6 +123,7 @@
         "@kintsugi/observable-terminal": "workspace:*",
         "@kintsugi/prompt": "workspace:*",
         "@kintsugi/shared": "workspace:*",
+        "@kintsugi/token-economizer": "workspace:*",
         "@kintsugi/workspace": "workspace:*",
         "@kintsugi/workspace-templates": "workspace:*",
         "proper-lockfile": "4.1.2",

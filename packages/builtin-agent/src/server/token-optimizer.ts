@@ -1,17 +1,17 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import { detach } from "../../../token-economizer/src/pi-durable/detach.ts";
+import { detach } from "@kintsugi/token-economizer/pi-durable";
 import type { Models } from "@earendil-works/pi-ai";
 import { AgentDoc, AssistantEntry, CompactionEntry, defineDoc, defineEntry, LiveDoc, SystemEntry, type LiveState, type AgentState, type Conversation, type ConversationId, type Harness, type RegistryReader } from "@earendil-works/pi-durable";
 import { errorMessage, escapeHtml } from "@kintsugi/shared";
 import type { BuiltinAgentIntegration } from "./integrations.ts";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { createTokenEconomizer, createSdkModelTransport } from "../../../token-economizer/src/pi-durable/index.ts";
-import { fingerprint } from "../../../token-economizer/src/core/identity.ts";
-import { contextSection, sessionKey } from "../../../token-economizer/src/core/sessions.ts";
-import { SessionsDoc } from "../../../token-economizer/src/pi-durable/documents.ts";
-import type { HostDomain, HostSession } from "../../../token-economizer/src/pi-durable/domain.ts";
-import { carriedSnapshotIds, latestOptimizerEntry, nativeOptimizerTool, nativeOptimizerTrajectory, optimizerSections, optimizerMessageSections } from "./token-optimizer-source.ts";
+import { createTokenEconomizer, createSdkModelTransport } from "@kintsugi/token-economizer/pi-durable";
+import { fingerprint } from "@kintsugi/token-economizer/core";
+import { contextSection, sessionKey } from "@kintsugi/token-economizer/core";
+import { SessionsDoc } from "@kintsugi/token-economizer/pi-durable";
+import type { HostDomain, HostSession } from "@kintsugi/token-economizer/pi-durable";
+import { carriedSnapshotIds, lastAssistantEntry, latestOptimizerEntry, nativeOptimizerTool, nativeOptimizerTrajectory, optimizerSections, optimizerMessageSections } from "./token-optimizer-source.ts";
 import { tokenOptimizerConfiguration, type TokenOptimizerConfiguration } from "./token-optimizer-config.ts";
 import { WorkspaceAdmission } from "./durable-lifecycle.ts";
 import { WorkspaceAgents } from "./durable-workspace.ts";
@@ -19,7 +19,8 @@ import { readWorkspaceTitle } from "@kintsugi/workspace";
 import { buttonHtml } from "@kintsugi/design-system/button";
 import { ids } from "@kintsugi/agent/server/render-context";
 import { transcriptRow } from "@kintsugi/agent/server/render-markup";
-import { runIdentity } from "../../../token-economizer/src/pi-durable/run-identity.ts";
+import { runIdentity } from "@kintsugi/token-economizer/pi-durable";
+import type { AttachmentType } from "@kintsugi/token-economizer/core";
 import type { DurableAgentRecord } from "./durable-workspace.ts";
 const NativeNotices = defineDoc<{ids:string[]}>({kind:"kintsugi.token-optimizer.notices",version:1,scope:"session",initial:() => ({ids:[]}),checkpointWhen:() => false});
 /** `code` and `runId` were added later; older notices render as plain text. */
@@ -44,15 +45,29 @@ function actor(host:HostSession) {const value:unknown = JSON.parse(host.id);Valu
 const active = new Map<string,ReturnType<typeof createNativeTokenOptimizer>>();
 export function nativeTokenOptimizers() {return [...active.entries()];}
 export function createNativeTokenOptimizer(options:{workspaceId:string;harness:() => Harness;models:Models;registry:RegistryReader;configuration:TokenOptimizerConfiguration;workspaceTitle?:() => Promise<string|null>}) {
-  const hosts = new Map<ConversationId,HostSession>(), modelFree = new Map<ConversationId,boolean>(), preparing = new Set<ConversationId>();let maintenance:ConversationId|undefined, stop:(() => void)|undefined, observer:(() => void)|undefined;
+  const hosts = new Map<ConversationId,HostSession>(), subagents = new Map<ConversationId,HostSession>(), excluded = new Set<ConversationId>(), modelFree = new Map<ConversationId,boolean>(), preparing = new Set<ConversationId>();let maintenance:ConversationId|undefined, stop:(() => void)|undefined, observer:(() => void)|undefined;
   let events = Promise.resolve();
   const picks = new Map<ConversationId,{at:number;ms:number;hidden:string[]|null;note:string|null}>();
-  async function prepare(host:HostSession,task:string,requestId:string) {
+  async function prepare(host:HostSession,task:string,requestId:string,attachments:AttachmentType[] = []) {
     if ((await options.harness().snapshot(LiveDoc,host.conversationId,context))?.run) throw new Error("Wait for the Agent to become idle before picking tools for a task");
-    return optimizer.prepareTools(host,task,[],requestId,{index:0,reauditEvery:0},async () => hosts.get(host.conversationId)?.id === host.id && !(await options.harness().snapshot(LiveDoc,host.conversationId,context))?.run);
+    return optimizer.prepareTools(host,task,attachments,requestId,{index:0,reauditEvery:0},async () => hosts.get(host.conversationId)?.id === host.id && !(await options.harness().snapshot(LiveDoc,host.conversationId,context))?.run);
+  }
+  /**
+   * Subagents are recognised from the Agent catalogue the first time their conversation is seen, which is no later than
+   * their first request. One-shot and read-only Agents are not subagents here; their tool use still counts as evidence.
+   */
+  async function subagentHost(id:ConversationId):Promise<HostSession|null> {
+    if (subagents.has(id)) return subagents.get(id)!;
+    if (excluded.has(id)) return null;
+    const record = (await options.harness().snapshot(WorkspaceAgents,context))?.agents.find(row => row.durableId === id || row.branches?.includes(id));
+    if (!record || !record.parentId || record.readOnly || record.oneShotCallId) {excluded.add(id);return null;}
+    const parent = [...hosts.values()].find(host => actor(host) === record.rootId);if (!parent) return null;
+    // The subagent's actor is its root Agent, so it follows that Agent's Settings override.
+    const host:HostSession = {...parent,id:JSON.stringify([actor(parent),`subagent:${record.agentId}:${parent.id}`]),conversationId:id,parent:parent.id};
+    subagents.set(id,host);return host;
   }
   const domain:HostDomain = {integrationId:"kintsugi.builtin",session:async id => {
-    const host = hosts.get(id);if (!host) return null;
+    const host = hosts.get(id);if (!host) return subagentHost(id);
     if (modelFree.get(id)) return {...host,delegated:true};
     return host;
   },tool:nativeOptimizerTool,arguments:(_name,args) => decodeArguments(args),decode:decodeResult,
@@ -77,20 +92,25 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
     },
     async trajectory(host,cutoff) {
       const record = (await options.harness().snapshot(NativeOptimizerSessions,context))?.sessions[host.id];if (!record) return {kind:"absent",reason:"No native logical session record"};
-      return nativeOptimizerTrajectory(options.harness(),host,record.begin,record.end,cutoff);
+      const rootAgent = actor(host), agents = (await options.harness().snapshot(WorkspaceAgents,context))?.agents ?? [];
+      const descendants = agents.filter(row => row.parentId && row.rootId === rootAgent).flatMap(row => [...new Set([row.durableId,...row.branches ?? []])]);
+      return nativeOptimizerTrajectory(options.harness(),host,record.begin,record.end,cutoff,descendants);
     },
   };
   const transport = createSdkModelTransport(options.models);
-  const optimizer = createTokenEconomizer({harness:options.harness,backgroundOwner:() => {if (maintenance === undefined) throw new Error("Optimizer maintenance owner is not attached");return maintenance;},domain,...transport,policy:host => options.configuration.policy(options.workspaceId,actor(host)),onNotice:async notice => {const rows = (await options.harness().snapshot(NativeOptimizerSessions,context))?.sessions, host = rows?.[notice.sessionId]?.host;if (host) await options.harness().commit(async tx => {const state = await tx.doc(NativeNotices);if (state.ids.includes(notice.id)) return;await tx.appendEntry(OptimizerNotice,host.conversationId,{data:{id:notice.id,text:notice.text,at:Date.now(),code:notice.code,runId:notice.runId}});state.ids.push(notice.id);},context);},onError:error => console.error("Token optimizer observation failed",error)});
+  const optimizer = createTokenEconomizer({harness:options.harness,backgroundOwner:() => {if (maintenance === undefined) throw new Error("Optimizer maintenance owner is not attached");return maintenance;},domain,...transport,policy:host => options.configuration.policy(options.workspaceId,actor(host)),onNotice:async notice => {const rows = (await options.harness().snapshot(NativeOptimizerSessions,context))?.sessions, host = rows?.[notice.sessionId]?.host ?? [...subagents.values()].find(row => row.id === notice.sessionId);if (host) await options.harness().commit(async tx => {const state = await tx.doc(NativeNotices);if (state.ids.includes(notice.id)) return;await tx.appendEntry(OptimizerNotice,host.conversationId,{data:{id:notice.id,text:notice.text,at:Date.now(),code:notice.code,runId:notice.runId}});state.ids.push(notice.id);},context);},onError:error => console.error("Token optimizer observation failed",error)});
   async function start(conversation:Conversation,record:Pick<DurableAgentRecord,"agentId"|"parentId"|"readOnly"|"oneShotCallId">,event:"startup"|"new"|"resume"|"fork" = "startup",parentGroup?:string) {
     if (record.parentId || record.readOnly || record.oneShotCallId) return;
     if (event === "startup" && hosts.has(conversation.id)) return hosts.get(conversation.id)!
-    const view = await conversation.context(context), latest = await latestOptimizerEntry(conversation), carried = optimizerMessageSections(view.messages);
+    const scope = {host:"kintsugi.builtin",repository:options.workspaceId,environment:"native-v1"}, known = (await options.harness().snapshot(NativeEpoch,conversation.id,context))?.id ?? null;
+    // A known session keeps its frozen context, so reopening a workspace needs no context or history read.
+    const resumed = known !== null && Boolean((await options.harness().snapshot(SessionsDoc,context))?.sessions[sessionKey(scope,known)]);
+    const view = resumed ? null : await conversation.context(context), latest = resumed ? null : await latestOptimizerEntry(conversation), carried = view ? optimizerMessageSections(view.messages) : {};
     const host = await options.harness().commit(async tx => {
       const epoch = await tx.doc(NativeEpoch,conversation.id), sessions = await tx.doc(NativeOptimizerSessions);
       if (epoch.id === null) {
         epoch.id = JSON.stringify([record.agentId,crypto.randomUUID()]);
-        const host:HostSession = {id:epoch.id,conversationId:conversation.id,scope:{host:"kintsugi.builtin",repository:options.workspaceId,environment:"native-v1"},repositoryRoot:"/work",environmentRevision:"native-v1",classificationGroup:parentGroup ?? epoch.id,delegated:false};
+        const host:HostSession = {id:epoch.id,conversationId:conversation.id,scope,repositoryRoot:"/work",environmentRevision:"native-v1",classificationGroup:parentGroup ?? epoch.id,delegated:false};
         // Installing the adapter over old history never imports that history as live learning.
         const ancestors = parentGroup ? Object.values(sessions.sessions).filter(row => row.host.classificationGroup === parentGroup) : [];
         if (event === "fork" && !ancestors.length) throw new Error("Fork classification group has no native source boundary");
@@ -99,13 +119,13 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
       const row = sessions.sessions[epoch.id];if (!row) throw new Error("Missing native optimizer epoch");return detach(row.host);
     },context);
     hosts.set(conversation.id,host);
-    const assistant = view.entries.findLast(entry => AssistantEntry.is(entry));modelFree.set(conversation.id,assistant?.model?.some(message => message.role === "assistant" && message.provider === "kintsugi" && message.model === "codemode-template") ?? false);
+    const assistant = view ? view.entries.findLast(entry => AssistantEntry.is(entry)) : await lastAssistantEntry(conversation);modelFree.set(conversation.id,assistant?.model?.some(message => message.role === "assistant" && message.provider === "kintsugi" && message.model === "codemode-template") ?? false);
     const existing = (await options.harness().snapshot(SessionsDoc,context))?.sessions[sessionKey(host.scope,host.id)];
     const carriedIds = existing ? existing.injectedIds : carried[contextSection] ? await carriedSnapshotIds(conversation,carried[contextSection]) : [];
     const live = await options.harness().snapshot(LiveDoc,conversation.id,context), mask = await options.harness().snapshot(NativeMask,conversation.id,context);
     const runningMask = live?.run && !live.run.afterRun && live.run.inputs.length > 0 ? existing?.frozenMask ?? mask?.owned ?? [] : undefined;
     preparing.add(conversation.id);
-    try {await optimizer.sessionStarted(host,{event,visibleHistory:view.entries.some(entry => (entry.model?.length ?? 0) > 0),carriedSections:carried,carriedIds,runningMask});} finally {preparing.delete(conversation.id);}
+    try {await optimizer.sessionStarted(host,{event,visibleHistory:view ? view.entries.some(entry => (entry.model?.length ?? 0) > 0) : true,carriedSections:carried,carriedIds,runningMask});} finally {preparing.delete(conversation.id);}
     return host;
   }
   async function end(id:ConversationId) {
@@ -135,6 +155,8 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
     async optimizerSessions() {return [...hosts.values()];},
     prepare,
     lookup(id:ConversationId) {return hosts.get(id);},
+    /** Subagents seen for a root session, with their catalogue labels, for Settings. */
+    async subagentsOf(host:HostSession) {const agents = (await options.harness().snapshot(WorkspaceAgents,context))?.agents ?? [];return [...subagents.values()].filter(row => row.parent === host.id).map(row => ({host:row,label:agents.find(agent => agent.durableId === row.conversationId || agent.branches?.includes(row.conversationId))?.label ?? "Subagent"}));},
     /** Display name for Settings; the catalogue is the source of Agent titles. */
     async title(host:HostSession) {const record = (await options.harness().snapshot(WorkspaceAgents,context))?.agents.find(row => row.durableId === host.conversationId || row.branches?.includes(host.conversationId));return record?.title || record?.label || actor(host);},
     agentId:actor,
@@ -145,12 +167,12 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
      * Picks tools for a new prompt before it is admitted, while the Agent is idle. A slow or failed pick never
      * blocks the prompt: it is recorded for Settings and the prompt goes ahead with the current toolset.
      */
-    async preparePrompt(id:ConversationId,task:string) {
+    async preparePrompt(id:ConversationId,task:string,attachments:AttachmentType[] = []) {
       const host = hosts.get(id);if (!host || !task.trim()) return;
       const policy = options.configuration.policy(options.workspaceId,actor(host));
       if (!policy.autoToolPicks || policy.toolJudge === "none" || policy.pruning === "off" || !(policy.mode === "active" || policy.mode === "observe" && policy.inferenceInObserve)) return;
       if ((await options.harness().snapshot(LiveDoc,id,context))?.run) return;
-      const began = Date.now(), work = prepare(host,task,crypto.randomUUID()).then(mask => ({mask}),error => ({error:errorMessage(error)}));
+      const began = Date.now(), work = prepare(host,task,crypto.randomUUID(),attachments).then(mask => ({mask}),error => ({error:errorMessage(error)}));
       const outcome = await Promise.race([work,new Promise<null>(resolve => setTimeout(resolve,promptPickLimitMs,null))]);
       picks.set(id,{at:Date.now(),ms:Date.now()-began,hidden:outcome && "mask" in outcome ? outcome.mask : null,note:outcome === null ? "Took too long, so the prompt went ahead with the current tools." : "error" in outcome ? outcome.error : null});
     },
@@ -159,5 +181,5 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
     async close() {await events;for (const id of [...hosts.keys()]) await end(id);await this.detach();},
   };
 }
-import { decodeArguments, decodeResult } from "../../../token-economizer/src/pi-durable/decode.ts";
+import { decodeArguments, decodeResult } from "@kintsugi/token-economizer/pi-durable";
 export async function nativeOptimizerOptions(workspaceId:string,harness:() => Harness,models:Models,registry:RegistryReader) {const configuration = tokenOptimizerConfiguration();await configuration.load();return createNativeTokenOptimizer({workspaceId,harness,models,registry,configuration,workspaceTitle:() => readWorkspaceTitle(workspaceId)});}

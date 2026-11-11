@@ -397,7 +397,8 @@ export async function openDurableAgentRuntime(
           await load.validateModel((await conversation.agent(context)).model);
           await readyForExecution();
           assertAdmission();
-          if (!identity.readOnly) await tokenOptimizer?.preparePrompt(conversation.id, input.text);
+          // The task judge sees what the Agent will: the prompt, attachment notes and attached file types.
+          if (!identity.readOnly) await tokenOptimizer?.preparePrompt(conversation.id, [input.text, ...input.attachmentNotes ?? []].join("\n\n"), (input.images ?? []).map(image => ({ extension: image.mimeType.split("/")[1] ?? "", mimeType: image.mimeType })));
           assertAdmission();
           return submitDurableInput(conversation, workspaceId, harnessOptions.models, input, context, async (id, text) => {
             const expanded = await load.expand(id, text);

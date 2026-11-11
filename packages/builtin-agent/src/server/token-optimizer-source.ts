@@ -1,13 +1,13 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { contentText, type JsonObject, type Message } from "@earendil-works/pi-ai";
-import { AssistantEntry, LiveDoc, ToolResultEntry, UserEntry, type Conversation, type Cursor, type EntryId, type EntryRecord, type Harness } from "@earendil-works/pi-durable";
-import { ContextSnapshotEntry } from "../../../token-economizer/src/pi-durable/documents.ts";
+import { AssistantEntry, LiveDoc, ToolResultEntry, UserEntry, type Conversation, type ConversationId, type Cursor, type EntryId, type EntryRecord, type Harness } from "@earendil-works/pi-durable";
+import { ContextSnapshotEntry } from "@kintsugi/token-economizer/pi-durable";
 import { isJsonObject } from "@kintsugi/core";
-import { makeObservation, type ToolMapping } from "../../../token-economizer/src/core/observations.ts";
-import { decodeArguments, decodeResult } from "../../../token-economizer/src/pi-durable/decode.ts";
-import { runnerVerdict, statusOfTests } from "../../../token-economizer/src/core/loopguard/verification.ts";
-import type { HostSession, Trajectory, ToolResultData } from "../../../token-economizer/src/pi-durable/domain.ts";
-import type { Observation } from "../../../token-economizer/src/core/types.ts";
+import { makeObservation, type ToolMapping } from "@kintsugi/token-economizer/core";
+import { decodeArguments, decodeResult } from "@kintsugi/token-economizer/pi-durable";
+import { runnerVerdict, statusOfTests } from "@kintsugi/token-economizer/core";
+import type { HostSession, Trajectory, ToolResultData } from "@kintsugi/token-economizer/pi-durable";
+import type { Observation } from "@kintsugi/token-economizer/core";
 import { codemodeCallEntry, type CallStart } from "./codemode-call.ts";
 export function nativeOptimizerTool(name:string):ToolMapping {
   if (name === "codemode") return {semantic:"wrapper",readOnly:false};
@@ -34,6 +34,16 @@ export async function optimizerEntries(conversation:Conversation,bounds:{after:n
 export async function latestOptimizerEntry(conversation:Conversation):Promise<number|null> {
   return (await conversation.entries({},1,undefined,context)).items[0]?.id ?? null;
 }
+/** The newest assistant entry, searching backwards; one tool round at most in practice. */
+export async function lastAssistantEntry(conversation:Conversation):Promise<EntryRecord|undefined> {
+  let cursor:Cursor|undefined;
+  do {
+    const page = await conversation.entries({},200,cursor,context), found = page.items.find(entry => AssistantEntry.is(entry));
+    if (found) return found;
+    cursor = page.next;
+  } while (cursor);
+  return undefined;
+}
 /** The fact IDs recorded with a carried section, searching backwards from the newest entry. */
 export async function carriedSnapshotIds(conversation:Conversation,section:string):Promise<string[]> {
   let cursor:Cursor|undefined;
@@ -50,13 +60,9 @@ export function optimizerMessageSections(messages:readonly Message[]) {
   return sections;
 }
 export function optimizerSections(entries:readonly EntryRecord[]) {return optimizerMessageSections(entries.flatMap(entry => [...entry.model ?? []]));}
-/** Reads only the active fork's committed native source; never executes a tool or imports abandoned history. */
-export async function nativeOptimizerTrajectory(harness:Harness,host:HostSession,begin:number,end:number|null,cutoff:string|null):Promise<Trajectory> {
-  const conversation = await harness.conversation(host.conversationId,context);if (!conversation) return {kind:"absent",reason:"Conversation is absent"};
-  let maximum = end ?? Infinity;
-  if (cutoff !== null) {const value = Number(cutoff);if (!Number.isSafeInteger(value) || value < 0) throw new Error("Invalid saved optimizer source cutoff");maximum = Math.min(maximum,value);}
-  const entries = await optimizerEntries(conversation,{after:begin,upTo:maximum}), latest = await latestOptimizerEntry(conversation), observed:Observation[] = [];
-  const calls = new Map<string,{name:string;args:JsonObject;runId:string}>(), starts = new Map<string,{start:CallStart;entry:EntryRecord}>();
+/** One conversation's committed tool results within a session range. */
+function readSource(entries:readonly EntryRecord[],host:HostSession) {
+  const observed:Observation[] = [], calls = new Map<string,{name:string;args:JsonObject;runId:string}>(), starts = new Map<string,{start:CallStart;entry:EntryRecord}>();
   let prompts = 0, activity = 0;
   for (const entry of entries) {
     if (UserEntry.is(entry)) prompts++;
@@ -70,15 +76,36 @@ export async function nativeOptimizerTrajectory(harness:Harness,host:HostSession
       const data = entry.data, key = JSON.stringify([entry.byTaskId,data.callId,data.key]);
       if (data.phase === "start") starts.set(key,{start:data,entry});
       else {
-        const source = starts.get(key);if (!source) return {kind:"unreadable",reason:"Native nested result has no visible start"};
+        const source = starts.get(key);if (!source) return {kind:"unreadable" as const,reason:"Native nested result has no visible start"};
         const args = isJsonObject(source.start.arguments) ? source.start.arguments : null;
         capture(source.start.name,args,{name:source.start.name,structured:null,details:data.details ?? null,output:data.output ?? data.error ?? "",isError:data.isError,diagnostics:data.cancelled ? [{code:"aborted",message:data.error ?? "Cancelled"}] : []},String(entry.byTaskId),data.key,calls.get(data.callId)?.runId ?? "unknown",source.start.issuedAt ?? 0);starts.delete(key);
       }
     } else if (ToolResultEntry.is(entry)) for (const message of entry.model ?? []) if (message.role === "toolResult") {
-      const source = calls.get(message.toolCallId);if (!source) return {kind:"unreadable",reason:"Tool result has no visible originating arguments"};
+      const source = calls.get(message.toolCallId);if (!source) return {kind:"unreadable" as const,reason:"Tool result has no visible originating arguments"};
       capture(source.name,source.args,{name:source.name,structured:null,details:null,output:contentText(message.content),isError:message.isError,diagnostics:entry.data.diagnostics.map(diagnostic => ({code:diagnostic.code ?? "",message:diagnostic.message}))},String(entry.byTaskId),null,source.runId,message.timestamp);
     }
   }
-  if (starts.size) return (await harness.snapshot(LiveDoc,host.conversationId,context))?.run ? {kind:"later",reason:"Native calls are still running"} : {kind:"unreadable",reason:"Ended trajectory contains an unfinished native call"};
-  return {kind:"ready",cutoff:String(Math.min(maximum,latest ?? begin)),observations:observed,prompts,transcriptActivity:activity};
+  return {kind:"read" as const,observations:observed,prompts,activity,unfinished:starts.size > 0};
+}
+/**
+ * Reads only the active fork's committed native source; never executes a tool or imports abandoned history. Subagent
+ * and one-shot descendants contribute tool results from the same period (entry IDs are journal-wide), never prompts.
+ */
+export async function nativeOptimizerTrajectory(harness:Harness,host:HostSession,begin:number,end:number|null,cutoff:string|null,descendants:readonly ConversationId[] = []):Promise<Trajectory> {
+  const conversation = await harness.conversation(host.conversationId,context);if (!conversation) return {kind:"absent",reason:"Conversation is absent"};
+  let maximum = end ?? Infinity;
+  if (cutoff !== null) {const value = Number(cutoff);if (!Number.isSafeInteger(value) || value < 0) throw new Error("Invalid saved optimizer source cutoff");maximum = Math.min(maximum,value);}
+  const root = readSource(await optimizerEntries(conversation,{after:begin,upTo:maximum}),host), latest = await latestOptimizerEntry(conversation);
+  if (root.kind === "unreadable") return root;
+  if (root.unfinished) return (await harness.snapshot(LiveDoc,host.conversationId,context))?.run ? {kind:"later",reason:"Native calls are still running"} : {kind:"unreadable",reason:"Ended trajectory contains an unfinished native call"};
+  const observations = [...root.observations];let activity = root.activity;
+  for (const id of descendants) {
+    const child = await harness.conversation(id,context);if (!child) continue;
+    const read = readSource(await optimizerEntries(child,{after:begin,upTo:maximum}),host);
+    // A descendant's unreadable history must not cost the root its learning; skip that conversation.
+    if (read.kind === "unreadable") continue;
+    if (read.unfinished && (await harness.snapshot(LiveDoc,id,context))?.run) return {kind:"later",reason:"A subagent is still running"};
+    observations.push(...read.observations);activity = Math.max(activity,read.activity);
+  }
+  return {kind:"ready",cutoff:String(Math.min(maximum,latest ?? begin)),observations,prompts:root.prompts,transcriptActivity:activity};
 }

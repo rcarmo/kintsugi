@@ -9,6 +9,12 @@ import type { ToolMapping } from "../core/observations.ts";
 export type HostSession = {
   id: string; conversationId: ConversationId; scope: Scope; repositoryRoot: string;
   environmentRevision: string; classificationGroup: string; delegated: boolean;
+  /**
+   * Set for a subagent: the ID of its parent's learning session in the same scope. A subagent receives the parent's
+   * frozen facts and its own loop guard; its tool use reaches the parent's evidence through the host trajectory. It has
+   * no learning session, fold or tool mask of its own: hosts copy the parent's tool settings when creating it.
+   */
+  parent?: string;
 };
 export type CatalogueSnapshot = {
   revision: string; source: string; complete: boolean; tools: ToolInfo[];

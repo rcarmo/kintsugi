@@ -1,6 +1,9 @@
 import { tokenOptimizerSettingsContribution } from "../../src/server/token-optimizer-settings.ts";
 import { carriedSnapshotIds, latestOptimizerEntry, optimizerEntries, optimizerMessageSections } from "../../src/server/token-optimizer-source.ts";
-import { openDurableWorkspace } from "../../src/server/durable-workspace.ts";
+import { openDurableWorkspace, WorkspaceAgents } from "../../src/server/durable-workspace.ts";
+import { openDurableAgentRuntime } from "../../src/server/durable-runtime.ts";
+import type { WorkspaceAgentToolOptions } from "@kintsugi/agent/server/tools";
+import type { WriteDurableTiming } from "../../src/server/durable-timing.ts";
 import { stream } from "@earendil-works/pi-ai/api/anthropic-messages";
 import { isJsonObject, type JsonObject } from "@kintsugi/core";
 import { ContextSnapshotEntry, KnowledgeDoc, JobsDoc } from "../../../token-economizer/src/pi-durable/documents.ts";
@@ -14,7 +17,7 @@ import { contentText, createModels, fauxProvider, fauxAssistantMessage, fauxTool
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { openNodeJsonlStorage } from "@earendil-works/pi-durable/storage/jsonl/node";
-import { AgentDoc, AssistantEntry, LiveDoc, UserEntry, createRegistry, defineExtension, defineTool, Harness, MemoryStorage } from "@earendil-works/pi-durable";
+import { AgentDoc, AssistantEntry, LiveDoc, UserEntry, type AgentChange, createRegistry, defineExtension, defineTool, Harness, MemoryStorage } from "@earendil-works/pi-durable";
 import { Type } from "typebox";
 import { createWorkspaceCodemodeExtension } from "../../../codemode/src/server/extension.ts";
 import { createNativeTokenOptimizer, OptimizerNotice, tokenOptimizerIntegration } from "../../src/server/token-optimizer.ts";
@@ -249,4 +252,80 @@ test("downgrade: a journal written with the optimizer On reopens and runs withou
   const older = await Harness.open(await openNodeJsonlStorage(join(path,"journal"),context),{models,registry:plain},context);cleanups.push(() => older.close(context));
   const reopened = (await older.conversation(record.id,context))!;faux.setResponses([fauxAssistantMessage("Still works")]);
   expect((await (await reopened.submit({type:"input",content:"Again",requestId:"two"},context)).wait(context)).status).toBe("done");
+},30_000);
+async function subagent(f:Awaited<ReturnType<typeof setup>>,agentId:string,instructions:string) {
+  const record = await f.harness.commit(async tx => {
+    const created = await tx.createConversation({ownership:{kind:"ownerless"}});
+    (await tx.doc(WorkspaceAgents)).agents.push({agentId,durableId:created.id,parentId:"agent",rootId:"agent",taskName:agentId,label:agentId,title:agentId});
+    return created;
+  },context);
+  const conversation = (await f.harness.conversation(record.id,context))!;
+  await conversation.configure({model:{provider:"faux",modelId:"faux-1"},instructions},context);
+  return conversation;
+}
+test("subagents see the root's facts and their tool use protects tools from being hidden",async () => {
+  const f = await setup(), config = f.configuration.snapshot();
+  Object.assign(config.policy,{enabled:true,microSkills:"envfacts",pruning:"propose",evidenceSessions:1,evidenceMinSessions:1,evidencePrompts:1});
+  await f.configuration.configure(config);const active = f.configuration.snapshot();active.policy.mode = "active";await f.configuration.configure(active);
+  await f.harness.commit(async tx => {const row = (await tx.doc(SessionsDoc)).sessions[sessionKey(f.host.scope,f.host.id)]!;row.section = "<token-economizer>\n- Root fact for everyone.\n</token-economizer>";row.injectedIds = ["root-fact"];},context);
+  const seen:string[] = [];
+  f.faux.setResponses(Array.from({length:6},() => (request) => {
+    const text = JSON.stringify(request);
+    if (text.includes("Subagent instructions")) {seen.push(text);return request.messages.some(message => message.role === "toolResult") ? fauxAssistantMessage("Done") : fauxAssistantMessage([fauxToolCall("rare",{})],{stopReason:"toolUse"});}
+    return fauxAssistantMessage("Root done");
+  }));
+  const child = await subagent(f,"helper","Subagent instructions");
+  expect((await (await child.submit({type:"input",content:"Use the rare helper",requestId:"child"},context)).wait(context)).status).toBe("done");
+  expect(seen[0]).toContain("Root fact for everyone.");
+  expect((await (await f.conversation.submit({type:"input",content:"Summarise",requestId:"root"},context)).wait(context)).status).toBe("done");
+  await f.native.end(f.conversation.id);
+  for (const row of (await f.harness.inspect(context)).tasks.filter(row => row.record.kind === "token-economizer.fold")) await f.harness.waitForTask(row.record.id,context);
+  const tools = (await f.native.optimizer.status(f.host)).knowledge!.tools;
+  expect(tools.used).toContain("rare");expect(tools.proposal).not.toContain("rare");
+  expect((await f.native.optimizer.apply(f.host,["rare"])).added).toEqual([]);
+  // One-shot and read-only Agents get no facts or nudges; their work still counts through the root's trajectory.
+  const oneShot = await f.harness.commit(async tx => {const created = await tx.createConversation({ownership:{kind:"ownerless"}});(await tx.doc(WorkspaceAgents)).agents.push({agentId:"script",durableId:created.id,parentId:"agent",rootId:"agent",label:"script",title:"script",readOnly:true,oneShotCallId:"call"});return created;},context);
+  expect(await f.native.domain.session(oneShot.id)).toBeNull();
+  expect(await f.native.domain.session(child.id)).toMatchObject({parent:f.host.id,conversationId:child.id});
+},20_000);
+test("subagents get their own nudges and budget without reshaping the root's envelope",async () => {
+  const f = await setup(), config = f.configuration.snapshot();
+  Object.assign(config.policy,{enabled:true,loop:"rules",thresholds:{min_turns:8,gate_min_turns:8,error_outputs:3}});
+  await f.configuration.configure(config);const active = f.configuration.snapshot();active.policy.mode = "active";await f.configuration.configure(active);
+  await f.harness.commit(async tx => {(await tx.doc(KnowledgeDoc,scopeKey(f.host.scope),f.host.scope)).envelope.resolved_turns = [20,20,20,20,20];},context);
+  f.faux.setResponses(Array.from({length:6},() => (request) => request.messages.some(message => message.role === "toolResult") ? fauxAssistantMessage("Done") : fauxAssistantMessage([fauxToolCall("codemode",{code:"for(let i=0;i<45;i++) await tools.bash({command:i%2 ? 'bun test' : \"sed -i 's/a/b/' src/parser.ts\"});"})],{stopReason:"toolUse"})));
+  f.fail();const child = await subagent(f,"looper","Subagent instructions");
+  expect((await (await child.submit({type:"input",content:"Fix the tests",requestId:"loop"},context)).wait(context)).status).toBe("done");
+  const [sub] = await f.native.subagentsOf(f.host);expect(sub?.label).toBe("looper");
+  const decisions = (await f.native.optimizer.status(sub!.host)).run?.decisions ?? [];
+  expect(decisions.some(decision => decision.action === "redirect" && decision.submissionId !== null)).toBe(true);
+  expect((await f.native.optimizer.status(f.host)).run?.decisions ?? []).toEqual([]);
+  expect((await f.harness.snapshot(KnowledgeDoc,scopeKey(f.host.scope),context))!.envelope.resolved_turns).toEqual([20,20,20,20,20]);
+},30_000);
+test("the real submission path picks tools for an idle prompt, with attachments, before the Agent's first request",async () => {
+  const path = await mkdtemp(join(tmpdir(),"native-optimizer-runtime-"));cleanups.push(() => rm(path,{recursive:true,force:true}));
+  const configuration = new TokenOptimizerConfiguration(path), config = await configuration.load();
+  Object.assign(config.policy,{enabled:true,pruning:"propose",toolJudge:"generative",autoToolPicks:true,generativeModel:{provider:"faux",id:"faux-1"}});await configuration.configure(config);
+  const active = configuration.snapshot();active.policy.mode = "active";await configuration.configure(active);
+  const models = createModels(), faux = fauxProvider({tokensPerSecond:100_000,models:[{id:"faux-1",input:["text","image"]}]});models.setProvider(faux.provider);
+  const registry = createRegistry(), order:string[] = [];let judged = "", mainTools:string[] = [];
+  registry.install(defineExtension({name:"fixture-tools",tools:["rare","bash"].map(name => defineTool({name,description:`The ${name} tool`,parameters:Type.Object({}),replay:"safe",async execute() {return {output:[{type:"text",text:"ok"}]};}}))}));
+  faux.setResponses(Array.from({length:4},() => (request) => {
+    if (JSON.stringify(request).includes("Committed instructions")) {order.push("main");mainTools = request.messages.flatMap(message => message.role === "system" ? (message.toolsAdded ?? []).map(tool => tool.name).filter(name => !request.messages.some(other => other.role === "system" && other.toolsRemoved?.some(removed => removed.name === name))) : []);return fauxAssistantMessage("Done");}
+    order.push("judge");judged = JSON.stringify(request);return fauxAssistantMessage(JSON.stringify({rare:{load:false},bash:{load:true}}));
+  }));
+  const load = {
+    harness:async (_workspace:string,_options:WorkspaceAgentToolOptions,_timing:WriteDurableTiming,harness:() => Harness) => {const native = createNativeTokenOptimizer({workspaceId:"native-workspace",models,registry,harness,configuration});registry.install(native.optimizer.extension);return {models,registry,tokenOptimizer:native};},
+    prepare:async ():Promise<AgentChange> => ({model:{provider:"faux",modelId:"faux-1"},instructions:"Committed instructions",thinkingLevel:"off"}),
+    expand:async (_workspace:string,text:string) => text,
+    validateModel:async () => {},
+    ready:async () => {},
+  };
+  const runtime = await openDurableAgentRuntime(join(path,"journal"),"native-workspace",{},load);cleanups.push(() => runtime.suspend());
+  const agent = await runtime.agent({agentId:"tab",label:"Agent 1",title:"Picks"});
+  const png = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAF0lEQVR4nGP4z8BAEiJN9aiGUQ1DSgMAkPn/Afnh+ngAAAAASUVORK5CYII=";
+  const submitted = await agent.submit({requestId:"picked",text:"Summarise the attached chart",images:[{type:"image",data:png,mimeType:"image/png"}]});
+  expect((await submitted.wait(context)).status).toBe("done");
+  expect(order).toEqual(["judge","main"]);expect(judged).toContain("Summarise the attached chart");
+  expect(mainTools).toContain("bash");expect(mainTools).not.toContain("rare");
 },30_000);

@@ -31,3 +31,6 @@ test("distribution retains the pinned upstream licence, attribution and modified
   for await (const file of new Bun.Glob("src/core/{microskills,loopguard,toolprune}/**/*.ts").scan({cwd:root})) expect(await Bun.file(`${root}/${file}`).text()).toContain("Modified TypeScript port");
   expect(await Bun.file(`${root}/../../apps/web/Dockerfile`).text()).toContain("COPY --from=build --exclude=node_modules /app /app");expect((await Bun.file(`${root}/../../.dockerignore`).text()).split("\n")).not.toContain("packages/token-economizer/LICENSE");
 });
+test("the Kintsugi host uses only the package's public entry points", async () => {
+  for await (const file of new Bun.Glob("**/*.ts").scan({ cwd: `${root}/../builtin-agent/src` })) expect(await Bun.file(`${root}/../builtin-agent/src/${file}`).text()).not.toContain("token-economizer/src/");
+});

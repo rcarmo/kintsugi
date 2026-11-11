@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-export type { HostSession, CatalogueSnapshot, Trajectory, SessionStart, ReceiptAdapter, HostDomain } from "./domain.ts";
+export type { HostSession, CatalogueSnapshot, Trajectory, SessionStart, ReceiptAdapter, HostDomain, ToolResultData, DecodedResult } from "./domain.ts";
 export { createTokenEconomizer, SteeringEntry, type TokenEconomizerOptions } from "./controller.ts";
 export { createSdkModelTransport } from "./sdk-models.ts";
 export { decodeArguments, decodeResult } from "./decode.ts";
-export { ContextSnapshotEntry, KnowledgeDoc, SessionsDoc, ObservationsDoc, RunDoc, JobsDoc, ClassifiersDoc, NoticesDoc } from "./documents.ts";
+export { ContextSnapshotEntry, KnowledgeDoc, SessionsDoc, ObservationsDoc, RunDoc, JobsDoc, ClassifiersDoc, NoticesDoc, type GuardDecisionRecord } from "./documents.ts";
+export { runIdentity } from "./run-identity.ts";
+export { detach } from "./detach.ts";

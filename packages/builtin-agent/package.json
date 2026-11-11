@@ -35,7 +35,8 @@
     "@earendil-works/chord": "catalog:",
     "proper-lockfile": "4.1.2",
     "@kintsugi/legacy-converter": "workspace:*",
-    "@kintsugi/agent": "workspace:*"
+    "@kintsugi/agent": "workspace:*",
+    "@kintsugi/token-economizer": "workspace:*"
   },
   "devDependencies": {
     "@types/web-push": "3.6.4",

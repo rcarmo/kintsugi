@@ -9,14 +9,14 @@ import { warningBannerHtml } from "@kintsugi/design-system/warning-banner";
 import { escapeHtml as h, errorMessage, turboStream, turboStreamResponse, type SettingsContribution } from "@kintsugi/shared";
 import type { JsonObject } from "@kintsugi/core";
 import { readPiModelCatalogue } from "@kintsugi/llm/server";
-import { modelFor, parsePolicy, type Policy } from "../../../token-economizer/src/core/config.ts";
-import type { ModelRef } from "../../../token-economizer/src/core/types.ts";
-import type { HostSession } from "../../../token-economizer/src/pi-durable/domain.ts";
+import { modelFor, parsePolicy, type Policy } from "@kintsugi/token-economizer/core";
+import type { ModelRef } from "@kintsugi/token-economizer/core";
+import type { HostSession } from "@kintsugi/token-economizer/pi-durable";
 import { tokenOptimizerConfiguration, parseOptimizerConfig, optimizerConfigSchema, type OptimizerConfig } from "./token-optimizer-config.ts";
 import { nativeTokenOptimizers } from "./token-optimizer.ts";
 import { readWorkspaceTitle } from "@kintsugi/workspace";
-import { describeKnowledge, type FactSummary } from "../../../token-economizer/src/core/describe.ts";
-import type { GuardDecisionRecord } from "../../../token-economizer/src/pi-durable/documents.ts";
+import { describeKnowledge, type FactSummary } from "@kintsugi/token-economizer/core";
+import type { GuardDecisionRecord } from "@kintsugi/token-economizer/pi-durable";
 
 const panel = "token_optimizer_controls";
 type Mode = "off" | "observe" | "active";
@@ -198,9 +198,10 @@ function toolsHtml(workspaceId: string, agentId: string, data: Status, mode: Mod
   return disclosure(`Tools${applied.length || suggested.length ? ` (${[applied.length ? `${applied.length} hidden` : "", suggested.length ? `${suggested.length} suggested` : ""].filter(Boolean).join(", ")})` : ""}`, body);
 }
 
-function nudgesHtml(data: Status) {
-  const decisions = [...data.run?.decisions ?? []].reverse().slice(0, 6);
-  const body = decisions.length ? list(decisions.map(decision => `<li>${h(nudgeStatus[decision.status])}${decision.at ? ` · ${h(time(decision.at))}` : ""}<small>${h(nudgeReasons.get(decision.reason) ?? decision.reason)}</small>${decision.text ? `<blockquote class="token-optimizer__quote">${h(decision.text.length > 400 ? `${decision.text.slice(0, 400)}…` : decision.text)}</blockquote>` : ""}</li>`)) : `<p class="settings-help">${data.policy.loop === "off" ? "Nudges are off." : "No nudges yet. It steps in only when a run keeps repeating the same failures."}</p>`;
+type Nudge = GuardDecisionRecord & { from: string | null };
+function nudgesHtml(data: Status, nudges: Nudge[]) {
+  const decisions = [...nudges].sort((a, b) => (b.at ?? 0) - (a.at ?? 0)).slice(0, 6);
+  const body = decisions.length ? list(decisions.map(decision => `<li>${h(nudgeStatus[decision.status])}${decision.from ? ` · subagent ${h(decision.from)}` : ""}${decision.at ? ` · ${h(time(decision.at))}` : ""}<small>${h(nudgeReasons.get(decision.reason) ?? decision.reason)}</small>${decision.text ? `<blockquote class="token-optimizer__quote">${h(decision.text.length > 400 ? `${decision.text.slice(0, 400)}…` : decision.text)}</blockquote>` : ""}</li>`)) : `<p class="settings-help">${data.policy.loop === "off" ? "Nudges are off." : "No nudges yet. It steps in only when a run keeps repeating the same failures."}</p>`;
   return disclosure(`Nudges${decisions.length ? ` (${decisions.length})` : ""}`, body);
 }
 
@@ -232,7 +233,9 @@ async function agentHtml(workspaceId: string, native: Native, host: HostSession,
   const data = await native.optimizer.status(host), title = await native.title(host), agentId = native.agentId(host), key = JSON.stringify([workspaceId, agentId]);
   const mode: Mode = data.policy.enabled ? data.policy.mode : "off", tools = data.knowledge?.tools;
   const facts = data.session?.injectedIds.length ?? 0, applied = tools?.applied ?? [], suggested = tools?.proposal ?? [];
-  const decisions = data.run?.decisions ?? [], sent = decisions.filter(item => item.status === "queued" || item.status === "consumed").length, simulated = decisions.filter(item => item.status === "simulated").length;
+  const subagentRuns = await Promise.all((await native.subagentsOf(host)).map(async sub => ({ label: sub.label, decisions: (await native.optimizer.status(sub.host)).run?.decisions ?? [] })));
+  const nudges: Nudge[] = [...(data.run?.decisions ?? []).map(decision => ({ ...decision, from: null })), ...subagentRuns.flatMap(run => run.decisions.map(decision => ({ ...decision, from: run.label })))];
+  const decisions = nudges, sent = decisions.filter(item => item.status === "queued" || item.status === "consumed").length, simulated = decisions.filter(item => item.status === "simulated").length;
   const priced = data.ledger.filter(row => row.cost !== null), cost = priced.reduce((sum, row) => sum + row.cost!, 0), unpriced = data.ledger.length - priced.length;
   const summary = [modeLabels[mode], facts ? plural(facts, "fact") : "", applied.length ? `${plural(applied.length, "tool")} hidden` : "", suggested.length ? plural(suggested.length, "suggestion") : ""].filter(Boolean).join(" · ");
   const status = [
@@ -251,7 +254,7 @@ async function agentHtml(workspaceId: string, native: Native, host: HostSession,
     applied.length ? actionForm(workspaceId, agentId, "restore", "Restore hidden tools") : "",
   ].join("");
   const body = `<div class="form-stack">${view.focus === key ? feedback(view) : ""}<ul class="token-optimizer__status">${status}</ul>${notes}${actions ? buttonGroupHtml({ orientation: "horizontal", semantics: "layout", itemsHtml: actions }) : ""}
-    <div class="token-optimizer__details">${factsHtml(workspaceId, agentId, data, mode)}${toolsHtml(workspaceId, agentId, data, mode, native.lastPick(host.conversationId))}${nudgesHtml(data)}</div>
+    <div class="token-optimizer__details">${factsHtml(workspaceId, agentId, data, mode)}${toolsHtml(workspaceId, agentId, data, mode, native.lastPick(host.conversationId))}${nudgesHtml(data, nudges)}</div>
     ${row("This Agent", overrideForm(workspaceId, agentId, config.agents[key] ?? "inherit", "Optimizer for this Agent"))}
     ${await troubleshootingHtml(workspaceId, agentId, data)}</div>`;
   return disclosureHtml({ open: view.focus === key, summary: { kind: "multiline", label: { kind: "text", text: title }, description: summary }, bodyHtml: body });

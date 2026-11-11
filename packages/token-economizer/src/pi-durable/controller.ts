@@ -37,6 +37,15 @@ export function createTokenEconomizer(options:TokenEconomizerOptions) {
   const hosts = new Map<string,HostSession>(), conversations = new Map<ConversationId,HostSession>(), observed = new Map<string,boolean>(), clock = options.now ?? Date.now;
   let lastError: string|null = null, detachObserver:(() => void)|null = null;
   const policyFor = (key:string) => {const host = hosts.get(key);return host ? options.policy(host) : defaultPolicy();};
+  /** Roots register at session start; a subagent registers the first time its conversation is resolved. */
+  async function resolve(id:ConversationId) {
+    const known = conversations.get(id);if (known) return known;
+    const host = await options.domain.session(id);if (!host?.parent) return host;
+    const key = sessionKey(host.scope,host.id);hosts.set(key,host);conversations.set(id,host);observed.set(key,observing(policyFor(key)));
+    return host;
+  }
+  /** The session whose learning and activity a host's work belongs to. */
+  const learner = (host:HostSession) => host.parent ? hosts.get(sessionKey(host.scope,host.parent)) ?? null : host;
   function failure(error:Error) {lastError = error.message;options.onError?.(error);}
   async function notice(notice:Notice) {
     const host = [...hosts.values()].find(host => host.id === notice.sessionId);if (!host || !emitting(options.policy(host))) return false;
@@ -66,13 +75,13 @@ export function createTokenEconomizer(options:TokenEconomizerOptions) {
       const run = await tx.doc(RunDoc,key,null);if (run.closed || !run.guard) return;
       const policy = policyFor(key);if (!sessionEnd && (!observing(policy) || policy.loop === "off")) return;
       const guard = detach(run.guard), knowledge = await tx.doc(KnowledgeDoc,scopeKey(host.scope),host.scope);
-      if (observing(policy)) knowledge.envelope = recordTurn(detach(knowledge.envelope),guard.cum_turns,resolvedProxy(guard,normal),spiralSnapshot(guard.whole));
+      if (observing(policy) && !host.parent) knowledge.envelope = recordTurn(detach(knowledge.envelope),guard.cum_turns,resolvedProxy(guard,normal),spiralSnapshot(guard.whole));
       run.closed = true;run.guard.held = null;
       for (const decision of run.decisions) if (["proposed","queued"].includes(decision.status)) decision.status = "undelivered";
     },BACKGROUND_CONTEXT);
   }
   async function onLive(id:ConversationId,live:LiveState) {
-    const host = conversations.get(id);if (!host || host.delegated) return;
+    const host = await resolve(id);if (!host || host.delegated) return;
     const key = sessionKey(host.scope,host.id), policy = policyFor(key);if (!observing(policy) || policy.loop === "off") return;
     const current = await options.harness().snapshot(RunDoc,key,BACKGROUND_CONTEXT);
     if (current?.guard && !current.closed && (!live.run || runIdentity(live.run) !== current.guard.runId || live.run.afterRun)) await closeRun(host,!live.runFailure || runIdentity(live.runFailure) !== current.guard.runId);
@@ -85,7 +94,7 @@ export function createTokenEconomizer(options:TokenEconomizerOptions) {
   }
   async function onObservation(host:HostSession,observation:Observation,liveBoundary:boolean) {
     const key = sessionKey(host.scope,host.id), policy = policyFor(key);if (!observing(policy)) return;
-    await lifecycle.transcriptChanged(host);
+    const owner = learner(host);if (owner) await lifecycle.transcriptChanged(owner);
     if (policy.loop === "off") return;
     const handle = await options.harness().conversation(host.conversationId,BACKGROUND_CONTEXT);if (!handle) throw new Error("Observed conversation is missing");
     const catalogue = await options.domain.catalogue(host);
@@ -132,10 +141,11 @@ export function createTokenEconomizer(options:TokenEconomizerOptions) {
     },BACKGROUND_CONTEXT);
     if (delivery.notice && await notice(delivery.notice)) {const id = delivery.notice.id;await options.harness().commit(async tx => {const row = (await tx.doc(RunDoc,key,null)).decisions.find(item => item.id === id);if (row) row.status = "consumed";},BACKGROUND_CONTEXT);}
   }
-  const recorder = createCommittedObservations({harness:options.harness,domain:options.domain,policy:policyFor,onObservation,onLive,onActivity:async (id,at) => {const host = conversations.get(id);if (host && !host.delegated && observing(policyFor(sessionKey(host.scope,host.id)))) await lifecycle.transcriptChanged(host,at);},onError:failure});
+  const recorder = createCommittedObservations({harness:options.harness,domain:{...options.domain,session:resolve},policy:policyFor,onObservation,onLive,onActivity:async (id,at) => {const host = conversations.get(id), owner = host && !host.delegated ? learner(host) : null;if (owner && observing(policyFor(sessionKey(owner.scope,owner.id)))) await lifecycle.transcriptChanged(owner,at);},onError:failure});
   const extension = defineExtension({name:"token-economizer",tasks:[...queue.extension.tasks ?? [],...lifecycle.extension.tasks ?? [],...pipeline.extension.tasks ?? [],...publication.extension.tasks ?? [],...training.extension.tasks ?? []],hooks:[...recorder.extension.hooks ?? []],sections:[section(contextSection,async input => {
-    const host = conversations.get(input.conversationId);if (!host) return undefined;
-    const row = (await options.harness().snapshot(SessionsDoc,BACKGROUND_CONTEXT))?.sessions[sessionKey(host.scope,host.id)];return row?.section || undefined;
+    const host = conversations.get(input.conversationId) ?? await resolve(input.conversationId);if (!host || host.delegated) return undefined;
+    // A subagent shows its parent's frozen facts, never a newer cached render.
+    const row = (await options.harness().snapshot(SessionsDoc,BACKGROUND_CONTEXT))?.sessions[sessionKey(host.scope,host.parent ?? host.id)];return row?.section || undefined;
   },{tag:false})]});
   return {
     extension,
@@ -160,6 +170,7 @@ export function createTokenEconomizer(options:TokenEconomizerOptions) {
       await options.harness().commit(async tx => {const state = await tx.doc(SessionsDoc), row = state.sessions[key];if (!row) return;state.sessions[key] = replaySections(row,sections,compacted,clock());},BACKGROUND_CONTEXT);
     },
     async prepareTools(host:HostSession,task:string,attachments:AttachmentType[] = [],requestId = "",stage:{index:number;reauditEvery:number} = {index:0,reauditEvery:0},isCurrent:() => Promise<boolean> = async () => true) {
+      if (host.parent) throw new Error("Subagents use their parent's tools; prepare the parent instead");
       const key = sessionKey(host.scope,host.id), knowledge = await options.harness().snapshot(KnowledgeDoc,scopeKey(host.scope),BACKGROUND_CONTEXT), catalogue = await options.domain.catalogue(host);
       if (!knowledge) throw new Error("Start the logical session before preparing tools");
       if (!Number.isSafeInteger(stage.index) || stage.index < 0 || !Number.isSafeInteger(stage.reauditEvery) || stage.reauditEvery < 0) throw new Error("Invalid task re-audit cadence");
@@ -186,6 +197,8 @@ export function createTokenEconomizer(options:TokenEconomizerOptions) {
         const removed = row.injectedIds.length;row.section = "";row.injectedIds = [];return removed;
       },BACKGROUND_CONTEXT);
     },
+    /** Subagents registered for a parent session, for status. */
+    subagents(parent:HostSession) {return [...hosts.values()].filter(host => host.parent === parent.id && host.scope.host === parent.scope.host);},
     async proposals(host:HostSession) {return (await options.harness().snapshot(KnowledgeDoc,scopeKey(host.scope),BACKGROUND_CONTEXT))?.tools.proposal ?? [];},
     apply(host:HostSession,names:string[]) {return publication.apply({host,scope:host.scope,sessionKey:sessionKey(host.scope,host.id)},names,true);},
     restore(host:HostSession,names?:string[]) {return publication.restore(host,names);},

@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 import { getKintsugiRuntimeContext, isNotFoundError, writeJsonAtomic } from "@kintsugi/core";
-import { defaultPolicy, effectivePolicy, modelFor, PolicySchema } from "../../../token-economizer/src/core/config.ts";
+import { defaultPolicy, effectivePolicy, modelFor, PolicySchema } from "@kintsugi/token-economizer/core";
 const purposeLabels = {proposer:"model-written facts",loopJudge:"the stuck-run judge",writer:"redirect writing",toolJudge:"task-aware tool picks",loopClassifier:"the stuck-run classifier",toolClassifier:"the tool classifier"} satisfies Record<keyof ReturnType<typeof defaultPolicy>["models"],string>;
 const override = Type.Enum(["inherit","off","observe","active"]);
 export const optimizerConfigSchema = Type.Object({version:Type.Literal(1),hasEnabled:Type.Boolean(),policy:PolicySchema,workspaces:Type.Record(Type.String({maxLength:256}),override),agents:Type.Record(Type.String({maxLength:512}),override)},{additionalProperties:false});
