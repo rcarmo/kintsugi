@@ -70,6 +70,13 @@ to an app that predates this tool: an older registry must not be assumed to resu
 those tasks. Image rollback preserves journals; it does not restore old session
 data.
 
+The token optimizer is app-owned and off by default. It adds journal documents,
+background tasks and a private settings file in app data, not a System operation
+or compatibility-counter change. An older app opens journals written with it and
+leaves its background tasks waiting. Older apps cannot restore tools the optimizer
+has hidden from an Agent: restore them in **Settings → Token optimizer** before
+downgrading.
+
 `packages/shared/src/publishing.ts` also owns image source attribution. Standard
 app, System, workspace and patched-runtime builders stamp its `imageSource` value;
 source-checkout metadata wins when build tooling lives in another checkout.
