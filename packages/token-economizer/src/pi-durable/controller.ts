@@ -34,7 +34,7 @@ type NoticeDelivery = {notice:Notice|null};
 export type TokenEconomizerOptions = {harness:() => Harness;backgroundOwner?:() => ConversationId;domain:HostDomain;policy:(host:HostSession) => Policy;sideCall:SideCall;decisionClassifier?:DecisionClassifier;maximumCost?:(request:import("../core/types.ts").InferenceRequest) => number|null;onNotice?:(notice:Notice) => Promise<void>;onError?:(error:Error) => void;now?:() => number};
 const stillStuck = "This run still looks stuck after a nudge. You can stop it if it isn’t getting anywhere.";
 export function createTokenEconomizer(options:TokenEconomizerOptions) {
-  const hosts = new Map<string,HostSession>(), conversations = new Map<ConversationId,HostSession>(), clock = options.now ?? Date.now;
+  const hosts = new Map<string,HostSession>(), conversations = new Map<ConversationId,HostSession>(), observed = new Map<string,boolean>(), clock = options.now ?? Date.now;
   let lastError: string|null = null, detachObserver:(() => void)|null = null;
   const policyFor = (key:string) => {const host = hosts.get(key);return host ? options.policy(host) : defaultPolicy();};
   function failure(error:Error) {lastError = error.message;options.onError?.(error);}
@@ -132,7 +132,7 @@ export function createTokenEconomizer(options:TokenEconomizerOptions) {
     },BACKGROUND_CONTEXT);
     if (delivery.notice && await notice(delivery.notice)) {const id = delivery.notice.id;await options.harness().commit(async tx => {const row = (await tx.doc(RunDoc,key,null)).decisions.find(item => item.id === id);if (row) row.status = "consumed";},BACKGROUND_CONTEXT);}
   }
-  const recorder = createCommittedObservations({harness:options.harness,domain:options.domain,policy:policyFor,onObservation,onLive,onActivity:async (id,at) => {const host = conversations.get(id);if (host && !host.delegated) await lifecycle.transcriptChanged(host,at);},onError:failure});
+  const recorder = createCommittedObservations({harness:options.harness,domain:options.domain,policy:policyFor,onObservation,onLive,onActivity:async (id,at) => {const host = conversations.get(id);if (host && !host.delegated && observing(policyFor(sessionKey(host.scope,host.id)))) await lifecycle.transcriptChanged(host,at);},onError:failure});
   const extension = defineExtension({name:"token-economizer",tasks:[...queue.extension.tasks ?? [],...lifecycle.extension.tasks ?? [],...pipeline.extension.tasks ?? [],...publication.extension.tasks ?? [],...training.extension.tasks ?? []],hooks:[...recorder.extension.hooks ?? []],sections:[section(contextSection,async input => {
     const host = conversations.get(input.conversationId);if (!host) return undefined;
     const row = (await options.harness().snapshot(SessionsDoc,BACKGROUND_CONTEXT))?.sessions[sessionKey(host.scope,host.id)];return row?.section || undefined;
@@ -146,7 +146,7 @@ export function createTokenEconomizer(options:TokenEconomizerOptions) {
       for (const host of hosts.values()) await publication.wait({host,scope:host.scope,sessionKey:sessionKey(host.scope,host.id)});
     },
     async sessionStarted(host:HostSession,start:SessionStart & {carriedIds:string[]}) {
-      const key = sessionKey(host.scope,host.id);hosts.set(key,host);conversations.set(host.conversationId,host);
+      const key = sessionKey(host.scope,host.id);hosts.set(key,host);conversations.set(host.conversationId,host);observed.set(key,observing(policyFor(key)));
       const previous = (await options.harness().snapshot(SessionsDoc,BACKGROUND_CONTEXT))?.sessions[key], prepared = await lifecycle.sessionStarted(host,start);if (!prepared) return null;
       if (!previous && prepared.section) await options.harness().commit(tx => tx.appendEntry(ContextSnapshotEntry,host.conversationId,{data:{sessionId:host.id,section:prepared.section,injectedIds:prepared.injectedIds}}),BACKGROUND_CONTEXT);
       await options.domain.setTools(host,prepared.frozenMask);
@@ -191,6 +191,12 @@ export function createTokenEconomizer(options:TokenEconomizerOptions) {
     restore(host:HostSession,names?:string[]) {return publication.restore(host,names);},
     async updatePolicy(retryModelCalls = false) {
       await queue.cancelDisabled();
+      // Activity is not tracked while Off. Turning it on starts the quiet clock now, so open sessions aren't folded as stale.
+      for (const [key,host] of hosts) {
+        const now = observing(policyFor(key));
+        if (now && observed.get(key) === false && conversations.get(host.conversationId) === host) await lifecycle.transcriptChanged(host);
+        observed.set(key,now);
+      }
       const scopes = new Map([...hosts.values()].map(host => [scopeKey(host.scope),host]));
       for (const [scope,host] of scopes) await options.harness().commit(async tx => {
         const state = await tx.doc(ClassifiersDoc,scope,null), policy = options.policy(host), confidence = policy.thresholds.judge_confidence ?? scaledThresholds(policy.level).judge_confidence;

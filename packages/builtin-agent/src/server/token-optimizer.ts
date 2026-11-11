@@ -9,9 +9,9 @@ import { Value } from "typebox/value";
 import { createTokenEconomizer, createSdkModelTransport } from "../../../token-economizer/src/pi-durable/index.ts";
 import { fingerprint } from "../../../token-economizer/src/core/identity.ts";
 import { contextSection, sessionKey } from "../../../token-economizer/src/core/sessions.ts";
-import { ContextSnapshotEntry, SessionsDoc } from "../../../token-economizer/src/pi-durable/documents.ts";
+import { SessionsDoc } from "../../../token-economizer/src/pi-durable/documents.ts";
 import type { HostDomain, HostSession } from "../../../token-economizer/src/pi-durable/domain.ts";
-import { nativeOptimizerTool, nativeOptimizerTrajectory, optimizerEntries, optimizerSections, optimizerMessageSections } from "./token-optimizer-source.ts";
+import { carriedSnapshotIds, latestOptimizerEntry, nativeOptimizerTool, nativeOptimizerTrajectory, optimizerSections, optimizerMessageSections } from "./token-optimizer-source.ts";
 import { tokenOptimizerConfiguration, type TokenOptimizerConfiguration } from "./token-optimizer-config.ts";
 import { WorkspaceAdmission } from "./durable-lifecycle.ts";
 import { WorkspaceAgents } from "./durable-workspace.ts";
@@ -85,7 +85,7 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
   async function start(conversation:Conversation,record:Pick<DurableAgentRecord,"agentId"|"parentId"|"readOnly"|"oneShotCallId">,event:"startup"|"new"|"resume"|"fork" = "startup",parentGroup?:string) {
     if (record.parentId || record.readOnly || record.oneShotCallId) return;
     if (event === "startup" && hosts.has(conversation.id)) return hosts.get(conversation.id)!
-    const view = await conversation.context(context), history = await optimizerEntries(conversation), carried = optimizerMessageSections(view.messages);
+    const view = await conversation.context(context), latest = await latestOptimizerEntry(conversation), carried = optimizerMessageSections(view.messages);
     const host = await options.harness().commit(async tx => {
       const epoch = await tx.doc(NativeEpoch,conversation.id), sessions = await tx.doc(NativeOptimizerSessions);
       if (epoch.id === null) {
@@ -94,15 +94,14 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
         // Installing the adapter over old history never imports that history as live learning.
         const ancestors = parentGroup ? Object.values(sessions.sessions).filter(row => row.host.classificationGroup === parentGroup) : [];
         if (event === "fork" && !ancestors.length) throw new Error("Fork classification group has no native source boundary");
-        sessions.sessions[epoch.id] = {host,begin:event === "fork" ? Math.min(...ancestors.map(row => row.begin)) : history.at(-1)?.id ?? 0,end:null};
+        sessions.sessions[epoch.id] = {host,begin:event === "fork" ? Math.min(...ancestors.map(row => row.begin)) : latest ?? 0,end:null};
       }
       const row = sessions.sessions[epoch.id];if (!row) throw new Error("Missing native optimizer epoch");return detach(row.host);
     },context);
     hosts.set(conversation.id,host);
     const assistant = view.entries.findLast(entry => AssistantEntry.is(entry));modelFree.set(conversation.id,assistant?.model?.some(message => message.role === "assistant" && message.provider === "kintsugi" && message.model === "codemode-template") ?? false);
     const existing = (await options.harness().snapshot(SessionsDoc,context))?.sessions[sessionKey(host.scope,host.id)];
-    const snapshot = history.findLast(entry => ContextSnapshotEntry.is(entry) && entry.data.section === carried[contextSection]);
-    const carriedIds = existing?.injectedIds ?? (snapshot && ContextSnapshotEntry.is(snapshot) ? snapshot.data.injectedIds : []);
+    const carriedIds = existing ? existing.injectedIds : carried[contextSection] ? await carriedSnapshotIds(conversation,carried[contextSection]) : [];
     const live = await options.harness().snapshot(LiveDoc,conversation.id,context), mask = await options.harness().snapshot(NativeMask,conversation.id,context);
     const runningMask = live?.run && !live.run.afterRun && live.run.inputs.length > 0 ? existing?.frozenMask ?? mask?.owned ?? [] : undefined;
     preparing.add(conversation.id);
@@ -111,8 +110,8 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
   }
   async function end(id:ConversationId) {
     const host = hosts.get(id);if (!host) return;
-    const conversation = (await options.harness().conversation(id,context))!, entries = await optimizerEntries(conversation), live = await options.harness().snapshot(LiveDoc,id,context);
-    await options.harness().commit(async tx => {const row = (await tx.doc(NativeOptimizerSessions)).sessions[host.id];if (!live?.run) row.end ??= entries.at(-1)?.id ?? row.begin;},context);
+    const conversation = (await options.harness().conversation(id,context))!, latest = await latestOptimizerEntry(conversation), live = await options.harness().snapshot(LiveDoc,id,context);
+    await options.harness().commit(async tx => {const row = (await tx.doc(NativeOptimizerSessions)).sessions[host.id];if (!live?.run) row.end ??= latest ?? row.begin;},context);
     await optimizer.sessionEnded(host,!live?.run && !live?.runFailure);hosts.delete(id);
   }
   return {optimizer,domain,start,end,

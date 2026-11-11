@@ -1,5 +1,5 @@
 import { tokenOptimizerSettingsContribution } from "../../src/server/token-optimizer-settings.ts";
-import { optimizerMessageSections } from "../../src/server/token-optimizer-source.ts";
+import { carriedSnapshotIds, latestOptimizerEntry, optimizerEntries, optimizerMessageSections } from "../../src/server/token-optimizer-source.ts";
 import { openDurableWorkspace } from "../../src/server/durable-workspace.ts";
 import { stream } from "@earendil-works/pi-ai/api/anthropic-messages";
 import { isJsonObject, type JsonObject } from "@kintsugi/core";
@@ -210,4 +210,43 @@ test("prompt-time tool picks, learned-state views, context removal, saved overri
   config.workspaces["parked-workspace"] = "off";const saved = service.snapshot();saved.workspaces["parked-workspace"] = "off";await service.configure(saved);
   html = await tokenOptimizerSettingsContribution.render();expect(html).toContain("Saved settings for other workspaces (1)");
   expect((await action("/override",[["workspaceId","parked-workspace"],["agentId",""],["mode","inherit"]])).status).toBe(200);expect(Object.hasOwn(service.snapshot().workspaces,"parked-workspace")).toBe(false);
+},30_000);
+test("Off writes no activity per transcript entry, enabling restarts the quiet clock, and transcript reads stay bounded",async () => {
+  const f = await setup();
+  const activity = async () => (await f.native.optimizer.status(f.host)).session!.transcriptActivity;
+  const before = await activity();
+  f.faux.setResponses([fauxAssistantMessage("One"),fauxAssistantMessage("Two")]);
+  for (const id of ["off-1","off-2"]) expect((await (await f.conversation.submit({type:"input",content:"Hello",requestId:id},context)).wait(context)).status).toBe("done");
+  await Bun.sleep(5);expect(await activity()).toBe(before);
+  const config = f.configuration.snapshot();config.policy.enabled = true;config.policy.microSkills = "envfacts";await f.configuration.configure(config);
+  expect(await activity()).toBeGreaterThan(before);
+  // Bounded scans: an exclusive lower bound, an inclusive upper bound and the newest entry, without the rest of history.
+  const all = (await f.conversation.entries({order:"ascending"},500,undefined,context)).items.map(entry => entry.id);expect(all.length).toBeGreaterThan(4);
+  expect((await optimizerEntries(f.conversation,{after:all[1]!,upTo:all[3]!})).map(entry => entry.id)).toEqual([all[2],all[3]]);
+  expect((await optimizerEntries(f.conversation,{after:all.at(-2)!,upTo:Infinity})).map(entry => entry.id)).toEqual([all.at(-1)!]);
+  expect(await latestOptimizerEntry(f.conversation)).toBe(all.at(-1)!);
+  for (const [section,ids] of [["Older facts",["old"]],["Newer facts",["new"]],["Older facts",["older-again"]]] as const) await f.harness.commit(tx => tx.appendEntry(ContextSnapshotEntry,f.conversation.id,{data:{sessionId:"s",section,injectedIds:[...ids]}}),context);
+  expect(await carriedSnapshotIds(f.conversation,"Older facts")).toEqual(["older-again"]);expect(await carriedSnapshotIds(f.conversation,"Missing")).toEqual([]);
+},20_000);
+test("downgrade: a journal written with the optimizer On reopens and runs without the optimizer installed",async () => {
+  const path = await mkdtemp(join(tmpdir(),"native-optimizer-downgrade-"));cleanups.push(() => rm(path,{recursive:true,force:true}));
+  const tools = defineExtension({name:"tools",tools:[defineTool({name:"bash",description:"Run",parameters:Type.Object({command:Type.String()}),replay:"safe",async execute() {return {output:[{type:"text",text:"AssertionError: failed"}]};}})]});
+  const configuration = new TokenOptimizerConfiguration(path), config = await configuration.load();
+  Object.assign(config.policy,{enabled:true,microSkills:"envfacts",loop:"rules",pruning:"propose"});await configuration.configure(config);const active = configuration.snapshot();active.policy.mode = "active";await configuration.configure(active);
+  const models = createModels(), faux = fauxProvider({tokensPerSecond:100_000});models.setProvider(faux.provider);
+  let harness:Harness;const registry = createRegistry();registry.install(tools);
+  const native = createNativeTokenOptimizer({workspaceId:"downgrade",models,registry,harness:() => harness,configuration});registry.install(native.optimizer.extension);
+  harness = await Harness.open(await openNodeJsonlStorage(join(path,"journal"),context),{models,registry},context);
+  const record = await harness.commit(tx => tx.createConversation({ownership:{kind:"ownerless"}}),context), conversation = (await harness.conversation(record.id,context))!;
+  await conversation.configure({model:{provider:"faux",modelId:"faux-1"}},context);await native.attach();await native.start(conversation,{agentId:"agent"});
+  faux.setResponses([fauxAssistantMessage([fauxToolCall("bash",{command:"bun test"})],{stopReason:"toolUse"}),fauxAssistantMessage("Done")]);
+  expect((await (await conversation.submit({type:"input",content:"Run",requestId:"one"},context)).wait(context)).status).toBe("done");
+  await native.end(conversation.id);
+  // Leave an unfinished optimizer task behind, as an abrupt upgrade-then-downgrade would.
+  expect((await harness.inspect(context)).tasks.some(row => row.record.kind.startsWith("token-economizer."))).toBe(true);
+  await native.detach();await harness.close(context);
+  const plain = createRegistry();plain.install(tools);
+  const older = await Harness.open(await openNodeJsonlStorage(join(path,"journal"),context),{models,registry:plain},context);cleanups.push(() => older.close(context));
+  const reopened = (await older.conversation(record.id,context))!;faux.setResponses([fauxAssistantMessage("Still works")]);
+  expect((await (await reopened.submit({type:"input",content:"Again",requestId:"two"},context)).wait(context)).status).toBe("done");
 },30_000);

@@ -1,6 +1,7 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { contentText, type JsonObject, type Message } from "@earendil-works/pi-ai";
-import { AssistantEntry, LiveDoc, ToolResultEntry, UserEntry, type Conversation, type Cursor, type EntryRecord, type Harness } from "@earendil-works/pi-durable";
+import { AssistantEntry, LiveDoc, ToolResultEntry, UserEntry, type Conversation, type Cursor, type EntryId, type EntryRecord, type Harness } from "@earendil-works/pi-durable";
+import { ContextSnapshotEntry } from "../../../token-economizer/src/pi-durable/documents.ts";
 import { isJsonObject } from "@kintsugi/core";
 import { makeObservation, type ToolMapping } from "../../../token-economizer/src/core/observations.ts";
 import { decodeArguments, decodeResult } from "../../../token-economizer/src/pi-durable/decode.ts";
@@ -16,10 +17,32 @@ export function nativeOptimizerTool(name:string):ToolMapping {
   if (["grep","glob","search_history","code_search"].includes(name)) return {semantic:"search",readOnly:true};
   return {semantic:"other",readOnly:false};
 }
-export async function optimizerEntries(conversation:Conversation):Promise<EntryRecord[]> {
+/** A forward scan bounded to one optimizer session. */
+type EntryRange = {order:"ascending";minEntryId?:EntryId;maxEntryId?:EntryId};
+// SAFETY: Optimizer session bounds are persisted copies of committed entry IDs and are used only as scan bounds.
+const entryBound = (value:number) => value as EntryId;
+/** Entries after `after` (exclusive) up to `upTo` (inclusive), oldest first; never the whole history unless asked. */
+export async function optimizerEntries(conversation:Conversation,bounds:{after:number;upTo:number}):Promise<EntryRecord[]> {
   const entries:EntryRecord[] = [];let cursor:Cursor|undefined;
-  do {const page = await conversation.entries({order:"ascending"},500,cursor,context);entries.push(...page.items);cursor = page.next;} while (cursor);
+  const query:EntryRange = {order:"ascending"};
+  if (bounds.after > 0) query.minEntryId = entryBound(bounds.after);
+  if (Number.isFinite(bounds.upTo)) query.maxEntryId = entryBound(bounds.upTo);
+  do {const page = await conversation.entries(query,500,cursor,context);entries.push(...page.items.filter(entry => entry.id > bounds.after));cursor = page.next;} while (cursor);
   return entries;
+}
+/** The newest visible entry ID, without reading the transcript. */
+export async function latestOptimizerEntry(conversation:Conversation):Promise<number|null> {
+  return (await conversation.entries({},1,undefined,context)).items[0]?.id ?? null;
+}
+/** The fact IDs recorded with a carried section, searching backwards from the newest entry. */
+export async function carriedSnapshotIds(conversation:Conversation,section:string):Promise<string[]> {
+  let cursor:Cursor|undefined;
+  do {
+    const page = await conversation.entries({},200,cursor,context);
+    for (const entry of page.items) if (ContextSnapshotEntry.is(entry) && entry.data.section === section) return entry.data.injectedIds;
+    cursor = page.next;
+  } while (cursor);
+  return [];
 }
 export function optimizerMessageSections(messages:readonly Message[]) {
   const sections:Record<string,string> = {};
@@ -32,7 +55,7 @@ export async function nativeOptimizerTrajectory(harness:Harness,host:HostSession
   const conversation = await harness.conversation(host.conversationId,context);if (!conversation) return {kind:"absent",reason:"Conversation is absent"};
   let maximum = end ?? Infinity;
   if (cutoff !== null) {const value = Number(cutoff);if (!Number.isSafeInteger(value) || value < 0) throw new Error("Invalid saved optimizer source cutoff");maximum = Math.min(maximum,value);}
-  const all = await optimizerEntries(conversation), entries = all.filter(entry => entry.id > begin && entry.id <= maximum), observed:Observation[] = [];
+  const entries = await optimizerEntries(conversation,{after:begin,upTo:maximum}), latest = await latestOptimizerEntry(conversation), observed:Observation[] = [];
   const calls = new Map<string,{name:string;args:JsonObject;runId:string}>(), starts = new Map<string,{start:CallStart;entry:EntryRecord}>();
   let prompts = 0, activity = 0;
   for (const entry of entries) {
@@ -57,5 +80,5 @@ export async function nativeOptimizerTrajectory(harness:Harness,host:HostSession
     }
   }
   if (starts.size) return (await harness.snapshot(LiveDoc,host.conversationId,context))?.run ? {kind:"later",reason:"Native calls are still running"} : {kind:"unreadable",reason:"Ended trajectory contains an unfinished native call"};
-  return {kind:"ready",cutoff:String(Math.min(maximum,all.at(-1)?.id ?? begin)),observations:observed,prompts,transcriptActivity:activity};
+  return {kind:"ready",cutoff:String(Math.min(maximum,latest ?? begin)),observations:observed,prompts,transcriptActivity:activity};
 }
