@@ -55,17 +55,17 @@ export function renderMobileAgentAttention(islands: LiveIslands, workspaceId: st
   return islands.island(domId("mobile_agent_attention", workspaceId), mobileAgentAttentionHtml(agents));
 }
 
-function renderAgentTab(workspaceId: string, agent: AgentPaneContribution): string {
+function renderAgentTab(workspaceId: string, agent: AgentPaneContribution, displayTitle = agent.title): string {
   return tabHtml({
     selected: false,
-    label: { kind: "text", text: agent.title },
+    label: { kind: "text", text: displayTitle },
     iconHtml: agent.iconHtml,
     status: {
       busy: agent.busy, requestingAttention: agent.requestingAttention,
       attributesHtml: `data-agent-attention-id="${escapeHtml(agent.id)}"${agent.attentionSequence === undefined ? "" : ` data-attention-sequence="${agent.attentionSequence}"`}`,
     },
     containerAttributesHtml: `id="${agentTabDomId(workspaceId, agent.id)}"`,
-    primary: { tag: "button", attributesHtml: `type="button" data-agent-id="${escapeHtml(agent.id)}" ${fullscreenViewAttributes(agent.id, agent.title)} data-action="click->workspace-presentation#selectAgent"` },
+    primary: { tag: "button", attributesHtml: `type="button" data-agent-id="${escapeHtml(agent.id)}" data-agent-title="${escapeHtml(agent.title)}" ${fullscreenViewAttributes(agent.id, displayTitle)} data-action="click->workspace-presentation#selectAgent"` },
     closeHtml: agent.close ? selectorCloseForm(agent.close) : "",
   });
 }
@@ -87,7 +87,7 @@ function renderAgentNavigation(islands: LiveIslands, presentation: WorkspacePres
     ? tabStripHtml({
       label: "Agents",
       id: agentTabListDomId(presentation.workspace.id),
-      tabsHtml: presentation.agents.map((agent) => renderAgentTab(presentation.workspace.id, { ...agent, title: presentation.agents.length === 1 && agent.untitled ? presentation.workspace.title : agent.title })).join(""),
+      tabsHtml: presentation.agents.map((agent) => renderAgentTab(presentation.workspace.id, agent, presentation.agents.length === 1 && agent.untitled ? presentation.workspace.title : agent.title)).join(""),
     })
     : `<div class="fixed-shell-workspace-title"><strong>${escapeHtml(presentation.workspace.title)}</strong></div>`;
   const menu = popupHtml({

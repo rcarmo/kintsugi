@@ -2,6 +2,7 @@
 
 import { decodeCableServerMessage, encodeCableClientMessages, liveRegionDigestsSchema, liveShownAttribute, serializeCableIdentifier, type KintsugiCableClient, type CableClientMessage, type CableIdentifier, type CableSubscription, type CableSubscriptionOptions, type WorkspaceVisibilityReport } from "@kintsugi/shared";
 import { Value } from "typebox/value";
+import { browserTransportFromCookies } from "../browser-transport.ts";
 
 declare global {
   interface Window {
@@ -24,11 +25,10 @@ type DesiredSubscription = {
 };
 
 type LiveConnection = {
-  socket: WebSocket;
   pendingCommands: CableClientMessage[];
   connectionId?: string;
   openingTimer?: ReturnType<typeof setTimeout>;
-};
+} & ({ transport: "websocket"; socket: WebSocket } | { transport: "sse"; controller: AbortController; commands: Promise<void> });
 
 export type CableStreamRenderer = (html: string, isCurrent: () => boolean, onApplied: () => void) => void;
 
@@ -50,18 +50,36 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
 
   function sendRaw(message: CableClientMessage): void {
     const source = connection;
-    if (!source?.connectionId || source.socket.readyState !== WebSocket.OPEN) return;
+    if (!source?.connectionId || (source.transport === "websocket" && source.socket.readyState !== WebSocket.OPEN)) return;
     source.pendingCommands.push(message);
     if (source.pendingCommands.length > 1) return;
     // Visibility and initial subscriptions share a bounded, ordered batch.
     queueMicrotask(() => {
       const messages = source.pendingCommands.splice(0);
       if (connection !== source) return;
-      try {
-        for (const body of encodeCableClientMessages(messages)) source.socket.send(body);
-      } catch (error) {
-        console.error("Live command could not be delivered", error);
-        disconnect(source);
+      if (source.transport === "websocket") {
+        try {
+          for (const body of encodeCableClientMessages(messages)) source.socket.send(body);
+        } catch (error) {
+          console.error("Live command could not be delivered", error);
+          disconnect(source);
+        }
+      } else {
+        source.commands = source.commands.then(async () => {
+          if (connection !== source) return;
+          for (const body of encodeCableClientMessages(messages)) {
+            if (connection !== source) return;
+            const response = await fetch(`/cable/${source.connectionId}`, {
+              method: "POST", headers: { "content-type": "application/json" }, body,
+              signal: source.controller.signal, credentials: "same-origin", cache: "no-store", redirect: "error",
+            });
+            if (!response.ok) throw new Error(`Live command failed: ${response.status}`);
+          }
+        }).catch(error => {
+          if (connection !== source) return;
+          console.error("Live command could not be delivered", error);
+          disconnect(source);
+        });
       }
     });
   }
@@ -163,22 +181,68 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
     if (connection !== source) return;
     connection = undefined;
     clearTimeout(source.openingTimer);
-    source.socket.close();
+    if (source.transport === "websocket") source.socket.close();
+    else source.controller.abort();
     recovering = true;
     markSubscriptionsDisconnected(notify);
     changed();
     scheduleReconnect();
   }
 
+  async function receiveSse(source: Extract<LiveConnection, { transport: "sse" }>): Promise<void> {
+    try {
+      const response = await fetch("/cable", {
+        method: "POST", headers: { accept: "text/event-stream" }, signal: source.controller.signal,
+        credentials: "same-origin", cache: "no-store", redirect: "error",
+      });
+      if (!response.ok || !response.headers.get("content-type")?.startsWith("text/event-stream") || !response.body) {
+        throw new Error(`Live stream failed: ${response.status}`);
+      }
+      const reader = response.body.getReader(), decoder = new TextDecoder();
+      let pending = "";
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done || connection !== source) break;
+          pending += decoder.decode(value, { stream: true });
+          let boundary: number;
+          while ((boundary = pending.indexOf("\n\n")) !== -1) {
+            const frame = pending.slice(0, boundary);
+            pending = pending.slice(boundary + 2);
+            const data = frame.split("\n").filter(line => line.startsWith("data:")).map(line => line.slice(5).replace(/^ /, "")).join("\n");
+            if (data) handleMessage(source, data);
+          }
+        }
+      } finally { reader.releaseLock(); }
+      disconnect(source);
+    } catch (error) {
+      if (connection !== source) return;
+      console.error("Live stream disconnected", error);
+      disconnect(source);
+    }
+  }
+
   function connect(): void {
     if (connection || closingForPageHide || document.hidden || desired.size === 0) return;
     lastMessageAt = Date.now();
-    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const socket = new WebSocket(`${protocol}//${location.host}/cable`);
-    const source: LiveConnection = { socket, pendingCommands: [] };
+    let source: LiveConnection;
+    if (browserTransportFromCookies(document.cookie) === "sse") {
+      source = { transport: "sse", controller: new AbortController(), commands: Promise.resolve(), pendingCommands: [] };
+    } else {
+      try {
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        source = { transport: "websocket", socket: new WebSocket(`${protocol}//${location.host}/cable`), pendingCommands: [] };
+      } catch (error) {
+        // A browser/CSP rejection must not prevent Settings from initialising.
+        console.error("Live WebSocket could not be opened", error);
+        scheduleReconnect();
+        return;
+      }
+    }
     connection = source;
     source.openingTimer = setTimeout(() => disconnect(source), 15_000);
-    socket.onmessage = event => {
+    if (source.transport === "sse") { void receiveSse(source); return; }
+    source.socket.onmessage = event => {
       try {
         handleMessage(source, event.data);
       } catch (error) {
@@ -186,8 +250,8 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
         disconnect(source);
       }
     };
-    socket.onclose = () => disconnect(source);
-    socket.onerror = () => disconnect(source);
+    source.socket.onclose = () => disconnect(source);
+    source.socket.onerror = () => disconnect(source);
   }
 
   function pause(): void {

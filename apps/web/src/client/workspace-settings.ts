@@ -132,10 +132,16 @@ class SettingsPrefetchController extends Controller {
 
   async open(event: Event): Promise<void> {
     event.preventDefault();
-    const html = await this.settingsHtml();
-    this.prefetched = undefined;
-    this.expiresAt = 0;
-    window.Turbo?.renderStreamMessage(html);
+    try {
+      const html = await this.settingsHtml();
+      this.prefetched = undefined;
+      this.expiresAt = 0;
+      if (window.Turbo) window.Turbo.renderStreamMessage(html);
+      else window.location.assign("/settings");
+    } catch (error) {
+      console.error("Could not open Settings in the current page; using HTTP navigation", error);
+      window.location.assign("/settings");
+    }
   }
 
   private settingsHtml(): Promise<string> {

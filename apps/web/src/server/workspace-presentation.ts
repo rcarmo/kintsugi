@@ -117,7 +117,7 @@ function renderWorkspaceRow(workspace: WorkspacePaneEntry, index: number): strin
     leadingActionsHtml: `<button type="button" class="workspace-template-icon-button" title="${escapeHtml(newFromTemplate)}" aria-label="${escapeHtml(newFromTemplate)}" data-action="workspace-pane#openPickerFor" data-workspace-pane-workspace-template-param="${escapeHtml(workspaceTemplate?.id ?? "")}">${workspaceTemplateIconHtml(workspaceTemplate)}</button>`,
     primary: {
       tag: "button",
-      attributesHtml: `${parked ? 'data-workspace-parked' : `id="${id}"`} type="${parked ? "submit" : "button"}" title="${escapeHtml(tooltip)}" aria-label="${escapeHtml(label)}"${workspace.active ? ' aria-current="page"' : ""} data-workspace-entry-id="${escapeHtml(workspace.id)}"${attentionAt}${lastActivityAt}${busyAgents}${workspaceTemplateAttribute}${parked ? "" : ' data-action="click->workspace-navigation#selectWorkspace"'}`,
+      attributesHtml: `${parked ? 'data-workspace-parked' : `id="${id}"`} type="${parked ? "submit" : "button"}" title="${escapeHtml(tooltip)}" aria-label="${escapeHtml(label)}"${workspace.active ? ' aria-current="page"' : ""} data-workspace-entry-id="${escapeHtml(workspace.id)}" data-workspace-title="${escapeHtml(workspace.title)}"${attentionAt}${lastActivityAt}${busyAgents}${workspaceTemplateAttribute}${parked ? "" : ' data-action="click->workspace-navigation#selectWorkspace"'}`,
     },
   });
   return parked
@@ -198,7 +198,7 @@ export function renderWorkspacePane(presentation: WorkspacePanePresentation, sid
     href: "/settings",
     variant: "secondary",
     content: { kind: "icon-only", iconHtml: Icons.Settings, label: "Settings" },
-    attributesHtml: 'data-controller="settings-prefetch" data-action="pointerenter->settings-prefetch#prefetch focus->settings-prefetch#prefetch click->settings-prefetch#open"',
+    attributesHtml: 'data-turbo="false" data-controller="settings-prefetch" data-action="pointerenter->settings-prefetch#prefetch focus->settings-prefetch#prefetch click->settings-prefetch#open"',
   });
   const back = buttonHtml({ type: "button", variant: "secondary", content: { kind: "icon-only", iconHtml: Icons.Back, label: "Back to workspaces" }, attributesHtml: 'data-action="workspace-pane#back"' });
   return `<div class="fixed-shell-workspace-pane" data-controller="workspace-pane"><div class="fixed-shell-workspace-main">${panelHtml({
@@ -442,7 +442,7 @@ export function renderWorkspacePresentation(presentation: WorkspacePresentation)
   const islands = new LiveIslands();
   const id = workspacePresentationDomId(presentation.workspace.id);
   const trustPending = presentation.overlayHtml?.some(html => html.includes('class="workspace-ssh-trust-overlay"')) ?? false;
-  const html = `<div id="${id}" class="fixed-workspace-presentation" data-controller="workspace-presentation" data-phone-destination="agents" data-workspace-presentation-work-intent-value="${escapeHtml(JSON.stringify(presentation.workPresentationIntent ?? {}))}" data-workspace-presentation-workspace-id-value="${escapeHtml(presentation.workspace.id)}" data-workspace-id="${escapeHtml(presentation.workspace.id)}" data-workspace-commands="${escapeHtml(JSON.stringify(presentation.commands ?? []))}">
+  const html = `<div id="${id}" class="fixed-workspace-presentation" data-controller="workspace-presentation" data-phone-destination="agents" data-workspace-presentation-work-intent-value="${escapeHtml(JSON.stringify(presentation.workPresentationIntent ?? {}))}" data-workspace-presentation-workspace-id-value="${escapeHtml(presentation.workspace.id)}" data-workspace-id="${escapeHtml(presentation.workspace.id)}" data-workspace-title="${escapeHtml(presentation.workspace.title)}" data-workspace-commands="${escapeHtml(JSON.stringify(presentation.commands ?? []))}">
     <div class="fixed-shell-main"${trustPending ? " inert" : ""}>${renderAgentPane(islands, presentation)}${renderWorkPane(islands, presentation)}</div>
     ${renderWorkspaceBar(islands, presentation, trustPending)}
     ${islands.island(workspaceRegionDomId(presentation.workspace.id, "overlays"), (presentation.overlayHtml ?? []).join(""), "div", "contents")}

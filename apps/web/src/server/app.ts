@@ -22,6 +22,7 @@ import { panelHtml } from "@kintsugi/design-system/panel";
 import { Icons } from "@kintsugi/design-system/icons";
 import { warningBannerHtml } from "@kintsugi/design-system/warning-banner";
 import { parseModelRef, renderModelsDialog } from "@kintsugi/llm/server";
+import { workspacePageTitle } from "../page-title.ts";
 import { getWorkspaceTemplateConfiguration, isGitWorkspaceTemplateInit, workspaceTemplateIdFromInit, workspaceTemplateIdOfInit, isSshAuthenticationFailure, listWorkspaceTemplates, sshHostTrustFailure, scanSshHost, trustScannedSshHost, workspaceSshTrustRequests, onWorkspaceSshTrustChanged, decideWorkspaceSshTrust, cancelWorkspaceSshTrust, workspaceInitFromTemplate, type WorkspaceTemplateConfiguration, type WorkspaceTemplateSummary } from "@kintsugi/workspace-templates";
 import { validDraftId } from "@kintsugi/prompt/server";
 import {
@@ -79,6 +80,7 @@ import type { WorkspaceDeletionState, WorkspaceEntry, WorkspaceRegistry } from "
 import { workspaceWarnings, type WorkspaceWarning } from "./workspace-warnings.ts";
 
 const jsonStringSchema = Type.String();
+const connectionSettingsLink = actionLinkHtml({ href: "/settings?section=browser-transport", variant: "secondary", content: { kind: "caption", caption: "Connection settings", iconHtml: Icons.Settings }, attributesHtml: 'data-turbo="false"' });
 export interface WebAppDeps {
   workspaceResourceBackend?: WorkspaceResourceBackend;
   registry: WorkspaceRegistry;
@@ -566,7 +568,7 @@ export function createWebApp(deps: WebAppDeps): WebApp {
     const retry = actionLinkHtml({ href: `/workspaces/${encodeURIComponent(entry.id)}?retryPane=1`, variant: "secondary", content: { kind: "caption", caption: "Retry workspace" } });
     const status = message ? warningBannerHtml({ title: "Workspace unavailable", message, role: "alert", actionsHtml: retry })
       : '<div class="workspace-detail-loading-status" role="status"><span class="status-spinner" aria-hidden="true"></span> Loading workspace…</div>';
-    return `<div class="workspace-boot"><div class="main"><div class="body"><h2>${escapeHtml(workspaceTitle(entry))}</h2>${status}<p>You can use other workspaces and Settings while this workspace is unavailable.</p><p>Force parking stops its processes and closes terminal and VS Code views.</p><form method="post" action="/workspaces/${encodeURIComponent(entry.id)}/park?force=1" data-action="submit->workspace-navigation#parkWorkspace">${buttonHtml({ type: "submit", variant: "secondary", content: { kind: "caption", caption: "Force park workspace" } })}</form></div></div></div>`;
+    return `<div class="workspace-boot"><div class="main"><div class="body"><h2>${escapeHtml(workspaceTitle(entry))}</h2>${status}<p>You can use other workspaces and Settings while this workspace is unavailable.</p><p>${connectionSettingsLink}</p><p>Force parking stops its processes and closes terminal and VS Code views.</p><form method="post" action="/workspaces/${encodeURIComponent(entry.id)}/park?force=1" data-action="submit->workspace-navigation#parkWorkspace">${buttonHtml({ type: "submit", variant: "secondary", content: { kind: "caption", caption: "Force park workspace" } })}</form></div></div></div>`;
   }
 
   async function workspaceDetailHostHtml(pane: WorkspacePanePresentation, selectedId?: string, initialSelection?: InitialWorkspaceSelection): Promise<string> {
@@ -578,7 +580,7 @@ export function createWebApp(deps: WebAppDeps): WebApp {
       : workspaceBootMountHtml(entry);
     return `<div id="workspace_detail" class="workspace-detail-host" data-controller="workspace-selection" data-workspace-selection-max-preloaded-value="5">
       <div class="workspace-detail-empty" data-workspace-selection-target="empty"${selectedId ? " hidden" : ""}>${emptyWorkspaceArtworkHtml(pane)}</div>
-      <div class="workspace-detail-loading" data-workspace-selection-target="loading" hidden><div class="workspace-detail-loading-status" role="status"><span class="status-spinner" aria-hidden="true"></span> Loading workspace…</div></div>
+      <div class="workspace-detail-loading" data-workspace-selection-target="loading" hidden><div><div class="workspace-detail-loading-status" role="status"><span class="status-spinner" aria-hidden="true"></span> Loading workspace…</div><p>${connectionSettingsLink}</p></div></div>
       <div id="workspace_mounts" style="display:contents">${entry ? placeLiveRegions(workspaceMounts(selectedId), [{target: workspaceMountId(entry.id), html: selectedHtml}], workspaceMountId(entry.id)) : workspaceMounts(selectedId)}</div>
     </div>`;
   }
@@ -697,7 +699,7 @@ export function createWebApp(deps: WebAppDeps): WebApp {
     const entry = requireWorkspace(id);
     if (entry.parked) return Response.redirect(new URL("/", request.url).toString(), 302);
     const params = new URL(request.url).searchParams;
-    return response(layout(await renderWorkspaceShell(id, undefined, { agent: params.get("agent") ?? undefined, workView: params.get("workView") ?? undefined })));
+    return response(layout(await renderWorkspaceShell(id, undefined, { agent: params.get("agent") ?? undefined, workView: params.get("workView") ?? undefined }), workspacePageTitle(workspaceTitle(entry))));
   }
 
   // ---------------------------------------------------------------------------

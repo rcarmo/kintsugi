@@ -33,6 +33,7 @@ import { getAgentType, rememberAgentType } from "./agent-types.ts";
 import { createWebApp, type WebApp } from "./app.ts";
 import { parseAssetManifest } from "./asset-manifest.ts";
 import { createCableServer, type CableSocketData } from "./cable.ts";
+import { createCableSseTransport } from "./cable-sse.ts";
 import { openWorkspaceSocket } from "./workspace-socket.ts";
 import { clientEntrypoints, legacyStaticFiles } from "./static-files.ts";
 import { workspaceModules } from "./workspace-modules.generated.ts";
@@ -310,6 +311,7 @@ const defaultWorkspaceImage = await ensureDefaultWorkspaceImage({ buildOutput: "
 await ensureHostInotifyLimit(defaultWorkspaceImage);
 for (const workspace of persistedWorkspaces) await ingressSockets.ensure(workspace.id);
 await workspaceIngress.initialize();
+const handleCableSse = createCableSseTransport(cableServer);
 const server = Bun.serve<SocketData>({
   hostname,
   port: requestedPort,
@@ -355,7 +357,8 @@ const server = Bun.serve<SocketData>({
       return textResponse("websocket upgrade failed", { status: 400 });
     }
 
-    if (url.pathname === "/cable") return textResponse("WebSocket upgrade required", { status: 426, headers: { upgrade: "websocket" } });
+    const cableResponse = await handleCableSse(request);
+    if (cableResponse) return cableResponse;
 
     if (url.pathname === "/debug/connections" && request.method === "GET") {
       return new Response(JSON.stringify({ cable: cableServer.stats(), ingress: workspaceIngress.inspect() }, null, 2), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });

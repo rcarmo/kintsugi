@@ -485,7 +485,11 @@ html.software-keyboard-visible .composer.launch-composer :is(.agent-attach-row, 
 .composer.launch-composer .composer-selections { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .composer.launch-composer .composer-footer > turbo-frame { flex: 1; }
 
-.live-connection-status:not([hidden]) { position: fixed; z-index: 10000; top: 12px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; align-items: center; padding: 10px 16px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--panel); color: var(--text); box-shadow: 0 4px 18px #0002; }
+.live-connection-status:not([hidden]) { position: fixed; z-index: 10000; top: 12px; left: 50%; transform: translateX(-50%); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; width: max-content; max-width: calc(100% - 24px); box-sizing: border-box; padding: 10px 16px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--panel); color: var(--text); box-shadow: 0 4px 18px #0002; }
+
+/* Settings owns its disconnected status; the recovery banner must not cover its controls. */
+body:has(.app-settings-host) .live-connection-status { display: none; }
+body[data-live-ready="true"] .browser-transport-status { display: none; }
 
 /* Template settings is a non-modal destination. Workspace mounts keep their dimensions underneath. */
 .fixed-shell-app-main { position: relative; }

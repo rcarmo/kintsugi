@@ -1,4 +1,5 @@
 import { handleConnectionModeSettings } from "./connection-mode.ts";
+import { handleBrowserTransportSettings } from "./browser-transport.ts";
 import { handleGitHostingSettingsRequest } from "./git-hosting.ts";
 import { handleModelsRequest } from "@kintsugi/llm/server";
 import { finishOnboarding } from "../onboarding/state.ts";
@@ -11,7 +12,8 @@ export async function handleSettingsRequest(
   url: URL,
   options: { forceDeleteAllWorkspaces?: () => Promise<WorkspaceCleanupResult>; renderModelPickerUpdates: () => Promise<string>; themeChanged: () => void },
 ): Promise<Response | undefined> {
-  const response = await handleConnectionModeSettings(request, url)
+  const response = await handleBrowserTransportSettings(request, url)
+    ?? await handleConnectionModeSettings(request, url)
     ?? await handleThemeSettingsRequest(request, url, options.themeChanged)
     ?? await handleSettingsPageRequest(request, url, options)
     ?? await handleGitHostingSettingsRequest(request, url)

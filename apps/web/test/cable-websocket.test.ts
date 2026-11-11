@@ -4,18 +4,19 @@ import { managementOriginRejection } from "@kintsugi/proxy-ingress";
 import { expect, test } from "bun:test";
 import { startProxyIngress } from "../../../images/system/src/local-ingress.ts";
 import { createCableServer, type CableSocketData } from "../src/server/cable.ts";
+import { createCableSseTransport } from "../src/server/cable-sse.ts";
 import { createWorkspaceRegistry } from "../src/server/workspace-registry.ts";
 
 function fixture(channels: CableChannelAdapter[] = []) {
   const cable = createCableServer({ registry: createWorkspaceRegistry(), events: createKintsugiEventBus(), channels, logError: () => {} });
+  const handleSse = createCableSseTransport(cable);
   const server = Bun.serve<CableSocketData>({ hostname: "127.0.0.1", port: 0, idleTimeout: 255,
-    fetch(request, server) {
+    async fetch(request, server) {
       const rejected = managementOriginRejection(request, server.requestIP(request)?.address);
       if (rejected) return rejected;
-      if (new URL(request.url).pathname !== "/cable") return new Response("Not found", { status: 404 });
-      if (request.headers.get("upgrade")?.toLowerCase() === "websocket"
+      if (new URL(request.url).pathname === "/cable" && request.headers.get("upgrade")?.toLowerCase() === "websocket"
         && server.upgrade(request, { data: { kind: "cable", connectionId: crypto.randomUUID() } })) return;
-      return new Response("WebSocket upgrade required", { status: 426 });
+      return await handleSse(request) ?? new Response("Not found", { status: 404 });
     },
     websocket: {
       perMessageDeflate: true,
@@ -141,16 +142,33 @@ test("WebSocket accepts HTTPS terminated by a trusted loopback proxy", async () 
   } finally { f.server.stop(true); }
 });
 
-test("Cable has no SSE or HTTP command transport", async () => {
-  const f = fixture();
+test("WebSocket and SSE connections coexist and close independently", async () => {
+  const f = fixture([{ name: "shell", subscribe(_id, listener) { listener("snapshot"); return { unsubscribe() {} }; } }]);
+  const abort = new AbortController();
   try {
-    for (const method of ["GET", "POST"]) {
-      const response = await fetch(`${f.url}/cable`, { method, headers: { origin: f.url, accept: "text/event-stream" } });
-      expect(response.status).toBe(426);
-      expect(response.headers.get("content-type")).not.toContain("text/event-stream");
+    const websocket = await open(f.url);
+    const response = await fetch(`${f.url}/cable`, { method: "POST", headers: { origin: f.url, accept: "text/event-stream" }, signal: abort.signal });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toStartWith("text/event-stream");
+    const reader = response.body!.getReader(), decoder = new TextDecoder();
+    let frame = "";
+    while (!frame.includes("\n\n")) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error("Missing SSE welcome");
+      frame += decoder.decode(value, { stream: true });
     }
-    expect((await fetch(`${f.url}/cable/expired`, { method: "POST", headers: { origin: f.url } })).status).toBe(404);
-  } finally { f.server.stop(true); }
+    const welcome = decodeCableServerMessage(frame.slice(6, frame.indexOf("\n\n")));
+    if (welcome.type !== "welcome") throw new Error("Missing SSE welcome");
+    expect(welcome.connectionId).not.toBe(websocket.id);
+    expect(f.cable.stats().sockets).toBe(2);
+    websocket.socket.close();
+    for (let i = 0; i < 100 && f.cable.stats().sockets !== 1; i++) await Bun.sleep(10);
+    expect(f.cable.stats().sockets).toBe(1);
+    const command = await fetch(`${f.url}/cable/${welcome.connectionId}`, { method: "POST", headers: { origin: f.url, "content-type": "application/json" }, body: JSON.stringify({ command: "subscribe", identifier: CableTopics.shell(), subscriptionId: "sse" }) });
+    expect(command.status).toBe(204);
+    abort.abort();
+    await waitClosed(f);
+  } finally { abort.abort(); f.server.stop(true); }
 });
 
 test("WebSocket malformed commands fail explicitly and oversized commands close before execution", async () => {

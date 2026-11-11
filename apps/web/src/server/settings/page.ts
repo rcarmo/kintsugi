@@ -24,6 +24,7 @@ import { listSettingsContributions, registerSettingsContribution } from "./regis
 import { renderThemeSettings } from "./theme.ts";
 import { globalWorkspaceSettingsSectionId, renderGlobalWorkspaceSettings } from "../template-settings.ts";
 import { kintsugiVersion } from "../../version.ts";
+import { browserTransportSectionId, renderBrowserTransportSettings } from "./browser-transport.ts";
 
 function forceDeleteWorkspacesEnabled(): boolean {
   return process.env.NODE_ENV !== "production";
@@ -107,7 +108,8 @@ export const appSettingsFrameId = "app_settings_frame";
 const disclosureSections = new Set(["credentials", "network", "workspace-resources", "models", "telemetry", globalWorkspaceSettingsSectionId, "host", "developer-tools"]);
 const sectionFrameId = (id: string) => `app_settings_section_${id}`;
 
-async function renderSettingsSectionFrame(id: string): Promise<string> {
+async function renderSettingsSectionFrame(id: string, request: Request): Promise<string> {
+  if (id === browserTransportSectionId) return `<turbo-frame class="app-settings-section-frame" id="${sectionFrameId(id)}">${renderBrowserTransportSettings(request)}</turbo-frame>`;
   const section = listSettingsContributions().find(contribution => contribution.id === id);
   if (!section && id !== "developer-tools") throw invalidArguments(`settings section not found: ${id}`);
   const content = id === "developer-tools"
@@ -119,7 +121,7 @@ async function renderSettingsSectionFrame(id: string): Promise<string> {
 export async function renderSettingsFrame(request: Request, sectionId?: string): Promise<string> {
   if (sectionId === "git-identity") sectionId = "commit-identity";
   const contributions = listSettingsContributions();
-  if (sectionId && !contributions.some(contribution => contribution.id === sectionId) && sectionId !== "developer-tools" && sectionId !== "url") throw invalidArguments(`settings section not found: ${sectionId}`);
+  if (sectionId && !contributions.some(contribution => contribution.id === sectionId) && sectionId !== "developer-tools" && sectionId !== "url" && sectionId !== browserTransportSectionId) throw invalidArguments(`settings section not found: ${sectionId}`);
   // Opening the panel never waits for a contribution's I/O. Each section owns its request.
   const inline = new Map(contributions
     .filter(contribution => !disclosureSections.has(contribution.id))
@@ -134,12 +136,18 @@ export async function renderSettingsFrame(request: Request, sectionId?: string):
     },
     bodyHtml: `<turbo-frame class="app-settings-section-frame" id="${sectionFrameId(id)}" src="/settings/sections/${id}" loading="lazy"><span role="status">Loading…</span></turbo-frame>`,
   });
-  const content = `<div class="app-settings-overview">
+  const versionFooter = `<footer class="app-settings-version" aria-label="Kintsugi version">${escapeHtml(kintsugiVersion)}</footer>`;
+  // The recovery destination loads no other sections: hung section requests
+  // must not exhaust the browser's HTTP connections before a transport switch.
+  const content = sectionId === browserTransportSectionId
+    ? `<div class="app-settings-overview">${renderBrowserTransportSettings(request)}<p>${actionLinkHtml({ href: "/settings", variant: "secondary", content: { kind: "caption", caption: "All settings" }, attributesHtml: 'data-turbo="false"' })}</p></div>${versionFooter}`
+    : `<div class="app-settings-overview">
+    ${renderBrowserTransportSettings(request)}
     ${take("theme", "dictation", "commit-identity", "git-hosting", "update-channel", "update", "access")}
     ${connectionModeManaged() ? "" : `<section class="settings-sec settings-sec-url" id="settings-sec-url"><h2>Kintsugi URL</h2>${kintsugiUrlHtml(kintsugiUrl(request), "settings_kintsugi_url_qr")}</section>`}
     ${take(...inline.keys())}
     <div class="app-settings-disclosures">${disclosure("credentials", "Credentials")}${disclosure("network", "Network")}${disclosure("workspace-resources", "Workspace resources")}${disclosure("models", "Models")}${disclosure(globalWorkspaceSettingsSectionId, "Global workspace settings that apply to all new workspaces")}${disclosure("telemetry", "Token telemetry")}${disclosure("host", "Host")}${disclosure("developer-tools", "Developer tools")}</div>
-  </div><footer class="app-settings-version" aria-label="Kintsugi version">${escapeHtml(kintsugiVersion)}</footer>`;
+  </div>${versionFooter}`;
   const header = `<h1 class="panel__title" tabindex="-1" data-app-settings-heading>${Icons.Settings}<span>Settings</span></h1>${buttonHtml({ type: "button", variant: "secondary", content: { kind: "icon-only", iconHtml: Icons.Close, label: "Close settings" }, attributesHtml: 'data-action="app-settings#close"' })}`;
   return `<turbo-frame id="${appSettingsFrameId}" data-app-settings-target="frame">${panelHtml({ element: { tag: "section", attributesHtml: 'aria-label="Settings"' }, headerHtml: header, bodyHtml: `<div class="template-settings-content app-settings-content"${sectionId ? ` data-app-settings-anchor="settings-sec-${escapeHtml(sectionId)}"` : ""} data-app-settings-location="/settings${sectionId ? `?section=${encodeURIComponent(sectionId)}` : ""}">${content}</div>`, bodyLayout: "full-bleed", bodyOverflow: "scroll" })}</turbo-frame>`;
 }
@@ -163,7 +171,7 @@ async function deleteAllStoredSettings(): Promise<void> {
 
 export async function handleSettingsPageRequest(request: Request, url: URL, options: { forceDeleteAllWorkspaces?: () => Promise<WorkspaceCleanupResult>; renderModelPickerUpdates: () => Promise<string> }): Promise<Response | undefined> {
   const sectionMatch = url.pathname.match(/^\/settings\/sections\/([^/]+)$/);
-  if (sectionMatch && request.method === "GET") return response(await renderSettingsSectionFrame(sectionMatch[1]!));
+  if (sectionMatch && request.method === "GET") return response(await renderSettingsSectionFrame(sectionMatch[1]!, request));
   if (url.pathname === "/settings" && request.method === "GET") {
     const section = url.searchParams.get("section") ?? undefined;
     if (request.headers.get("turbo-frame") === appSettingsFrameId) return response(await renderSettingsFrame(request, section));

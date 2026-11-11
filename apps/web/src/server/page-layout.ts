@@ -5,8 +5,10 @@ import { kintsugiThemes, readThemeSetting } from "@kintsugi/shared/theme";
 import { pageBodyStimulusHtml } from "@kintsugi/design-system/page-body";
 import { parseAssetManifest, type AssetManifest } from "./asset-manifest.ts";
 import { themeRegionHtml, themeRegionId } from "./settings/theme.ts";
+import { actionLinkHtml } from "@kintsugi/design-system/action-link";
+import { Icons } from "@kintsugi/design-system/icons";
 
-export function createPageLayout(options: { devReload?: boolean; workspaceModules: readonly WorkspaceModule[] }): (body: string) => string {
+export function createPageLayout(options: { devReload?: boolean; workspaceModules: readonly WorkspaceModule[] }): (body: string, title?: string) => string {
   let cachedAssetManifest: AssetManifest | undefined;
 
   function loadAssetManifest(): AssetManifest {
@@ -38,11 +40,12 @@ export function createPageLayout(options: { devReload?: boolean; workspaceModule
     return [...styles].map((path) => `<link rel="stylesheet" href="${assetPath(path)}">`).join("\n");
   }
 
-  return (body) => {
+  return (body, title = kintsugiName) => {
     if (options.devReload) cachedAssetManifest = loadAssetManifest();
     const pageId = randomUUID();
     const theme = readThemeSetting();
     const themeDefinition = kintsugiThemes.find(({ id }) => id === theme)!;
+    const recoverySettings = actionLinkHtml({ href: "/settings?section=browser-transport", variant: "secondary", content: { kind: "icon-only", iconHtml: Icons.Settings, label: "Connection settings" }, attributesHtml: 'data-turbo="false"' });
     return `<!DOCTYPE html>
 <html lang="en" data-theme="${theme}" data-kintsugi-page-id="${escapeHtml(pageId)}">
 <head>
@@ -56,7 +59,7 @@ ${options.devReload ? `
 ` : ""}</style>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="turbo-cache-control" content="no-cache">
-<title>${escapeHtml(kintsugiName)}</title>
+<title>${escapeHtml(title)}</title>
 <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -67,7 +70,7 @@ ${options.devReload ? `
 ${moduleStylesHtml()}
 <script type="module" src="${assetPath("/workspace.js")}"></script>
 </head>
-<body id="body"${pageBodyStimulusHtml(["navigation-origin", "cable-shell", options.devReload ? "dev-reload" : undefined])}${options.devReload ? ` data-dev-reload-url-value="/__kintsugi_dev_reload"` : ""}><div id="live-connection-status" role="status" class="live-connection-status"><span class="status-spinner" aria-hidden="true"></span> Reconnecting… Updates are paused.</div><div id="${themeRegionId}" hidden>${themeRegionHtml(theme)}</div>${body}
+<body id="body"${pageBodyStimulusHtml(["navigation-origin", "browser-title", "cable-shell", options.devReload ? "dev-reload" : undefined])}${options.devReload ? ` data-dev-reload-url-value="/__kintsugi_dev_reload"` : ""}><div id="live-connection-status" role="status" class="live-connection-status"><span class="status-spinner" aria-hidden="true"></span><span>Reconnecting… Updates are paused.</span>${recoverySettings}</div><div id="${themeRegionId}" hidden>${themeRegionHtml(theme)}</div>${body}
 </body>
 </html>`;
   };
