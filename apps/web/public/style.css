@@ -3,6 +3,10 @@ html { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adj
 body { background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: var(--text-body); line-height: var(--leading-standard); }
 a { color: inherit; text-decoration: none; }
 
+/* Turbo shares this bar across page visits and form submissions (including workspace creation).
+   Outrank its injected default, regardless of stylesheet load order. */
+html .turbo-progress-bar { height: 2px; background: var(--accent); }
+
 .app { display: grid; grid-template-columns: 200px 1fr; min-height: 100vh; }
 .app.no-sidebar { display: block; }
 
