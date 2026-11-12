@@ -56,6 +56,22 @@
 .token-optimizer-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .token-optimizer-chip--attention::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 
+/* Optimizer operations in the Agent timeline: readable rows; raw data via the region toggle. */
+.token-optimizer-op { width: 100%; border-collapse: collapse; font-size: var(--text-body); line-height: var(--leading-standard); }
+.token-optimizer-op th, .token-optimizer-op td { padding: 8px; vertical-align: top; text-align: left; overflow-wrap: anywhere; }
+.token-optimizer-op th { width: 104px; white-space: nowrap; font-weight: 400; color: var(--text-muted); }
+.token-optimizer-op tr + tr { border-top: 1px solid var(--line); }
+.token-optimizer-op td { color: var(--text-bright); }
+.token-optimizer-op :is(p, ul) { margin: 0; }
+.token-optimizer-op p + :is(p, ul) { margin-top: 4px; }
+.token-optimizer-op ul { padding-inline-start: 18px; }
+.token-optimizer-op li + li { margin-top: 4px; }
+.token-optimizer-op code { font-family: var(--font-mono); font-size: var(--text-code); }
+.token-optimizer-op .disclosure { margin: 0; }
+.token-optimizer-op .agent-tool-code { max-height: 260px; margin-top: 4px; white-space: pre-wrap; }
+.token-optimizer-op__muted { color: var(--text); }
+.token-optimizer-op__quote { white-space: pre-wrap; }
+
 @media (max-width: 700px) {
   .token-optimizer__choices { grid-template-columns: minmax(0, 1fr); }
   .token-optimizer__row > :last-child { max-width: none; }

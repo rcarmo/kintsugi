@@ -3,10 +3,9 @@ import { defineDoc, defineEntry, type ConversationView } from "@earendil-works/p
 import { fingerprint, redact } from "@kintsugi/token-economizer/core";
 import type { OperationSink, OptimizerOperation } from "@kintsugi/token-economizer/pi-durable";
 import { renderToolCard } from "@kintsugi/agent/server/render-tool";
-import { formatCost, formatDuration, type TranscriptItem, type ToolView } from "@kintsugi/agent/server/transcript";
+import { type TranscriptItem, type ToolView } from "@kintsugi/agent/server/transcript";
+import { optimizerSummary } from "./token-optimizer-presentation.ts";
 import { transcriptRow } from "@kintsugi/agent/server/render-markup";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import { isJsonObject } from "@kintsugi/core";
 
 /** Display-only entries: never carry model messages, receipts or executable tools. */
@@ -43,9 +42,6 @@ export const recordOptimizerOperation:OperationSink = async (tx,conversationId,o
   for (const old of keys.slice(0,Math.max(0,keys.length-256))) delete writes.recent[old];
 };
 
-const statuses = {queued:"Queued",running:"Running",complete:"Complete",failed:"Failed",cancelled:"Cancelled",unknown:"Interrupted · usage unknown"} satisfies Record<OptimizerOperation["status"],string>;
-const costSchema = Type.Number({minimum:0});
-
 export function optimizerOperationRows(view:ConversationView):Extract<TranscriptItem,{type:"extension"}>[] {
   const grouped = new Map<string,{first:OptimizerOperation;latest:OptimizerOperation}>();
   for (const entry of view.entries) if (OptimizerOperationEntry.is(entry)) {
@@ -55,11 +51,9 @@ export function optimizerOperationRows(view:ConversationView):Extract<Transcript
   }
   return [...grouped.values()].map(({first,latest}) => {
     const key = `optimizer:${fingerprint(first.id)}`, active = latest.status === "queued" || latest.status === "running";
-    const result = isJsonObject(latest.output) ? latest.output : null;
-    const model = isJsonObject(first.input.model) ? first.input.model : null;
-    const summary = [latest.name,statuses[latest.status],active ? "" : formatDuration(Math.max(0,latest.at-first.startedAt)),model ? `${model.id} · ${model.provider}` : "",Value.Check(costSchema,result?.cost) ? formatCost(result!.cost) : ""].filter(Boolean).join(" · ");
-    const tool:ToolView = {callId:first.id,name:latest.name,args:first.input,status:active ? "running" : latest.status === "complete" || latest.status === "cancelled" ? "ok" : "error",issuedAt:first.startedAt,
-      resultText:latest.output === null ? undefined : JSON.stringify(latest.output,null,2)};
-    return {type:"extension",key,timestamp:first.startedAt,render:ctx => transcriptRow(renderToolCard(ctx,key,tool,{nested:true,tone:"info",summary}))};
+    // Later transitions may omit inputs (for example a cancellation); keep the first, complete request.
+    const operation:OptimizerOperation = {...latest,startedAt:first.startedAt,input:Object.keys(latest.input).length ? latest.input : first.input};
+    const tool:ToolView = {callId:first.id,name:latest.name,args:operation.input,status:active ? "running" : latest.status === "complete" || latest.status === "cancelled" ? "ok" : "error",issuedAt:first.startedAt,details:{operation}};
+    return {type:"extension",key,timestamp:first.startedAt,render:ctx => transcriptRow(renderToolCard(ctx,key,tool,{nested:true,tone:"info",summary:optimizerSummary(operation),autoOpen:false}))};
   });
 }

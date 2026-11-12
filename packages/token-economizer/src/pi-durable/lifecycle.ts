@@ -4,6 +4,7 @@ import { defineExtension, defineTask, type Harness, type ConversationId, type Js
 import { observing, type Policy } from "../core/config.ts";
 import { claimFold, deferFold, endSession, finishFold, prepareSession, recoverableSessions, sessionKey, transcriptChanged, type LearningSession } from "../core/sessions.ts";
 import { scopeKey } from "../core/types.ts";
+import { environmentClaim } from "../core/microskills/envfacts.ts";
 import { KnowledgeDoc, ObservationsDoc, SessionsDoc, type Knowledge } from "./documents.ts";
 import type { HostDomain, HostSession, SessionStart, Trajectory } from "./domain.ts";
 import type { OperationSink, OptimizerOperation } from "./operations.ts";
@@ -100,7 +101,7 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
           const output:JsonObject = result ? {
             environmentFacts:result.environment.facts.length,distilledFacts:result.distiller.facts.length,
             newFacts:[...result.environment.facts.map(fact => fact.id),...result.distiller.facts.map(fact => fact.spec.id)].filter(id => !existing.has(id)),
-            facts:[...result.environment.facts.map(fact => ({id:fact.id,state:fact.life.state})),...result.distiller.facts.map(fact => ({id:fact.spec.id,state:fact.life.state,claim:fact.spec.claim ?? fact.spec.id}))].slice(-40),
+            facts:[...result.environment.facts.map(fact => ({id:fact.id,state:fact.life.state,claim:environmentClaim(fact)})),...result.distiller.facts.map(fact => ({id:fact.spec.id,state:fact.life.state,claim:fact.spec.claim ?? fact.spec.id}))].slice(-40),
             toolSuggestions:result.tools.proposal,hiddenTools:result.tools.applied,sessions:result.tools.sessions,prompts:result.tools.prompts,
             activePrefixChanged:false,
           } : {error:trajectory.kind === "ready" ? "No learning result" : trajectory.reason};

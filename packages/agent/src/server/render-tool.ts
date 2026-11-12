@@ -122,7 +122,7 @@ function lazyTranscriptItemFrame(ctx: AgentRenderContext, key: string): string {
  * A tool call's row, opening to its detail. A `nested` call, such as a script's, has no detail route: its detail is
  * inline and never paginated.
  */
-export function renderToolCard(ctx: AgentRenderContext, key: string, tool: ToolView, options: { open?: boolean; live?: boolean; nested?: boolean; timestamp?: number; tone?: "info"; summary?: string } = {}): string {
+export function renderToolCard(ctx: AgentRenderContext, key: string, tool: ToolView, options: { open?: boolean; live?: boolean; nested?: boolean; timestamp?: number; tone?: "info"; summary?: string; autoOpen?: boolean } = {}): string {
   const liveDuration = isBashTool(tool.name) && tool.status === "running" && tool.issuedAt !== undefined && !ctx.readOnly;
   const timeout = numberArg(toolArgs(tool), "timeout") ?? 600;
   const label = {
@@ -142,7 +142,7 @@ export function renderToolCard(ctx: AgentRenderContext, key: string, tool: ToolV
   if (!toolPresentation(tool).showsDetail) {
     return `<div class="agent-tool agent-tool-summary-only ${toolClass(tool.name)} active">${contentRowHtml({ ...content, element: { tag: "div", attributesHtml: timestamp }, primary: false })}</div>`;
   }
-  const open = Boolean(options.open || active);
+  const open = Boolean(options.open || active && options.autoOpen !== false);
   const lazy = !options.nested && !options.live && !active && !options.open;
   return `<div class="agent-tool ${toolClass(tool.name)}${active ? " active" : ""}${tool.status === "error" ? " error" : ""}">${disclosureHtml({
     element: lazy ? { attributesHtml: 'data-controller="agent-lazy-detail" data-action="toggle->agent-lazy-detail#load"' } : undefined,
@@ -251,6 +251,12 @@ function renderBashResultViews(ctx: AgentRenderContext, key: string, tool: ToolV
   if (same) return fullscreenSourceRegion("Result", `<section class="agent-tool-region agent-bash-output"><div class="agent-region-header">Result</div>${copyableToolBody(resultHtml, "result")}</section>`, fullResult);
   const modelHtml = tailOutput(`<pre class="agent-tool-result agent-tool-region-body">${escapeHtml(modelWindow.text)}</pre>`, moreLink(ctx, key, count, modelWindow.hidden, "last"), "last");
   return `<section class="agent-tool-region agent-bash-output">${comparisonHeader("Result", "As emitted")}<div class="agent-region-pane region-primary-pane">${fullscreenSourceRegion("Result", copyableToolBody(resultHtml, "colored result"), fullResult)}</div><div class="agent-region-pane region-model-pane">${fullscreenSourceRegion("As seen by model", copyableToolBody(modelHtml, "model result"), `<pre class="agent-tool-result agent-tool-region-body">${escapeHtml(model || "(no output)")}</pre>`)}</div></section>`;
+}
+
+/** A readable view beside the raw data it was derived from, using the same toggle as other tool regions. */
+export function readableRawRegion(title: string, readableHtml: string, raw: string): string {
+  const rawHtml = codeBlockHtml(raw, "data.json", "agent-tool-code");
+  return `<section class="agent-tool-region">${comparisonHeader(title, "Readable", "Raw")}<div class="agent-region-pane region-primary-pane">${readableHtml}</div><div class="agent-region-pane region-model-pane">${fullscreenSourceRegion(`${title} · raw`, copyableToolBody(rawHtml, "raw data"), rawHtml)}</div></section>`;
 }
 
 /** Source as the model wrote it, beside a readable version when formatting changed it. */

@@ -1,5 +1,7 @@
 import { tokenOptimizerSettingsContribution, tokenOptimizerOpenApiPaths } from "./token-optimizer-settings.ts";
 import { tokenOptimizerIntegration } from "./token-optimizer.ts";
+import { optimizerToolPresentations } from "./token-optimizer-presentation.ts";
+import { registerAgentToolPresentations } from "@kintsugi/agent/server";
 import { registerBuiltinAgentIntegration, builtinAgentIntegrations } from "./integrations.ts";
 import { registerAgentRequestReceiptChecker } from "@kintsugi/agent/server/request-receipts";
 import { registerPlanAgentResolver } from "@kintsugi/agent/server/plan";
@@ -204,7 +206,10 @@ export const builtinAgentWorkspaceModule: WorkspaceModule = {
       catch (error) { if (error instanceof KintsugiCoreError && error.code === "agent_not_found") return undefined; throw error; }
       return knownWorkspaceAgentRequest(agent, requestId, { events: agentEvents });
     });
-    if (!builtinAgentIntegrations().some(integration => integration.id === tokenOptimizerIntegration.id)) registerBuiltinAgentIntegration(tokenOptimizerIntegration);
+    if (!builtinAgentIntegrations().some(integration => integration.id === tokenOptimizerIntegration.id)) {
+      registerBuiltinAgentIntegration(tokenOptimizerIntegration);
+      registerAgentToolPresentations(optimizerToolPresentations);
+    }
     registerWorkspaceAgentTool("list_credentials", workspaceId => createCredentialCatalogueTool(workspaceId));
     // SAFETY: The module boundary validates or constructs this value with the asserted domain shape.
     const events = context.events as KintsugiEventBus;

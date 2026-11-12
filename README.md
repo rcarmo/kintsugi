@@ -22,7 +22,7 @@ Kintsugi accepts direct pull requests without a prior issue. See [Contributing](
 
 ## Install
 
-The current release is [v0.6.2](https://github.com/rcarmo/kintsugi/releases/tag/v0.6.2) ([release notes](release_notes/v0.6.2.md)). Use a dedicated Linux server with Docker:
+The current release is [v0.6.3](https://github.com/rcarmo/kintsugi/releases/tag/v0.6.3) ([release notes](release_notes/v0.6.3.md)). Use a dedicated Linux server with Docker:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/rcarmo/kintsugi/main/scripts/install.sh -o /tmp/install-kintsugi.sh
@@ -47,7 +47,7 @@ The token optimizer provides context pruning, learned facts and loop detection f
 - **Basic** (recommended) remembers facts about each repository, nudges runs that keep repeating the same failures, and suggests hiding tools that never get used. It makes no extra model calls.
 - **Model-assisted** adds a model that writes facts, judges stuck runs and picks tools for each task, within per-session and daily call limits.
 
-Learning runs in the background between replies; you do not need to close the Agent. Its active fact prefix stays unchanged for caching. Optimizer operations appear as blue-indicator tool-style timeline rows with expandable inputs and outputs.
+Learning runs in the background between replies; you do not need to close the Agent. Its active fact prefix stays unchanged for caching. Optimizer operations appear as collapsed, blue-indicator timeline rows with plain-English details and a Readable/Raw toggle.
 
 Each Agent's composer footer shows a small status chip while the optimizer is on; click it for what was learned, hidden or nudged, and to restore hidden tools. The cost and quality effects of Model-assisted have not been measured yet. It is a TypeScript port of Microsoft [TokenEconomizer](https://github.com/microsoft/TokenEconomizer); see the [design checklist](docs/token-economizer.md).
 
