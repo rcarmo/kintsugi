@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { defineDoc, defineDocFamily, defineEntry, type SubmissionId, type TaskId } from "@earendil-works/pi-durable";
+import { defineDoc, defineDocFamily, defineEntry, type SubmissionId, type TaskId, type ConversationId } from "@earendil-works/pi-durable";
 import { emptyBudget, type BudgetState } from "../core/accounting.ts";
 import { emptyEnvelope, type EnvelopeHistory } from "../core/loopguard/envelope.ts";
 import { emptyEvidence, type ToolEvidence } from "../core/toolprune/evidence.ts";
@@ -44,6 +44,8 @@ export const GuardJobsDoc = defineDoc<{jobs:Record<string,GuardJob>}>({kind:"tok
 export const ClassifiersDoc = defineDocFamily<{local:{fitMs:number;predictMs:number;predictions:number;lastFitAt:number|null};samples:Sample[];loop:LoopArtifact|null;tools:ToolArtifact[];lexical:BM25|null;text:ArtifactIdentity[];textScores:Record<string,number>;usedAcceptanceGroups:string[];lastFitGroups:number;generation:number;fitTask:TaskId|null;lastError:string|null;skipped:number;audits:number;auditMissing:number;disagreements:number},null>({kind:"token-economizer.classifiers",version:1,scope:"session",family:true,initial:() => ({local:{fitMs:0,predictMs:0,predictions:0,lastFitAt:null},samples:[],loop:null,tools:[],lexical:null,text:[],textScores:{},usedAcceptanceGroups:[],lastFitGroups:0,generation:0,fitTask:null,lastError:null,skipped:0,audits:0,auditMissing:0,disagreements:0}),checkpointWhen:() => false});
 export type InferenceJob = {
   id: string; sessionKey: string; account: string; runId: string | null; revision: string; digest: string;
+  /** Original Agent, independent of the maintenance task owner. Older jobs lack this field. */
+  conversationId?: ConversationId;
   request: InferenceRequest; created: number; deadline: number; taskId: TaskId | null;
   status: "queued" | "running" | "complete" | "failed" | "cancelled" | "unknown";
   result: InferenceResult | null; error: string | null;

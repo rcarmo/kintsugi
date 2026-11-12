@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { defineExtension, defineTask, type Harness, type ConversationId } from "@earendil-works/pi-durable";
+import { defineExtension, defineTask, type Harness, type ConversationId, type JsonObject } from "@earendil-works/pi-durable";
 import { observing, type Policy } from "../core/config.ts";
 import { claimFold, deferFold, endSession, finishFold, prepareSession, recoverableSessions, sessionKey, transcriptChanged, type LearningSession } from "../core/sessions.ts";
 import { scopeKey } from "../core/types.ts";
 import { KnowledgeDoc, ObservationsDoc, SessionsDoc, type Knowledge } from "./documents.ts";
 import type { HostDomain, HostSession, SessionStart, Trajectory } from "./domain.ts";
+import type { OperationSink, OptimizerOperation } from "./operations.ts";
 export type FoldResult = Pick<Knowledge,"tools" | "render" | "injectedIds" | "environment" | "distiller"> & Partial<Pick<Knowledge,"novelty"|"renders">> & { learning?: NonNullable<LearningSession["learning"]> };
 export type SessionFolder = (input: { session: LearningSession; host: HostSession; trajectory: Extract<Trajectory,{kind:"ready"}>; knowledge: Knowledge; policy: Policy; signal: AbortSignal; incremental?: boolean }) => Promise<FoldResult>;
-export function createSessionLifecycle(options: { harness: () => Harness; backgroundOwner?:() => ConversationId; domain: HostDomain; policy: (key: string) => Policy; fold: SessionFolder; renderCached?:(text:string) => string; now?:() => number; onFolded?:(host:HostSession) => Promise<void> }) {
+export function createSessionLifecycle(options: { harness: () => Harness; backgroundOwner?:() => ConversationId; domain: HostDomain; policy: (key: string) => Policy; fold: SessionFolder; renderCached?:(text:string) => string; now?:() => number; onFolded?:(host:HostSession) => Promise<void>;onOperation?:OperationSink }) {
   const task = defineTask<{ key: string; host: HostSession; incremental?: boolean }, { phase: "fold" }, null>({
     name: "token-economizer.fold", version: 1, initial: () => ({ phase: "fold" }),
     phases: { async fold(current,runtime,context) {
@@ -42,10 +43,20 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
           return { status:"terminal",outcome:{status:"completed",result:null} };
         },context); return;
       }
+      const activity:OptimizerOperation = {id:`learning:${key}:${claim}`,name:incremental ? "optimizer.learn" : "optimizer.fold",status:"running",startedAt:session.recordActivity,at:runtime.now(),
+        input:{mode:options.policy(key).mode,from:session.learning?.cutoff ?? null,to:trajectory.kind === "ready" ? trajectory.cutoff : null,prompts:trajectory.kind === "ready" ? trajectory.prompts : null,
+          observations:trajectory.kind === "ready" ? trajectory.observations.length : 0,
+          evidence:trajectory.kind === "ready" ? trajectory.observations.slice(-16).map(call => ({tool:call.tool,command:call.command.slice(0,1024),output:call.output.slice(-1024),exitCode:call.exitCode,coverage:call.coverage})) : []},output:null};
+      const show = trajectory.kind !== "ready" || trajectory.observations.length > 0 || !session.learning?.toolCounted && trajectory.prompts !== 0 && options.policy(key).pruning !== "off";
       let result: FoldResult | null = null;
+      let before:Knowledge|null = null;
       if (trajectory.kind === "ready") {
-        await runtime.commit(async tx => { (await tx.doc(SessionsDoc)).sessions[key].cutoff = trajectory.cutoff; },context);
+        await runtime.commit(async tx => {
+          (await tx.doc(SessionsDoc)).sessions[key].cutoff = trajectory.cutoff;
+          if (show) await options.onOperation?.(tx,host.conversationId,activity);
+        },context);
         const knowledge = await runtime.snapshot(KnowledgeDoc,scopeKey(host.scope),context);
+        before = knowledge ?? null;
         try { result = await options.fold({ session,host,trajectory,knowledge:knowledge!,policy:options.policy(key),signal:runtime.signal,incremental }); }
         catch (error) {
           runtime.signal.throwIfAborted();
@@ -55,6 +66,7 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
             const sessions = await tx.doc(SessionsDoc), knowledge = await tx.doc(KnowledgeDoc,scopeKey(host.scope),host.scope);
             const row = deferFold(sessions.sessions[key],claim,runtime.now(),incremental); row.foldError = message; sessions.sessions[key] = row;
             knowledge.foldClaim = null; knowledge.foldQueue = knowledge.foldQueue.filter(item => item !== key);
+            if (show) await options.onOperation?.(tx,host.conversationId,{...activity,status:"failed",at:runtime.now(),output:{error:message}});
             return {status:"terminal",outcome:{status:"failed",error:{message}}};
           },context); return;
         }
@@ -83,6 +95,17 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
           knowledge.foldQueue.push(key);
           await tx.createTask(row.folded || row.ended === null && !row.learning?.finalRequested ? checkpointTask : task,{key,host,incremental:row.folded || row.ended === null && !row.learning?.finalRequested},{ownership:{kind:"conversation"},conversationId:options.backgroundOwner?.() ?? host.conversationId,background:true});
         }
+        if (show) {
+          const existing = new Set([...(before?.environment.facts.map(fact => fact.id) ?? []),...(before?.distiller.facts.map(fact => fact.spec.id) ?? [])]);
+          const output:JsonObject = result ? {
+            environmentFacts:result.environment.facts.length,distilledFacts:result.distiller.facts.length,
+            newFacts:[...result.environment.facts.map(fact => fact.id),...result.distiller.facts.map(fact => fact.spec.id)].filter(id => !existing.has(id)),
+            facts:[...result.environment.facts.map(fact => ({id:fact.id,state:fact.life.state})),...result.distiller.facts.map(fact => ({id:fact.spec.id,state:fact.life.state,claim:fact.spec.claim ?? fact.spec.id}))].slice(-40),
+            toolSuggestions:result.tools.proposal,hiddenTools:result.tools.applied,sessions:result.tools.sessions,prompts:result.tools.prompts,
+            activePrefixChanged:false,
+          } : {error:trajectory.kind === "ready" ? "No learning result" : trajectory.reason};
+          await options.onOperation?.(tx,host.conversationId,{...activity,status:!observing(options.policy(key)) ? "cancelled" : result ? "complete" : "failed",at:runtime.now(),output});
+        }
         return { status:"terminal",outcome:{status:"completed",result:null} };
       },context);
       if (observing(options.policy(key))) await options.onFolded?.(host);
@@ -94,6 +117,7 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
         if (row?.claim === String(runtime.taskId)) sessions.sessions[current.input.key] = deferFold(row,String(runtime.taskId),runtime.now(),current.input.incremental);
         if (knowledge.foldClaim === String(runtime.taskId)) knowledge.foldClaim = null;
         knowledge.foldQueue = knowledge.foldQueue.filter(item => item !== current.input.key);
+        await options.onOperation?.(tx,current.input.host.conversationId,{id:`learning:${current.input.key}:${runtime.taskId}`,name:current.input.incremental ? "optimizer.learn" : "optimizer.fold",status:"cancelled",startedAt:row?.recordActivity ?? runtime.now(),at:runtime.now(),input:{},output:{error:"Learning cancelled"}});
         return {status:"terminal",outcome:{status:"aborted",result:null,reason:"Fold cancelled"}};
       },context);
     },

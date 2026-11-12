@@ -16,6 +16,7 @@
     "./server/prompt-templates": "./src/server/prompt-templates.ts",
     "./server/prompt-usage": "./src/server/prompt-usage.ts",
     "./server/render-context": "./src/server/render-context.ts",
+    "./server/render-tool": "./src/server/render-tool.ts",
     "./server/render-transcript": "./src/server/render-transcript.ts",
     "./server/session-share": "./src/server/session-share.ts",
     "./server/skills": "./src/server/skills.ts",

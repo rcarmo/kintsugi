@@ -15,6 +15,7 @@ import { readWorkspaceTitle } from "@kintsugi/workspace";
 import { buttonHtml } from "@kintsugi/design-system/button";
 import { ids } from "@kintsugi/agent/server/render-context";
 import { transcriptRow } from "@kintsugi/agent/server/render-markup";
+import { optimizerOperationRows, recordOptimizerOperation } from "./token-optimizer-operations.ts";
 import type { DurableAgentRecord } from "./durable-workspace.ts";
 const NativeNotices = defineDoc<{ids:string[]}>({kind:"kintsugi.token-optimizer.notices",version:1,scope:"session",initial:() => ({ids:[]}),checkpointWhen:() => false});
 /** `code` and `runId` were added later; older notices render as plain text. */
@@ -22,11 +23,11 @@ export const OptimizerNotice = defineEntry<{id:string;text:string;at:number;code
 export const tokenOptimizerIntegration:BuiltinAgentIntegration = {id:"token-optimizer",transcript:view => {
   // SAFETY: Harness owns and versions the LiveDoc in this committed view.
   const live = view.docs[LiveDoc.definition.kind] as LiveState | undefined, current = live?.run && !live.run.afterRun ? runIdentity(live.run) : null;
-  return {rows:view.entries.flatMap(entry => OptimizerNotice.is(entry) ? [{type:"extension" as const,key:String(entry.id)+":optimizer",timestamp:entry.data.at,render:(ctx:Parameters<typeof ids.abortForm>[0]) => {
+  return {rows:[...optimizerOperationRows(view),...view.entries.flatMap(entry => OptimizerNotice.is(entry) ? [{type:"extension" as const,key:String(entry.id)+":optimizer",timestamp:entry.data.at,render:(ctx:Parameters<typeof ids.abortForm>[0]) => {
     // Offer Stop only while the run the notice is about is still going; the composer owns the abort form.
     const stop = entry.data.code === "still-stuck" && current !== null && entry.data.runId === current ? buttonHtml({type:"submit",variant:"secondary",content:{kind:"caption",caption:"Stop"},attributesHtml:`form="${ids.abortForm(ctx)}"`}) : "";
     return transcriptRow(`<div class="agent-note system token-optimizer-note" role="status"><p>${escapeHtml(entry.data.text)}</p>${stop}</div>`);
-  }}] : [])};
+  }}] : [])]};
 }};
 export const NativeOptimizerSessions = defineDoc<{sessions:Record<string,{host:HostSession;begin:number;end:number|null}>}>({kind:"kintsugi.token-optimizer.sessions",version:1,scope:"session",initial:() => ({sessions:{}}),checkpointWhen:() => false});
 const NativeEpoch = defineDoc<{id:string|null}>({kind:"kintsugi.token-optimizer.epoch",version:1,scope:"conversation",history:"latest",fork:"initial",initial:() => ({id:null}),checkpointWhen:() => false});
@@ -129,7 +130,7 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
     },
   };
   const transport = createSdkModelTransport(options.models);
-  const optimizer = createTokenEconomizer({harness:options.harness,backgroundOwner:() => {if (maintenance === undefined) throw new Error("Optimizer maintenance owner is not attached");return maintenance;},domain,...transport,policy:host => options.configuration.policy(options.workspaceId,actor(host)),onNotice:async notice => {const rows = (await options.harness().snapshot(NativeOptimizerSessions,context))?.sessions, host = rows?.[notice.sessionId]?.host ?? [...subagents.values()].find(row => row.id === notice.sessionId);if (host) await options.harness().commit(async tx => {const state = await tx.doc(NativeNotices);if (state.ids.includes(notice.id)) return;await tx.appendEntry(OptimizerNotice,host.conversationId,{data:{id:notice.id,text:notice.text,at:Date.now(),code:notice.code,runId:notice.runId}});state.ids.push(notice.id);},context);},onError:error => console.error("Token optimizer observation failed",error)});
+  const optimizer = createTokenEconomizer({harness:options.harness,backgroundOwner:() => {if (maintenance === undefined) throw new Error("Optimizer maintenance owner is not attached");return maintenance;},domain,...transport,onOperation:recordOptimizerOperation,policy:host => options.configuration.policy(options.workspaceId,actor(host)),onNotice:async notice => {if (["tools-applied","tools-restored","tool-publication-refused"].includes(notice.code)) return;const rows = (await options.harness().snapshot(NativeOptimizerSessions,context))?.sessions, host = rows?.[notice.sessionId]?.host ?? [...subagents.values()].find(row => row.id === notice.sessionId);if (host) await options.harness().commit(async tx => {const state = await tx.doc(NativeNotices);if (state.ids.includes(notice.id)) return;await tx.appendEntry(OptimizerNotice,host.conversationId,{data:{id:notice.id,text:notice.text,at:Date.now(),code:notice.code,runId:notice.runId}});state.ids.push(notice.id);},context);},onError:error => console.error("Token optimizer observation failed",error)});
   async function start(conversation:Conversation,record:Pick<DurableAgentRecord,"agentId"|"parentId"|"readOnly"|"oneShotCallId">,event:"startup"|"new"|"resume"|"fork" = "startup",parentGroup?:string) {
     if (record.parentId || record.readOnly || record.oneShotCallId) return;
     if (event === "startup" && hosts.has(conversation.id)) return hosts.get(conversation.id)!

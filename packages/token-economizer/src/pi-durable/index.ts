@@ -6,3 +6,4 @@ export { decodeArguments, decodeResult } from "./decode.ts";
 export { ContextSnapshotEntry, KnowledgeDoc, SessionsDoc, ObservationsDoc, RunDoc, JobsDoc, ClassifiersDoc, NoticesDoc, type GuardDecisionRecord, type Knowledge } from "./documents.ts";
 export { runIdentity } from "./run-identity.ts";
 export { detach } from "./detach.ts";
+export type { OptimizerOperation, OperationSink } from "./operations.ts";

@@ -8,9 +8,11 @@ import { applyTools, pendingDelay, restoreTools } from "../core/toolprune/eviden
 import { AutoWaitersDoc, KnowledgeDoc, SessionsDoc, type AutoWaiterItem } from "./documents.ts";
 import { detach } from "./detach.ts";
 import type { HostDomain, HostSession } from "./domain.ts";
-export function createCataloguePublication(options: {harness:() => Harness;backgroundOwner?:() => ConversationId;domain:HostDomain;policy:(key:string) => Policy;onNotice:(notice:Notice) => Promise<void>}) {
+import type { OperationSink } from "./operations.ts";
+export function createCataloguePublication(options: {harness:() => Harness;backgroundOwner?:() => ConversationId;domain:HostDomain;policy:(key:string) => Policy;onNotice:(notice:Notice) => Promise<void>;onOperation?:OperationSink}) {
   const repositoryKey = (item:AutoWaiterItem) => JSON.stringify([item.scope.host,item.scope.repository]);
   async function apply(item:AutoWaiterItem,names:string[],named:boolean) {
+    const startedAt = Date.now(), operationId = `apply:${crypto.randomUUID()}`;
     const catalogue = await options.domain.catalogue(item.host);
     const result = await options.harness().commit(async tx => {
       const knowledge = await tx.doc(KnowledgeDoc,scopeKey(item.scope),item.scope), next = detach(knowledge.tools), policy = options.policy(item.sessionKey);
@@ -18,12 +20,17 @@ export function createCataloguePublication(options: {harness:() => Harness;backg
       if (!emitting(policy) || policy.pruning === "off" || !named && policy.pruning !== "auto") reason = "Current policy prevents publication";
       else if (!catalogue.complete) reason = "A complete catalogue with provenance is required";
       else if (names.some(name => !catalogue.tools.some(tool => tool.name === name && !tool.protected) || next.used.includes(name) || !named && next.kept.includes(name))) reason = "A proposed tool is protected, retained, used or no longer available";
-      if (reason) {next.refusal = reason;next.pending = null;knowledge.tools = next;return {added:[],reason};}
+      if (reason) {
+        next.refusal = reason;next.pending = null;knowledge.tools = next;
+        await options.onOperation?.(tx,item.host.conversationId,{id:operationId,name:"optimizer.apply-tools",status:"failed",startedAt,at:Date.now(),input:{tools:names,automatic:!named},output:{error:reason}});
+        return {added:[],reason};
+      }
       // Publication rechecks current protection, rather than trusting the retained description catalogue.
       next.catalogue = next.catalogue.map(tool => ({...tool,protected:catalogue.tools.find(current => current.name === tool.name)?.protected ?? tool.protected}));
       // An explicit named Apply may precede the first evidence fold; do not report a false success.
       if (named) for (const name of names) if (!next.catalogue.some(tool => tool.name === name)) next.catalogue.push({...catalogue.tools.find(tool => tool.name === name)!});
       const added = applyTools(next,names,named);next.pending = null;next.refusal = null;knowledge.tools = next;
+      if (added.length) await options.onOperation?.(tx,item.host.conversationId,{id:operationId,name:"optimizer.apply-tools",status:"complete",startedAt,at:Date.now(),input:{tools:names,automatic:!named},output:{hidden:added,effective:"Next session or resume"}});
       return {added,reason:null};
     },BACKGROUND_CONTEXT);
     if (result.added.length || result.reason) await options.onNotice({id:JSON.stringify([scopeKey(item.scope),"publication",result.added,result.reason]),code:result.reason ? "tool-publication-refused" : "tools-applied",text:result.reason ?? `Hid ${result.added.length === 1 ? "1 unused tool" : `${result.added.length} unused tools`} from the next session or resume. Restore them any time in Settings.`,sessionId:item.host.id,runId:null});
@@ -55,7 +62,12 @@ export function createCataloguePublication(options: {harness:() => Harness;backg
   }});
   return {extension:defineExtension({name:"token-economizer.catalogue",tasks:[waiter]}),apply,
     async restore(host:HostSession,names?:string[]) {
-      const removed = await options.harness().commit(async tx => {const knowledge = await tx.doc(KnowledgeDoc,scopeKey(host.scope),host.scope), next = detach(knowledge.tools), removed = restoreTools(next,names);next.pending = null;knowledge.tools = next;return removed;},BACKGROUND_CONTEXT);
+      const startedAt = Date.now(), operationId = `restore:${crypto.randomUUID()}`;
+      const removed = await options.harness().commit(async tx => {
+        const knowledge = await tx.doc(KnowledgeDoc,scopeKey(host.scope),host.scope), next = detach(knowledge.tools), requested = names ?? [...next.applied], removed = restoreTools(next,names);next.pending = null;knowledge.tools = next;
+        if (removed.length) await options.onOperation?.(tx,host.conversationId,{id:operationId,name:"optimizer.restore-tools",status:"complete",startedAt,at:Date.now(),input:{tools:requested},output:{restored:removed,effective:"Next session or resume",sticky:true}});
+        return removed;
+      },BACKGROUND_CONTEXT);
       if (removed.length) await options.onNotice({id:JSON.stringify([scopeKey(host.scope),"restore",removed]),code:"tools-restored",text:`Restored ${removed.length === 1 ? "1 hidden tool" : `${removed.length} hidden tools`} from the next session or resume. They won’t be hidden again unless you ask.`,sessionId:host.id,runId:null});return removed;
     },
     async wait(item:AutoWaiterItem) {

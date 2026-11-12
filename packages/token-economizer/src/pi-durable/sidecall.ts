@@ -1,14 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { defineExtension, defineTask, type ConversationId, type Harness } from "@earendil-works/pi-durable";
+import { defineExtension, defineTask, type ConversationId, type Harness, type Tx } from "@earendil-works/pi-durable";
 import { reserve, settle } from "../core/accounting.ts";
 import { redact } from "../core/observations.ts";
 import { purposeAllowed, type Policy } from "../core/config.ts";
 import type { InferenceRequest, InferenceResult, SideCall, Spend } from "../core/types.ts";
 import { JobsDoc, type InferenceJob } from "./documents.ts";
+import type { OperationSink } from "./operations.ts";
 export type JobOrigin = { sessionKey: string; account: string; runId: string | null; revision: string; digest: string; estimatedMaximumCost: number | null };
 export type JobAdmission = { accepted: boolean; reason: string; job: InferenceJob | null };
-export function createInferenceQueue(options: { harness: () => Harness; backgroundOwner?:() => ConversationId; policy: (sessionKey: string) => Policy; sideCall: SideCall; maximumCost?:(request:InferenceRequest) => number|null;onAuthPause?:(account:string,revision:number,key:string) => Promise<void>; now?:() => number }) {
+export function createInferenceQueue(options: { harness: () => Harness; backgroundOwner?:() => ConversationId; policy: (sessionKey: string) => Policy; sideCall: SideCall; maximumCost?:(request:InferenceRequest) => number|null;onAuthPause?:(account:string,revision:number,key:string) => Promise<void>; now?:() => number;onOperation?:OperationSink }) {
+  async function report(tx:Tx,job:InferenceJob,at:number) {
+    if (!options.onOperation || job.conversationId === undefined) return;
+    await options.onOperation(tx,job.conversationId,{
+      id:`inference:${job.id}`,name:`optimizer.${job.request.purpose}`,status:job.status,startedAt:job.created,at,
+      input:{model:job.request.model,prompt:job.request.prompt,classification:job.request.classification ?? null,maxOutputTokens:job.request.maxOutputTokens,deadlineMs:job.request.deadlineMs},
+      output:job.status === "queued" || job.status === "running" ? null : {status:job.status,result:job.result?.text ?? null,model:job.result?.model ?? job.request.model,usage:job.result?.usage ?? null,cost:job.result?.cost ?? null,durationMs:job.result?.durationMs ?? null,error:job.error},
+    });
+  }
   const controllers = new Map<string, AbortController>();
   const task = defineTask<{ id: string }, { phase: "queued" | "invoke" }, null>({
     name: "token-economizer.inference", version: 1, initial: () => ({ phase: "queued" }),
@@ -21,12 +30,14 @@ export function createInferenceQueue(options: { harness: () => Harness; backgrou
           if (!purposeAllowed(options.policy(job.sessionKey),job.request) || state.paused.includes(job.account) || runtime.now() >= job.deadline) {
             job.status = "cancelled"; job.error = "Policy, authentication or deadline prevents execution";
             settle(state.budget, spend(job, null, "failed"));
+            await report(tx,job,runtime.now());
             return { status: "terminal", outcome: { status: "completed", result: null } };
           }
           const priority = (row:InferenceJob) => ["loop-judge","writer"].includes(row.request.purpose) || row.request.classification?.purpose === "loop";
           const guardWaiting = Object.values(state.jobs).some(row => row.status === "queued" && priority(row));
           if (state.worker !== null || guardWaiting && !priority(job)) return { status: "sleeping", until: runtime.now()+50, checkpoint: { phase: "queued" } };
           state.worker = job.id; job.status = "running";
+          await report(tx,job,runtime.now());
           return { status: "running", checkpoint: { phase: "invoke" } };
         }, context);
       },
@@ -41,6 +52,7 @@ export function createInferenceQueue(options: { harness: () => Harness; backgrou
             row.status = "unknown"; row.error = "Restart interrupted a provider attempt; not retried";
             state.budget.ledger.push(spend(row, null, "unknown")); state.budget.unknown.push(id);
             if (state.worker === id) state.worker = null;
+            await report(tx,row,runtime.now());
             return { status: "terminal", outcome: { status: "completed", result: null } };
           }, context);
           return;
@@ -74,6 +86,7 @@ export function createInferenceQueue(options: { harness: () => Harness; backgrou
           if (usage.status === "unknown") { state.budget.ledger.push(usage); state.budget.unknown.push(id); }
           else settle(state.budget, usage);
           if (state.worker === id) state.worker = null;
+          await report(tx,row,runtime.now());
           return { status: "terminal", outcome: { status: "completed", result: null } };
         }, context);
         if (pauseRevision !== null) await options.onAuthPause?.(job.account,pauseRevision,job.sessionKey);
@@ -92,6 +105,7 @@ export function createInferenceQueue(options: { harness: () => Harness; backgrou
           }
         }
         if (state.worker === current.input.id) state.worker = null;
+        if (row) await report(tx,row,runtime.now());
         return { status: "terminal", outcome: { status: "aborted", result: null, reason: "Optimisation cancelled" } };
       }, context);
     },
@@ -114,9 +128,10 @@ export function createInferenceQueue(options: { harness: () => Harness; backgrou
         const now = (options.now ?? Date.now)(), admission = reserve(state.budget, request.id, origin.sessionKey, new Date(now).toISOString().slice(0,10), origin.estimatedMaximumCost ?? options.maximumCost?.(request) ?? null, policy);
         if (!admission.accepted) return { accepted: false, reason: admission.reason, job: null };
         const job: InferenceJob = { id: request.id, sessionKey: origin.sessionKey, account: origin.account, runId: origin.runId, revision: origin.revision, digest: origin.digest,
-          request: { ...request, prompt:redact(request.prompt), maxOutputTokens: Math.min(request.maxOutputTokens,policy.budget.maxOutputTokens), deadlineMs: Math.min(policy.budget.deadlineMs,request.deadlineMs) }, created: now, deadline: now+Math.min(policy.budget.deadlineMs,request.deadlineMs), taskId: null, status: "queued", result: null, error: null };
+          conversationId,request: { ...request, prompt:redact(request.prompt), maxOutputTokens: Math.min(request.maxOutputTokens,policy.budget.maxOutputTokens), deadlineMs: Math.min(policy.budget.deadlineMs,request.deadlineMs) }, created: now, deadline: now+Math.min(policy.budget.deadlineMs,request.deadlineMs), taskId: null, status: "queued", result: null, error: null };
         job.taskId = await tx.createTask(task, { id: job.id }, { ownership: { kind: "conversation" }, conversationId:options.backgroundOwner?.() ?? conversationId, background: true });
         state.jobs[job.id] = job;
+        await report(tx,job,now);
         return { accepted: true, reason: "queued", job };
       }, BACKGROUND_CONTEXT);
     },
@@ -138,6 +153,7 @@ export function createInferenceQueue(options: { harness: () => Harness; backgrou
         job.result = result; job.status = result.error ? "failed" : "complete"; job.error = result.error;
         settle(state.budget, spend(job, result, job.status === "complete" ? "complete" : "failed"));
         state.budget.unknown = state.budget.unknown.filter(key => key !== id);
+        await report(tx,job,(options.now ?? Date.now)());
       }, BACKGROUND_CONTEXT);
     },
   };

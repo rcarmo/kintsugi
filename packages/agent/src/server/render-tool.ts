@@ -29,9 +29,9 @@ const diffOperationSchema = Type.Object({
   newText: Type.String(),
 });
 
-function statusHtml(status: ToolView["status"], readOnly = false): string {
+function statusHtml(status: ToolView["status"], readOnly = false, tone?: "info"): string {
   const state = status === "streaming" || status === "running" ? "running" : status === "error" ? "danger" : "success";
-  return `<span class="status-dot ${state}${state === "running" && readOnly ? " static" : ""}" aria-label="${state === "running" ? "In progress" : state === "danger" ? "Failed" : "Complete"}"></span>`;
+  return `<span class="status-dot ${state}${tone && state !== "danger" ? " info" : ""}${state === "running" && readOnly ? " static" : ""}" aria-label="${state === "running" ? "In progress" : state === "danger" ? "Failed" : "Complete"}"></span>`;
 }
 
 function summaryHtml(parts: Array<string | undefined>): string {
@@ -122,17 +122,17 @@ function lazyTranscriptItemFrame(ctx: AgentRenderContext, key: string): string {
  * A tool call's row, opening to its detail. A `nested` call, such as a script's, has no detail route: its detail is
  * inline and never paginated.
  */
-export function renderToolCard(ctx: AgentRenderContext, key: string, tool: ToolView, options: { open?: boolean; live?: boolean; nested?: boolean; timestamp?: number } = {}): string {
+export function renderToolCard(ctx: AgentRenderContext, key: string, tool: ToolView, options: { open?: boolean; live?: boolean; nested?: boolean; timestamp?: number; tone?: "info"; summary?: string } = {}): string {
   const liveDuration = isBashTool(tool.name) && tool.status === "running" && tool.issuedAt !== undefined && !ctx.readOnly;
   const timeout = numberArg(toolArgs(tool), "timeout") ?? 600;
   const label = {
     kind: "text" as const,
-    text: toolSummaryText(tool),
+    text: options.summary ?? toolSummaryText(tool),
     attributesHtml: liveDuration ? `data-controller="agent-elapsed" data-agent-elapsed-since-value="${tool.issuedAt}" data-agent-elapsed-prefix-value="${escapeHtml(tool.name)} · " data-agent-elapsed-suffix-value=" / ${formatDuration(timeout * 1000)}" data-agent-elapsed-format-value="duration"` : undefined,
     textAttributesHtml: liveDuration ? 'data-agent-elapsed-target="time"' : undefined,
   };
   const labelOptions = {
-    leadingHtml: `<span id="${ids.itemSummaryStatus(ctx, key)}" class="agent-tool-status">${statusHtml(tool.status, ctx.readOnly)}</span>`,
+    leadingHtml: `<span id="${ids.itemSummaryStatus(ctx, key)}" class="agent-tool-status">${statusHtml(tool.status, ctx.readOnly, options.tone)}</span>`,
     labelId: ids.itemSummaryContent(ctx, key),
     trailingHtml: tool.canAbort && !ctx.readOnly ? toolAbortHtml(ctx, key, tool) : undefined,
   };

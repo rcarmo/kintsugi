@@ -27,6 +27,7 @@ import { sessionKey } from "../../../token-economizer/src/core/sessions.ts";
 import { emptyGuard } from "../../../token-economizer/src/core/loopguard/turn.ts";
 import { runIdentity } from "../../../token-economizer/src/pi-durable/run-identity.ts";
 import { ids } from "@kintsugi/agent/server/render-context";
+import { OptimizerOperationEntry, recordOptimizerOperation } from "../../src/server/token-optimizer-operations.ts";
 import { TokenOptimizerConfiguration, tokenOptimizerConfiguration } from "../../src/server/token-optimizer-config.ts";
 const cleanups:(() => Promise<void>)[] = [];
 afterEach(async () => {for (const close of cleanups.splice(0).reverse()) await close();});
@@ -433,3 +434,56 @@ test("slow live learning does not block later prompts; completions coalesce and 
   expect(status.session!.folded).toBe(true);expect(status.knowledge!.tools.sessions).toBe(1);expect(status.knowledge!.tools.prompts).toBe(2);
   expect(status.knowledge!.environment.facts[0]!.life.confirms).toHaveLength(1);expect(f.faux.state.callCount).toBe(4);
 },20_000);
+
+for (const kind of ["memory","sqlite","jsonl"] as const) test(`native ${kind}: optimizer operation receipts are durable display data, not model context or extra calls`,async () => {
+  const f = await setup(kind);
+  f.faux.setResponses([fauxAssistantMessage("Off")]);
+  await (await f.conversation.submit({type:"input",content:"Hello",requestId:"off-receipts"},context)).wait(context);
+  expect((await f.conversation.entries({order:"ascending"},500,undefined,context)).items.filter(OptimizerOperationEntry.is)).toHaveLength(0);
+  const config = f.configuration.snapshot();Object.assign(config.policy,{enabled:true,microSkills:"envfacts",pruning:"propose"});await f.configuration.configure(config);
+  const active = f.configuration.snapshot();active.policy.mode = "active";await f.configuration.configure(active);
+  f.fail("pytest: command not found");f.faux.setResponses([fauxAssistantMessage([fauxToolCall("codemode",{code:"await tools.bash({command:'pytest'});"})],{stopReason:"toolUse"}),fauxAssistantMessage("Done")]);
+  await (await f.conversation.submit({type:"input",content:"Check",requestId:"learning-receipts"},context)).wait(context);
+  for (let wait = 0;wait < 200 && ((await f.native.optimizer.status(f.host)).session!.learning?.processed ?? 0) < 1;wait++) {await settleLearning(f.harness);await Bun.sleep(5);}
+  const operations = (await f.conversation.entries({order:"ascending"},500,undefined,context)).items.filter(OptimizerOperationEntry.is);
+  const learned = operations.filter(entry => entry.data.name === "optimizer.learn");
+  expect(learned.map(entry => entry.data.status)).toEqual(["running","complete"]);
+  expect(learned[0]!.data.id).toBe(learned[1]!.data.id);
+  expect(learned[0]!.data.input.observations).toBe(1);
+  expect(learned[1]!.data.output).toMatchObject({newFacts:["absent_tool:pytest"],activePrefixChanged:false});
+  expect(operations.every(entry => entry.model === undefined)).toBe(true);
+  expect(JSON.stringify((await f.conversation.context(context)).messages)).not.toContain("activePrefixChanged");
+  expect(f.faux.state.callCount).toBe(3);
+  await f.native.optimizer.apply(f.host,["rare"]);await f.native.optimizer.restore(f.host,["rare"]);
+  const actions = (await f.conversation.entries({order:"ascending"},500,undefined,context)).items.filter(OptimizerOperationEntry.is).map(entry => entry.data.name);
+  expect(actions).toContain("optimizer.apply-tools");expect(actions).toContain("optimizer.restore-tools");
+},20_000);
+
+test("optimizer model receipts follow the originating Agent, include actual usage, and deduplicate replay",async () => {
+  const f = await setup(), config = f.configuration.snapshot();
+  Object.assign(config.policy,{enabled:true,pruning:"propose",toolJudge:"generative",generativeModel:{provider:"faux",id:"faux-1"}});await f.configuration.configure(config);
+  const active = f.configuration.snapshot();active.policy.mode = "active";await f.configuration.configure(active);
+  f.faux.setResponses([fauxAssistantMessage(JSON.stringify({rare:{load:false}}))]);
+  await f.native.prepare(f.host,"Work without the rare tool","operation-receipt");
+  const operations = (await f.conversation.entries({order:"ascending"},500,undefined,context)).items.filter(OptimizerOperationEntry.is);
+  const calls = operations.filter(entry => entry.data.name === "optimizer.tool-judge");
+  expect(calls.map(entry => entry.data.status)).toEqual(["queued","running","complete"]);
+  expect(calls[0]!.data.input.model).toEqual({provider:"faux",id:"faux-1"});
+  const job = Object.values((await f.harness.snapshot(JobsDoc,context))!.jobs)[0]!;
+  expect(job.conversationId).toBe(f.conversation.id);
+  expect(calls[2]!.data.output).toMatchObject({result:job.result!.text,usage:job.result!.usage,cost:job.result!.cost});
+  expect((await (await f.harness.root(context)).entries({order:"ascending"},500,undefined,context)).items.filter(OptimizerOperationEntry.is)).toHaveLength(0);
+  await f.harness.commit(tx => recordOptimizerOperation(tx,f.conversation.id,calls[2]!.data),context);
+  expect((await f.conversation.entries({order:"ascending"},500,undefined,context)).items.filter(OptimizerOperationEntry.is)).toHaveLength(operations.length);
+  expect(JSON.stringify((await f.conversation.context(context)).messages)).not.toContain("operation-receipt");
+  expect(f.faux.state.callCount).toBe(1);
+});
+
+test("optimizer display receipts redact and bound nested values without changing their source",async () => {
+  const f = await setup(), input = {token:"must-not-persist",prompt:"Authorization: Bearer another-secret",text:"x".repeat(20_000)}, original = JSON.stringify(input);
+  await f.harness.commit(tx => recordOptimizerOperation(tx,f.conversation.id,{id:"privacy",name:"optimizer.proposer",status:"complete",startedAt:1,at:2,input,output:{result:"sk-abcdefghijklmnopqrstuv",cost:null,usage:null}}),context);
+  const receipt = (await f.conversation.entries({order:"ascending"},500,undefined,context)).items.filter(OptimizerOperationEntry.is)[0]!;
+  expect(JSON.stringify(receipt.data)).not.toContain("must-not-persist");expect(JSON.stringify(receipt.data)).not.toContain("another-secret");expect(JSON.stringify(receipt.data)).not.toContain("sk-abcdefghijklmnopqrstuv");
+  expect(String(receipt.data.input.text)).toContain("[display truncated]");expect(JSON.stringify(input)).toBe(original);
+  expect(receipt.model).toBeUndefined();expect(receipt.data.output).toMatchObject({cost:null,usage:null});
+});

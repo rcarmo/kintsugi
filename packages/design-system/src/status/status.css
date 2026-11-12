@@ -26,6 +26,7 @@
 .status-dot.warning { color: var(--warning); }
 .status-dot.success { color: var(--success); }
 .status-dot.danger { color: var(--danger); }
+.status-dot.info { color: var(--info); }
 .status-dot.running {
   width: 12px;
   height: 12px;
