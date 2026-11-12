@@ -29,7 +29,16 @@ const modelPurposes = new Map([
   ["optimizer.classifier",{asked:"to classify a decision",doing:"Classifying"}],
   ["optimizer.audit",{asked:"to double-check a local decision",doing:"Double-checking"}],
 ]);
-const factStates = new Map([["CANDIDATE","still learning"],["ACTIVE","in use"],["RETIRED","retired"]]);
+const factStates = new Map([["CANDIDATE","still learning"],["ACTIVE","ready for the next session"],["RETIRED","retired"]]);
+const learningChangesSchema = Type.Object({facts:Type.Array(Type.Object({id:Type.String(),state:Type.String(),claim:Type.String()})),suggestedTools:Type.Array(Type.String()),withdrawnTools:Type.Array(Type.String())});
+const learningChanges = (output:JsonObject|undefined) => read(learningChangesSchema,output?.changes);
+
+/** Completed checks without a visible change stay in the journal, not the timeline. */
+export function optimizerHasChanges(operation:OptimizerOperation):boolean {
+  if (operation.status !== "complete" || !["optimizer.learn","optimizer.fold"].includes(operation.name)) return true;
+  const changes = learningChanges(object(operation.output));
+  return !changes || changes.facts.length > 0 || changes.suggestedTools.length > 0 || changes.withdrawnTools.length > 0;
+}
 
 function modelName(input:JsonObject|undefined) {
   const model = object(input?.model);
@@ -65,19 +74,20 @@ export function optimizerSummary(operation:OptimizerOperation):string {
   let what: string;
   if (operation.name === "optimizer.learn" || operation.name === "optimizer.fold") {
     const label = operation.name === "optimizer.fold" ? "session" : "new work";
-    const learned = newFacts(output).length;
-    what = done ? `Learned from ${label} · ${learned ? plural(learned,"new fact") : "nothing new"}` : `Learning from ${label}`;
+    const learned = newFacts(output).length, updated = learningChanges(output)?.facts.filter(fact => !names(output?.newFacts).includes(fact.id)).length ?? 0;
+    const changes = [learned ? plural(learned,"new fact") : "",updated ? plural(updated,"updated fact") : ""].filter(Boolean).join(" · ");
+    what = done ? changes ? `Learned from ${label} · ${changes}` : (learningChanges(output)?.suggestedTools.length || learningChanges(output)?.withdrawnTools.length) ? "Updated tool suggestions" : `Checked ${label} · nothing new` : `Learning from ${label}`;
   } else if (purpose) {
     const model = modelName(input);
     what = operation.status === "queued" || operation.status === "running" ? `${purpose.doing} with ${model}` : `Asked ${model} ${purpose.asked}`;
     const reply = object(parsedReply(output));
-    if (done && operation.name === "optimizer.loop-judge" && reply) what += flag(reply.stuck) ? " · looks stuck" : " · making progress";
-    if (done && operation.name === "optimizer.tool-judge") {const {hide} = toolVerdicts(output);what += hide.length ? ` · could hide ${plural(hide.length,"tool")}` : " · keep all";}
+    if (done && operation.name === "optimizer.loop-judge" && flag(reply?.stuck) !== undefined) what += flag(reply?.stuck) ? " · looks stuck" : " · making progress";
+    if (done && operation.name === "optimizer.tool-judge") {const {hide,keep} = toolVerdicts(output);what += hide.length ? ` · could hide ${plural(hide.length,"tool")}` : keep.length ? " · keep current tools" : " · no decision";}
   } else if (operation.name === "optimizer.nudge") {
-    what = text(output?.delivery) === "simulated" ? "Would have nudged the Agent (Watch only)" : "Nudged the Agent";
+    what = text(output?.delivery) === "simulated" ? "Would have nudged the Agent (Watch only)" : text(output?.action) === "notice" ? "Run still looks stuck" : text(output?.delivery) === "queued" ? "Queued a nudge for the Agent" : text(output?.delivery) === "undelivered" ? "Nudge was not delivered" : "Nudged the Agent";
   } else if (operation.name === "optimizer.prepare-tools") {
     const hidden = names(output?.hidden).length;
-    what = `Picked tools for this task${done ? ` · ${hidden ? `${plural(hidden,"tool")} hidden` : "nothing hidden"}` : ""}`;
+    what = `Picked tools for this task${done ? ` · ${hidden ? flag(output?.applied) === true ? `${plural(hidden,"tool")} hidden` : `would hide ${plural(hidden,"tool")}` : "nothing hidden"}` : ""}`;
   } else if (operation.name === "optimizer.apply-tools") {
     const hidden = names(output?.hidden).length || names(input?.tools).length;
     what = done ? `Hid ${plural(hidden,"tool")} from the next session` : "Hiding tools";
@@ -112,31 +122,30 @@ function learningRows(operation:OptimizerOperation,input:JsonObject|undefined,ou
   });
   if (evidence.length) rows.push({label:"Evidence",html:folded(`Tool results (${evidence.length})`,bullets(evidence))});
   if (operation.status !== "complete") return rows;
-  const added = newFacts(output), all = facts(output);
-  rows.push({label:"Learned",html:added.length ? bullets(added.map(fact => `${escapeHtml(fact.claim)} <span class="token-optimizer-op__muted">(${escapeHtml(factStates.get(fact.state) ?? "new")})</span>`)) : para("No new facts. Existing facts were checked against this work.")});
-  const byState = [...factStates].map(([state,label]) => [label,all.filter(fact => fact.state === state).length] as const).filter(([,n]) => n);
-  if (byState.length) rows.push({label:"Known facts",html:para(byState.map(([label,n]) => `${n} ${label}`).join(" · "))});
-  const suggested = names(output?.toolSuggestions), hidden = names(output?.hiddenTools);
+  const changes = learningChanges(output), changed = changes?.facts ?? newFacts(output);
+  if (changed.length) rows.push({label:"Facts",html:bullets(changed.map(fact => `${escapeHtml(fact.claim)} <span class="token-optimizer-op__muted">(${escapeHtml(factStates.get(fact.state) ?? fact.state)})</span>`))});
+  else if (!changes) rows.push({label:"Learned",html:para("No new facts.")});
+  const suggested = changes?.suggestedTools ?? names(output?.toolSuggestions);
   if (suggested.length) rows.push({label:"Suggestions",html:`<p>Could hide ${toolList(suggested)}; ${suggested.length === 1 ? "it hasn’t" : "they haven’t"} been used.</p>`});
-  if (hidden.length) rows.push({label:"Hidden",html:`<p>${toolList(hidden)}</p>`});
-  rows.push({label:"This Agent",html:para("Its current facts stay as they are, so its prompt cache keeps working. New facts apply from the next session.")});
+  if (changes?.withdrawnTools.length) rows.push({label:"Withdrawn",html:`<p>No longer suggesting that you hide ${toolList(changes.withdrawnTools)}.</p>`});
   return rows;
 }
 
 function modelRows(operation:OptimizerOperation,input:JsonObject|undefined,output:JsonObject|undefined):Row[] {
   const model = object(input?.model), rows:Row[] = [];
-  if (model) rows.push({label:"Model",html:para(`${text(model.id) ?? "?"} · ${text(model.provider) ?? "?"}`)});
+  if (text(model?.provider)) rows.push({label:"Provider",html:para(text(model?.provider)!)});
   if (operation.status === "queued") rows.push({label:"Status",html:para("Waiting for an earlier optimizer call to finish.")});
-  if (operation.status === "running") rows.push({label:"Status",html:para("Running in the background. The Agent isn’t waiting for it.")});
+  if (operation.status === "running") rows.push({label:"Status",html:para(operation.name === "optimizer.tool-judge" ? "Picking tools before the next prompt." : "Running in the background.")});
   const reply = parsedReply(output), replyObject = object(reply);
   if (operation.status === "complete") {
     let result = "";
     if (operation.name === "optimizer.proposer") {
       const claims = list(replyObject?.facts).flatMap(item => text(object(item)?.claim) ?? text(object(item)?.id) ?? []);
-      result = claims.length ? `<p>Suggested ${plural(claims.length,"fact")}. Each needs repeated evidence before it’s used:</p>${bullets(claims.map(escapeHtml))}` : para("No new facts suggested.");
+      result = claims.length ? bullets(claims.map(escapeHtml)) : para("No new facts suggested.");
     } else if (operation.name === "optimizer.loop-judge" && replyObject) {
       const confidence = count(replyObject.confidence), reason = text(replyObject.reason);
-      result = para(`${flag(replyObject.stuck) ? "Looks stuck" : "Making progress"}${confidence === undefined ? "" : ` (${Math.round(Math.min(1,confidence)*100)}% confident)`}.${reason ? ` ${reason}` : ""}`);
+      const stuck = flag(replyObject.stuck);
+      result = para(`${stuck === undefined ? "No valid decision" : stuck ? "Looks stuck" : "Making progress"}${confidence === undefined ? "" : ` (${Math.round(Math.min(1,confidence)*100)}% confident)`}.${reason ? ` ${reason}` : ""}`);
     } else if (operation.name === "optimizer.tool-judge") {
       const {hide,keep} = toolVerdicts(output);
       result = `${hide.length ? `<p>Not needed: ${toolList(hide)}</p>` : ""}${keep.length ? `<p>Keep: ${toolList(keep)}</p>` : ""}` || para("No tool changes suggested.");
@@ -149,12 +158,11 @@ function modelRows(operation:OptimizerOperation,input:JsonObject|undefined,outpu
     if (result) rows.push({label:"Result",html:result});
   }
   const usage = object(output?.usage), parts:string[] = [];
-  const inputTokens = count(usage?.input), outputTokens = count(usage?.output), cached = count(usage?.cacheRead), cost = count(output?.cost), duration = count(output?.durationMs);
+  const inputTokens = count(usage?.input), outputTokens = count(usage?.output), cached = count(usage?.cacheRead);
   if (inputTokens !== undefined) parts.push(`${formatTokens(inputTokens)} in`);
   if (cached) parts.push(`${formatTokens(cached)} cached`);
   if (outputTokens !== undefined) parts.push(`${formatTokens(outputTokens)} out`);
-  if (cost !== undefined) parts.push(formatCost(cost));
-  if (duration !== undefined) parts.push(formatDuration(duration));
+
   if (parts.length) rows.push({label:"Usage",html:para(parts.join(" · "))});
   else if (operation.status === "unknown") rows.push({label:"Usage",html:para("Unknown: a restart interrupted the call. It wasn’t retried.")});
   const prompt = text(input?.prompt);
@@ -167,15 +175,13 @@ function otherRows(operation:OptimizerOperation,input:JsonObject|undefined,outpu
   if (operation.name === "optimizer.nudge") {
     const delivery = text(output?.delivery), message = text(output?.text), reason = text(input?.reason);
     rows.push({label:"Message",html:message ? `<p class="token-optimizer-op__quote">${escapeHtml(message)}</p>` : para("A notice that the run still looks stuck.")});
-    if (reason) rows.push({label:"Why",html:para(reason)});
-    rows.push({label:"Delivery",html:para(delivery === "simulated" ? "Not sent: the optimizer is in Watch only." : delivery === "undelivered" ? "Not delivered: the run ended first." : "Sent to the Agent during its run.")});
+    const reasons = new Map([["envelope","The run exceeded its usual work budget."],["judge","The run’s recent work looks stuck."]]);
+    if (reason) rows.push({label:"Why",html:para(reasons.get(reason) ?? reason)});
+    rows.push({label:"Delivery",html:para(delivery === "simulated" ? "Not sent: Watch only." : delivery === "undelivered" ? "Not delivered: the run ended first." : text(output?.action) === "notice" ? "Shown here; no message was sent to the Agent." : delivery === "queued" ? "Queued for the Agent’s next input boundary." : delivery === "consumed" ? "Delivered to the Agent." : "Delivery not recorded.")});
   } else if (operation.name === "optimizer.prepare-tools") {
-    const task = text(input?.task), hidden = names(output?.hidden), decisions = object(output?.decisions) ?? {};
-    const keep = Object.entries(decisions).filter(([,value]) => flag(value) === true).map(([name]) => name);
-    if (task) rows.push({label:"Task",html:`<p class="token-optimizer-op__quote">${escapeHtml(task.slice(0,600))}</p>`});
-    rows.push({label:"Hidden",html:hidden.length ? `<p>${toolList(hidden)}</p>` : para("Nothing.")});
-    if (keep.length) rows.push({label:"Kept",html:`<p>${toolList(keep)}</p>`});
-    if (flag(output?.applied) === false) rows.push({label:"Effect",html:para("Watch only: nothing was hidden.")});
+    const hidden = names(output?.hidden), applied = flag(output?.applied);
+    rows.push({label:applied === true ? "Hidden" : "Would hide",html:hidden.length ? `<p>${toolList(hidden)}</p>` : para("Nothing.")});
+    if (applied === false) rows.push({label:"Effect",html:para(text(input?.mode) === "observe" ? "Watch only: nothing was hidden." : "Not applied.")});
   } else if (operation.name === "optimizer.apply-tools" || operation.name === "optimizer.restore-tools") {
     const restore = operation.name === "optimizer.restore-tools", tools = names(restore ? output?.restored : output?.hidden), requested = names(input?.tools);
     rows.push({label:restore ? "Restored" : "Hidden",html:`<p>${toolList(tools.length ? tools : requested)}</p>`});

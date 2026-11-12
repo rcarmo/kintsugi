@@ -122,7 +122,7 @@ function lazyTranscriptItemFrame(ctx: AgentRenderContext, key: string): string {
  * A tool call's row, opening to its detail. A `nested` call, such as a script's, has no detail route: its detail is
  * inline and never paginated.
  */
-export function renderToolCard(ctx: AgentRenderContext, key: string, tool: ToolView, options: { open?: boolean; live?: boolean; nested?: boolean; timestamp?: number; tone?: "info"; summary?: string; autoOpen?: boolean } = {}): string {
+export function renderToolCard(ctx: AgentRenderContext, key: string, tool: ToolView, options: { open?: boolean; live?: boolean; nested?: boolean; timestamp?: number; tone?: "info"; summary?: string; autoOpen?: boolean; actionsHtml?: string } = {}): string {
   const liveDuration = isBashTool(tool.name) && tool.status === "running" && tool.issuedAt !== undefined && !ctx.readOnly;
   const timeout = numberArg(toolArgs(tool), "timeout") ?? 600;
   const label = {
@@ -134,7 +134,7 @@ export function renderToolCard(ctx: AgentRenderContext, key: string, tool: ToolV
   const labelOptions = {
     leadingHtml: `<span id="${ids.itemSummaryStatus(ctx, key)}" class="agent-tool-status">${statusHtml(tool.status, ctx.readOnly, options.tone)}</span>`,
     labelId: ids.itemSummaryContent(ctx, key),
-    trailingHtml: tool.canAbort && !ctx.readOnly ? toolAbortHtml(ctx, key, tool) : undefined,
+    trailingHtml: (tool.canAbort && !ctx.readOnly ? toolAbortHtml(ctx, key, tool) : "") + (options.actionsHtml ?? ""),
   };
   const active = tool.status === "streaming" || tool.status === "running";
   const content = transcriptRowContent(label, labelOptions);

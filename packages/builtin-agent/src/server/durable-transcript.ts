@@ -4,6 +4,8 @@ import { applyTranscriptContributions } from "@kintsugi/agent/server/transcript-
 import { durableTimingEntry, DurableTurnTiming } from "./durable-timing.ts";
 import { durableStopEntry } from "./durable-lifecycle.ts";
 import { durablePlanContextEntry } from "./durable-plan.ts";
+import { SteeringEntry } from "@kintsugi/token-economizer/pi-durable";
+import { OptimizerOperationEntry } from "./token-optimizer-operations.ts";
 import { historyNote } from "@kintsugi/legacy-converter/entries";
 import { contentText, type Message } from "@earendil-works/pi-ai";
 import { AgentDoc, CompactionEntry, InboxDoc, LiveDoc, ResetEntry, ToolResultEntry, UsageDoc, type AgentState, type ConversationView, type InboxState, type LiveState, type ToolDiagnostic, type ToolSlot, type UsageState, type EntryId, type EntryRecord } from "@earendil-works/pi-durable";
@@ -99,6 +101,7 @@ export function projectDurableTranscript(view: ConversationView): TranscriptItem
   let pendingBoundary = true;
   // Code mode template calls that ended their run, as recorded when they finished.
   const runEndingCalls = new Set<string>();
+  const optimizerNudges = new Set(view.entries.flatMap(entry => OptimizerOperationEntry.is(entry) && entry.data.name === "optimizer.nudge" ? [entry.data.id] : []));
 
   function appendMessage(message: Message, key: string, imageEntryId: string, offset: number, partial = false, diagnostics: readonly ToolDiagnostic[] = []) {
     if (message.role === "system") return;
@@ -154,6 +157,15 @@ export function projectDurableTranscript(view: ConversationView): TranscriptItem
         timings.get(turn)!.stop(entry.data.at);
       }
       pendingBoundary = true;
+      continue;
+    }
+    // Optimizer steering is system activity, not a second human prompt or turn boundary.
+    // Its operation card already contains the message; retain a note for older journals without one.
+    if (SteeringEntry.is(entry)) {
+      if (!optimizerNudges.has(`nudge:${entry.data.decisionId}`)) {
+        const message = entry.model?.find(message => message.role === "user");
+        if (message) records.push({kind:"note",id:String(entry.id),text:`Token optimizer: ${contentText(message.content)}`,tone:"system",timestamp:message.timestamp});
+      }
       continue;
     }
     if (durableTimingEntry.is(entry)) {
@@ -275,7 +287,7 @@ export function projectDurableTranscript(view: ConversationView): TranscriptItem
   if (live.generation?.deferred) items.push({ type: "note", key: `deferred:${live.run?.taskId}`, text: "Waiting for the provider…", tone: "system" });
   for (const compaction of live.compactions ?? []) items.push({ type: "note", key: `compaction:${compaction.taskId}`, text: compaction.retry ? `Retrying compaction: ${compaction.retry.error}` : "Compacting context…", tone: compaction.retry ? "warning" : "system" });
   for (const input of inbox.items) {
-    if (input.mode === "write") continue;
+    if (input.mode === "write" || input.entry?.kind === SteeringEntry.kind) continue;
     const key = `queued-${input.id}`;
     items.push({ type: "user", key, text: contentText(input.content), images: images(input.content, key), queued: { submissionId: String(input.id), mode: input.mode, stranded: !live.run } });
   }

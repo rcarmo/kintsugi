@@ -16,7 +16,7 @@ export async function renderThemeSettings(): Promise<string> {
     <span class="theme-choice-label">${escapeHtml(label)}<small>${appearance === "light" ? "Light" : "Dark"}</small></span>
     <span class="theme-palette" data-theme="${id}" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
   </label>`).join("");
-  return `<section class="settings-sec settings-sec-theme" id="settings-sec-theme"><h2 id="settings-theme-title">Theme</h2><form method="post" action="/settings/theme" data-turbo="true" data-controller="settings-autosave" data-action="change->settings-autosave#save submit->settings-autosave#submit"><fieldset class="theme-options" aria-labelledby="settings-theme-title">${options}</fieldset></form></section>`;
+  return `<section class="settings-sec settings-sec-theme"><form method="post" action="/settings/theme" data-turbo="true" data-controller="settings-autosave" data-action="change->settings-autosave#save submit->settings-autosave#submit"><fieldset class="theme-options" aria-label="Theme">${options}</fieldset></form></section>`;
 }
 
 export async function handleThemeSettingsRequest(request: Request, url: URL, themeChanged: () => void): Promise<Response | undefined> {

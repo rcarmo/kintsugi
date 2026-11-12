@@ -312,6 +312,9 @@ test("subagents get their own nudges and budget without reshaping the root's env
   const [sub] = await f.native.subagentsOf(f.host);expect(sub?.label).toBe("looper");
   const decisions = (await f.native.optimizer.status(sub!.host)).run?.decisions ?? [];
   expect(decisions.some(decision => decision.action === "redirect" && decision.submissionId !== null)).toBe(true);
+  const nudges = (await child.entries({order:"ascending"},500,undefined,context)).items.filter(OptimizerOperationEntry.is).filter(entry => entry.data.name === "optimizer.nudge");
+  expect(nudges.some(entry => isJsonObject(entry.data.output) && entry.data.output.delivery === "queued")).toBe(true);
+  expect(nudges.some(entry => isJsonObject(entry.data.output) && entry.data.output.delivery === "consumed")).toBe(true);
   expect((await f.native.optimizer.status(f.host)).run?.decisions ?? []).toEqual([]);
   expect((await f.harness.snapshot(KnowledgeDoc,scopeKey(f.host.scope),context))!.envelope.resolved_turns).toEqual([20,20,20,20,20]);
 },30_000);
@@ -390,6 +393,9 @@ for (const kind of ["memory","sqlite","jsonl"] as const) test(`native ${kind}: l
     expect(status.knowledge!.tools.sessions).toBe(1);
     expect(status.knowledge!.environment.facts.find(fact => fact.id === "absent_tool:pytest")!.life.confirms).toHaveLength(1);
     expect(status.knowledge!.environment.facts.find(fact => fact.id === "absent_tool:pytest")!.life.fire_den).toBe(1);
+    const entries = (await f.conversation.entries({order:"ascending"},500,undefined,context)).items;
+    const checkpoint = entries.filter(OptimizerOperationEntry.is).findLast(entry => entry.data.name === "optimizer.learn" && entry.data.status === "complete")!;
+    expect(checkpoint.data.output).toMatchObject({changes:{facts:i === 0 ? [{id:"absent_tool:pytest",state:"CANDIDATE"}] : []}});
   }
   expect(f.faux.state.callCount).toBe(8); // Only the Agent's own requests: Basic makes no learning calls.
   const before = (await f.native.optimizer.status(f.host)).knowledge!.environment.now;
@@ -450,7 +456,10 @@ for (const kind of ["memory","sqlite","jsonl"] as const) test(`native ${kind}: o
   expect(learned.map(entry => entry.data.status)).toEqual(["running","complete"]);
   expect(learned[0]!.data.id).toBe(learned[1]!.data.id);
   expect(learned[0]!.data.input.observations).toBe(1);
-  expect(learned[1]!.data.output).toMatchObject({newFacts:["absent_tool:pytest"],activePrefixChanged:false});
+  expect(learned[1]!.data.output).toMatchObject({newFacts:["absent_tool:pytest"],changes:{facts:[{id:"absent_tool:pytest",state:"CANDIDATE"}],suggestedTools:[],withdrawnTools:[]},activePrefixChanged:false});
+  expect(learned[0]!.data.startedAt).toBe(learned[0]!.data.at);
+  const final = (await f.conversation.entries({order:"ascending"},500,undefined,context)).items.filter(AssistantEntry.is).at(-1)!;
+  expect(learned[0]!.data.startedAt).toBeGreaterThanOrEqual(final.model![0]!.timestamp);
   expect(operations.every(entry => entry.model === undefined)).toBe(true);
   expect(JSON.stringify((await f.conversation.context(context)).messages)).not.toContain("activePrefixChanged");
   expect(f.faux.state.callCount).toBe(3);
@@ -472,6 +481,9 @@ test("optimizer model receipts follow the originating Agent, include actual usag
   const job = Object.values((await f.harness.snapshot(JobsDoc,context))!.jobs)[0]!;
   expect(job.conversationId).toBe(f.conversation.id);
   expect(calls[2]!.data.output).toMatchObject({result:job.result!.text,usage:job.result!.usage,cost:job.result!.cost});
+  const preparation = operations.find(entry => entry.data.name === "optimizer.prepare-tools")!;
+  expect(preparation.data.at).toBeGreaterThanOrEqual(calls[2]!.data.at);
+  expect(operations.indexOf(preparation)).toBeGreaterThan(operations.indexOf(calls[2]!));
   expect((await (await f.harness.root(context)).entries({order:"ascending"},500,undefined,context)).items.filter(OptimizerOperationEntry.is)).toHaveLength(0);
   await f.harness.commit(tx => recordOptimizerOperation(tx,f.conversation.id,calls[2]!.data),context);
   expect((await f.conversation.entries({order:"ascending"},500,undefined,context)).items.filter(OptimizerOperationEntry.is)).toHaveLength(operations.length);

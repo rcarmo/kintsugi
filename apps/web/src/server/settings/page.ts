@@ -105,7 +105,7 @@ for (const module of workspaceModules) {
 
 export const appSettingsFrameId = "app_settings_frame";
 
-const disclosureSections = new Set(["credentials", "network", "workspace-resources", "models", "telemetry", "token-optimizer", globalWorkspaceSettingsSectionId, "host", "developer-tools"]);
+const disclosureSections = new Set(["theme", "credentials", "network", "workspace-resources", "models", "telemetry", "token-optimizer", globalWorkspaceSettingsSectionId, "host", "developer-tools"]);
 const sectionFrameId = (id: string) => `app_settings_section_${id}`;
 
 function renderSection(section: SettingsContribution, focus: string | null): Promise<string> {
@@ -147,10 +147,10 @@ export async function renderSettingsFrame(request: Request, sectionId?: string):
     ? `<div class="app-settings-overview">${renderBrowserTransportSettings(request)}<p>${actionLinkHtml({ href: "/settings", variant: "secondary", content: { kind: "caption", caption: "All settings" }, attributesHtml: 'data-turbo="false"' })}</p></div>${versionFooter}`
     : `<div class="app-settings-overview">
     ${renderBrowserTransportSettings(request)}
-    ${take("theme", "dictation", "commit-identity", "git-hosting", "update-channel", "update", "access")}
+    ${take("dictation", "commit-identity", "git-hosting", "update-channel", "update", "access")}
     ${connectionModeManaged() ? "" : `<section class="settings-sec settings-sec-url" id="settings-sec-url"><h2>Kintsugi URL</h2>${kintsugiUrlHtml(kintsugiUrl(request), "settings_kintsugi_url_qr")}</section>`}
     ${take(...inline.keys())}
-    <div class="app-settings-disclosures">${disclosure("credentials", "Credentials")}${disclosure("network", "Network")}${disclosure("workspace-resources", "Workspace resources")}${disclosure("models", "Models")}${disclosure(globalWorkspaceSettingsSectionId, "Global workspace settings that apply to all new workspaces")}${disclosure("telemetry", "Token telemetry")}${disclosure("token-optimizer", "Token optimizer")}${disclosure("host", "Host")}${disclosure("developer-tools", "Developer tools")}</div>
+    <div class="app-settings-disclosures">${disclosure("theme", "Theme")}${disclosure("credentials", "Credentials")}${disclosure("network", "Network")}${disclosure("workspace-resources", "Workspace resources")}${disclosure("models", "Models")}${disclosure(globalWorkspaceSettingsSectionId, "Global workspace settings that apply to all new workspaces")}${disclosure("telemetry", "Token telemetry")}${disclosure("token-optimizer", "Token optimizer")}${disclosure("host", "Host")}${disclosure("developer-tools", "Developer tools")}</div>
   </div>${versionFooter}`;
   const header = `<h1 class="panel__title" tabindex="-1" data-app-settings-heading>${Icons.Settings}<span>Settings</span></h1>${buttonHtml({ type: "button", variant: "secondary", content: { kind: "icon-only", iconHtml: Icons.Close, label: "Close settings" }, attributesHtml: 'data-action="app-settings#close"' })}`;
   return `<turbo-frame id="${appSettingsFrameId}" data-app-settings-target="frame">${panelHtml({ element: { tag: "section", attributesHtml: 'aria-label="Settings"' }, headerHtml: header, bodyHtml: `<div class="template-settings-content app-settings-content"${sectionId ? ` data-app-settings-anchor="settings-sec-${escapeHtml(sectionId)}"` : ""} data-app-settings-location="/settings${sectionId ? `?section=${encodeURIComponent(sectionId)}` : ""}">${content}</div>`, bodyLayout: "full-bleed", bodyOverflow: "scroll" })}</turbo-frame>`;

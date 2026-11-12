@@ -44,7 +44,8 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
           return { status:"terminal",outcome:{status:"completed",result:null} };
         },context); return;
       }
-      const activity:OptimizerOperation = {id:`learning:${key}:${claim}`,name:incremental ? "optimizer.learn" : "optimizer.fold",status:"running",startedAt:session.recordActivity,at:runtime.now(),
+      const startedAt = runtime.now();
+      const activity:OptimizerOperation = {id:`learning:${key}:${claim}`,name:incremental ? "optimizer.learn" : "optimizer.fold",status:"running",startedAt,at:startedAt,
         input:{mode:options.policy(key).mode,from:session.learning?.cutoff ?? null,to:trajectory.kind === "ready" ? trajectory.cutoff : null,prompts:trajectory.kind === "ready" ? trajectory.prompts : null,
           observations:trajectory.kind === "ready" ? trajectory.observations.length : 0,
           evidence:trajectory.kind === "ready" ? trajectory.observations.slice(-16).map(call => ({tool:call.tool,command:call.command.slice(0,1024),output:call.output.slice(-1024),exitCode:call.exitCode,coverage:call.coverage})) : []},output:null};
@@ -97,11 +98,17 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
           await tx.createTask(row.folded || row.ended === null && !row.learning?.finalRequested ? checkpointTask : task,{key,host,incremental:row.folded || row.ended === null && !row.learning?.finalRequested},{ownership:{kind:"conversation"},conversationId:options.backgroundOwner?.() ?? host.conversationId,background:true});
         }
         if (show) {
-          const existing = new Set([...(before?.environment.facts.map(fact => fact.id) ?? []),...(before?.distiller.facts.map(fact => fact.spec.id) ?? [])]);
+          const factRows = (source:Pick<Knowledge,"environment"|"distiller">) => [...source.environment.facts.map(fact => ({id:fact.id,state:fact.life.state,claim:environmentClaim(fact)})),...source.distiller.facts.map(fact => ({id:fact.spec.id,state:fact.life.state,claim:fact.spec.claim ?? fact.spec.id}))];
+          const previous = new Map(before ? factRows(before).map(fact => [fact.id,fact]) : []), current = result ? factRows(result) : [];
+          const changes = {
+            facts:current.filter(fact => {const old = previous.get(fact.id);return !old || old.state !== fact.state || old.claim !== fact.claim;}),
+            suggestedTools:result?.tools.proposal.filter(name => !before?.tools.proposal.includes(name)) ?? [],
+            withdrawnTools:before?.tools.proposal.filter(name => result && !result.tools.proposal.includes(name)) ?? [],
+          };
           const output:JsonObject = result ? {
             environmentFacts:result.environment.facts.length,distilledFacts:result.distiller.facts.length,
-            newFacts:[...result.environment.facts.map(fact => fact.id),...result.distiller.facts.map(fact => fact.spec.id)].filter(id => !existing.has(id)),
-            facts:[...result.environment.facts.map(fact => ({id:fact.id,state:fact.life.state,claim:environmentClaim(fact)})),...result.distiller.facts.map(fact => ({id:fact.spec.id,state:fact.life.state,claim:fact.spec.claim ?? fact.spec.id}))].slice(-40),
+            newFacts:current.filter(fact => !previous.has(fact.id)).map(fact => fact.id),
+            facts:current.slice(-40),changes,
             toolSuggestions:result.tools.proposal,hiddenTools:result.tools.applied,sessions:result.tools.sessions,prompts:result.tools.prompts,
             activePrefixChanged:false,
           } : {error:trajectory.kind === "ready" ? "No learning result" : trajectory.reason};
