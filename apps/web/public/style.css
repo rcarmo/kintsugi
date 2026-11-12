@@ -362,6 +362,7 @@ button { border: 0; background: none; cursor: pointer; }
 .git-hosting-connect-form--row { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
 .git-hosting-connect-form p { margin: 0; }
 .git-hosting-server-url { overflow-wrap: anywhere; color: var(--text); }
+.git-hosting-certificate-note { display: block; color: var(--text-muted); font-size: var(--text-code); }
 .git-hosting-connect-controls { display: flex; align-items: center; gap: 8px; }
 .git-hosting-connect-controls .text-field { min-width: 0; flex: 1; }
 .settings-command { margin: 8px 0 12px; padding: 12px 12px; border: 1px solid var(--line); border-radius: var(--radius-surface); background: var(--bg); color: var(--text-bright); font-family: var(--font-mono); line-height: var(--leading-standard); }

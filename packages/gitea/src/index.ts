@@ -75,7 +75,7 @@ export const giteaProvider: GitHostingProvider = {
     instructionsHtml: "<p>Connect one Gitea HTTPS server. Create a personal access token there with user and repository read access; add repository write access if Agents should push.</p><p>Private servers still need the workspace's network permission. SSH host trust is configured separately.</p>",
     tokenPlaceholder: "Paste your Gitea token",
     serverUrl: { label: "Gitea server URL", placeholder: "https://git.example.com" },
-    allowUntrustedCertificate: { label: "Allow self-signed or untrusted HTTPS certificates", warning: "Certificate verification will be disabled only for this server’s HTTPS host and port. An attacker could impersonate it and steal your token. Enable this only for a server you trust." },
+    allowUntrustedCertificate: { label: "Allow untrusted certificates", warning: "Certificate verification will be disabled only for this server’s HTTPS host and port. An attacker could impersonate it and steal your token. Enable this only for a server you trust." },
   },
   credential() {
     const contents = readGitHostingCredentialFile(credentialFile);
