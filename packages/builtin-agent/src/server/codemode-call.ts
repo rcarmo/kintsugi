@@ -1,5 +1,5 @@
 import type { JsonValue } from "@earendil-works/chord/json";
-import { defineEntry, type JsonObject } from "@earendil-works/pi-durable";
+import { defineEntry, defineDoc, type JsonObject } from "@earendil-works/pi-durable";
 
 export type CallStart = { phase: "start"; name: string; arguments?: JsonValue; issuedAt?: number };
 export type CallEnd = { phase: "end"; isError: boolean; cancelled: boolean; durationMs?: number; output?: string; error?: string; details?: JsonObject };
@@ -13,3 +13,7 @@ export type CallEnd = { phase: "end"; isError: boolean; cancelled: boolean; dura
 export type CodemodeCallRecord = { callId: string; key: string } & (CallStart | CallEnd);
 export const codemodeCallEntry = defineEntry<CodemodeCallRecord>("kintsugi.codemode-call");
 
+
+/** Complete emitted text staged until the root MCP recall hook; never a model entry. */
+type McpScriptOutputState={calls:Record<string,boolean>;raw:string|null};
+export const McpScriptOutputDoc = defineDoc({kind:"kintsugi.mcp-script-output",version:1,scope:"task",checkpointWhen:()=>false,initial:():McpScriptOutputState=>({calls:{},raw:null})});

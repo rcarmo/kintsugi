@@ -37,3 +37,4 @@ export * from "./classify/artifacts.ts";
 export * from "./savers.ts";
 export * from "./output/reduce.ts";
 export * from "./goals.ts";
+export * from "./output/mcp.ts";

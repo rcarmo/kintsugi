@@ -11,7 +11,7 @@ export async function handleMcpOAuth(request:Request,url:URL):Promise<Response|u
   const headers={"cache-control":"no-store","referrer-policy":"no-referrer"};
   try {
     if(action==="disconnect"){
-      await vault.clear();await store.save({...config,enabled:false});
+      await vault.clear();await store.save({...config,enabled:false,accessEpoch:crypto.randomUUID()});
       return new Response(null,{status:303,headers:{...headers,location:"/settings?section=mcp","set-cookie":cookie("",0)}});
     }
     if(!config.enabled)throw new Error("Enable the connection before signing in.");
@@ -25,7 +25,7 @@ export async function handleMcpOAuth(request:Request,url:URL):Promise<Response|u
     await vault.complete({code,state,iss:url.searchParams.get("iss")??undefined},browserToken,callbackUrl);
     // A connection may have changed while exchanging the code. Never re-enable or overwrite it.
     const current=store.credential(id);if(!current||current.revision!==config.revision)throw new Error("Connection changed during sign-in.");
-    await store.save(current);
+    await store.save({...current,accessEpoch:crypto.randomUUID()});
     return new Response(null,{status:303,headers:{...headers,location:"/settings?section=mcp","set-cookie":cookie("",0)}});
   }catch(error){return new Response(`${mcpFailure(error)} Return to MCP Settings and start sign-in again.`,{status:400,headers:{...headers,"content-type":"text/plain; charset=utf-8"}});}
 }

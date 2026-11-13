@@ -34,7 +34,8 @@ export function mcpFailure(error:unknown):string {
   return "MCP request failed. Check the endpoint, certificate and server availability.";
 }
 /** Register actual MCP tools behind code mode. Every call rechecks the grant and credential revision. */
-export function mcpToolsExtension(config:Pick<McpHttpConnection,"id"|"name">,tools:readonly McpTool[],clientFor:(conversationId:ConversationId,context:Context) => Promise<McpClient>) {
+export function mcpToolsExtension(config:Pick<McpHttpConnection,"id"|"name"> & {revision?:number},tools:readonly McpTool[],clientFor:(conversationId:ConversationId,context:Context) => Promise<McpClient>) {
+  const details=(tool:string)=>({mcpConnectionId:config.id,mcpConnectionRevision:config.revision??0,mcpServer:config.name,mcpTool:tool});
   const taken = new Set<string>();
   const name = (remote:string) => {const value = createMcpToolName(config.name,remote,item => taken.has(item));taken.add(value);return value;};
   const registered = tools.map(tool => defineTool({
@@ -42,10 +43,10 @@ export function mcpToolsExtension(config:Pick<McpHttpConnection,"id"|"name">,too
     callers:["tools"],replay:"unsafe",
     async execute(args,api,context) {
       const client = await clientFor(api.conversationId,context);
-      await api.details({mcpConnectionId:config.id,mcpServer:config.name,mcpTool:tool.name},context);
+      await api.details(details(tool.name),context);
       try {
         const result = await client.callTool(tool.name,args,{signal:context.abortSignal,onProgress:progress => api.output(`${progress.message ?? "MCP request in progress"}\n`)});
-        return {output:toLlmContent(result),structuredOutput:result.structuredContent === undefined ? undefined : JSON.parse(JSON.stringify(result.structuredContent)),isError:result.isError === true,details:{mcpConnectionId:config.id,mcpServer:config.name,mcpTool:tool.name}};
+        return {output:toLlmContent(result),structuredOutput:result.structuredContent === undefined ? undefined : JSON.parse(JSON.stringify(result.structuredContent)),isError:result.isError === true,details:details(tool.name)};
       } catch (error) {context.abortSignal?.throwIfAborted();throw new Error(mcpFailure(error));}
     },
   }));
@@ -53,11 +54,11 @@ export function mcpToolsExtension(config:Pick<McpHttpConnection,"id"|"name">,too
   const resources = [defineTool({name:name("resources_list"),description:`List ${config.name} resources and URI templates.`,parameters:Type.Object({}),structuredOutputSchema:Type.Object({resources:Type.Array(Type.Unknown()),templates:Type.Array(Type.Unknown())}),callers:["tools"],replay:"unsafe",async execute(_args,api,context) {
     const client = await clientFor(api.conversationId,context);
     try {const resources = client.serverCapabilities?.resources ? await client.listResources({signal:context.abortSignal}) : [],templates = client.serverCapabilities?.resources ? await client.listResourceTemplates({signal:context.abortSignal}) : [];
-      return {structuredOutput:JSON.parse(JSON.stringify({resources,templates}))};
+      return {structuredOutput:JSON.parse(JSON.stringify({resources,templates})),details:details("resources_list")};
     } catch (error) {context.abortSignal?.throwIfAborted();throw new Error(mcpFailure(error));}
   }}),defineTool({name:name("resource_read"),description:`Read a discovered ${config.name} resource URI, including memory://catalog and advertised workflow templates.`,parameters:Type.Object({uri:Type.String({minLength:1,maxLength:2048})}),structuredOutputSchema:Type.Object({contents:Type.Array(Type.Unknown())}),callers:["tools"],replay:"unsafe",async execute(args,api,context) {
     const client = await clientFor(api.conversationId,context);
-    try {return {structuredOutput:JSON.parse(JSON.stringify(await client.readResource(args.uri,{signal:context.abortSignal}))) };}
+    try {return {structuredOutput:JSON.parse(JSON.stringify(await client.readResource(args.uri,{signal:context.abortSignal}))),details:details("resource_read")};}
     catch (error) {context.abortSignal?.throwIfAborted();throw new Error(mcpFailure(error));}
   }})];
   return defineExtension({name:`kintsugi.mcp.${config.id}`,tools:[...registered,...resources]});

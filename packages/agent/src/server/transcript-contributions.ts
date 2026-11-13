@@ -9,7 +9,7 @@ export type AgentTranscriptAnchor = {
  * Anchors are resolved by the host for snapshots, lazy details and reveal requests;
  * they do not replace live tool/text DOM while it is streaming. */
 export interface AgentTranscriptSnapshot {
-  rows: Extract<TranscriptItem, { type: "extension" }>[];
+  rows: (Extract<TranscriptItem, { type: "extension" }> & { afterInputEntryId?: string })[];
   anchors: AgentTranscriptAnchor[];
   /**
    * Calls tools made to other tools, such as a script's, by the calling tool's call ID. An unfinished call is
@@ -33,6 +33,15 @@ export function applyTranscriptContributions(items: TranscriptItem[], snapshot: 
   const time = (item: TranscriptItem) => item.timestamp ?? (item.type === "working" ? item.startedAt : 0);
   const result = annotate(items);
   for (const item of snapshot.rows) {
+    const inputEntryId = item.afterInputEntryId;
+    if (inputEntryId !== undefined) {
+      const turn = result.find(candidate => candidate.type === "working" && candidate.inputEntryIds?.includes(inputEntryId));
+      if (turn?.type === "working") {
+        const next = turn.items.findIndex(candidate => time(candidate) > time(item));
+        turn.items.splice(next < 0 ? turn.items.length : next, 0, item);
+      }
+      continue;
+    }
     const next = result.findIndex(candidate => time(candidate) > time(item));
     result.splice(next < 0 ? result.length : next, 0, item);
   }

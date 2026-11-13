@@ -1,3 +1,5 @@
+import { projectDurableTranscript } from "../../src/server/durable-transcript.ts";
+import { applyTranscriptContributions } from "@kintsugi/agent/server/transcript-contributions";
 import { tokenOptimizerSettingsContribution } from "../../src/server/token-optimizer-settings.ts";
 import { carriedSnapshotIds, latestOptimizerEntry, optimizerEntries, optimizerMessageSections } from "../../src/server/token-optimizer-source.ts";
 import { openDurableWorkspace, WorkspaceAgents } from "../../src/server/durable-workspace.ts";
@@ -508,4 +510,18 @@ test("a partial read result must not discard complete shell evidence from the sa
   await(await f.conversation.submit({type:"input",content:"Check the project",requestId:"partial-read-evidence"},context)).wait(context);
   for(let n=0;n<200&&((await f.native.optimizer.status(f.host)).session?.learning?.processed??0)<1;n++){await settleLearning(f.harness);await Bun.sleep(5);}
   const state=await f.native.optimizer.status(f.host);expect(state.session?.ended).toBeNull();expect(state.session?.learning?.processed).toBe(1);expect(state.knowledge?.environment.facts.map(fact=>fact.id)).toContain("absent_tool:pytest");expect(f.faux.state.callCount).toBe(2);
+});
+
+test("optimizer preparation is causally owned by the following prompt, not an earlier wall-clock position",async()=>{
+  const f=await setup();f.faux.setResponses([fauxAssistantMessage("First answer")]);await(await f.conversation.submit({type:"input",content:"First prompt"},context)).wait(context);
+  await f.harness.commit(tx=>recordOptimizerOperation(tx,f.conversation.id,{id:"before-second",name:"optimizer.tool-judge",status:"running",startedAt:1,at:2,input:{task:"Second prompt"},output:null}),context);
+  const read=async()=>{const watch=await f.conversation.watch(context);const view=watch.value;await watch.stop();return view;};
+  expect(tokenOptimizerIntegration.transcript!(await read()).rows).toHaveLength(0);
+  f.faux.setResponses([fauxAssistantMessage([{type:"thinking",thinking:"Second prompt analysis"},{type:"text",text:"Second answer"}])]);await(await f.conversation.submit({type:"input",content:"Second prompt"},context)).wait(context);
+  const view=await read(),original=JSON.stringify(view),owner=String(view.entries.filter(UserEntry.is).at(-1)!.id);
+  const snapshot=tokenOptimizerIntegration.transcript!(view);expect(snapshot.rows).toHaveLength(1);expect(snapshot.rows![0]!.afterInputEntryId).toBe(owner);expect(snapshot.rows![0]!.timestamp).toBe(2);
+  const items=applyTranscriptContributions(projectDurableTranscript(view),{rows:snapshot.rows??[],anchors:snapshot.anchors??[]});expect(items.some(item=>item.type==="extension")).toBe(false);
+  const turn=items.find(item=>item.type==="working"&&item.inputEntryIds?.includes(owner));if(turn?.type!=="working")throw Error("Missing owning turn");expect(turn.items.map(item=>item.type)).toEqual(["extension","thinking"]);expect(items.findIndex(item=>item.key===owner)).toBeLessThan(items.indexOf(turn));expect(JSON.stringify(view)).toBe(original);
+  await f.harness.commit(tx=>recordOptimizerOperation(tx,f.conversation.id,{id:"before-second",name:"optimizer.tool-judge",status:"complete",startedAt:1,at:Date.now(),input:{},output:{result:"done"}}),context);
+  const refreshed=tokenOptimizerIntegration.transcript!(await read());expect(refreshed.rows![0]!.afterInputEntryId).toBe(owner);expect(refreshed.rows![0]!.timestamp).toBe(2);
 });

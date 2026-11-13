@@ -1,18 +1,21 @@
 import { createOptimizerOutputExtension } from "./token-optimizer-output.ts";
-import { createOptimizerGoalsExtension } from "./token-optimizer-goals.ts";
+import { codemodeTemplateRunEndEntry } from "./durable-codemode-templates.ts";
+import { durablePlanContextEntry } from "./durable-plan.ts";
+import { isFinalAssistantMessage } from "@kintsugi/agent/server/transcript";
+import { createOptimizerGoalsExtension, GoalContextEntry } from "./token-optimizer-goals.ts";
 import { agentPlanStore } from "@kintsugi/agent/server/plan";
 import { contextSection, fingerprint, scopeKey, sessionKey, type AttachmentType, type LearningSession } from "@kintsugi/token-economizer/core";
-import { createSdkModelTransport, createTokenEconomizer, decodeArguments, decodeResult, detach, KnowledgeDoc, RunDoc, runIdentity, SessionsDoc, type HostDomain, type HostSession, type Knowledge } from "@kintsugi/token-economizer/pi-durable";
+import { createSdkModelTransport, createTokenEconomizer, decodeArguments, decodeResult, detach, KnowledgeDoc, RunDoc, runIdentity, SessionsDoc, SteeringEntry, type HostDomain, type HostSession, type Knowledge } from "@kintsugi/token-economizer/pi-durable";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import type { Models } from "@earendil-works/pi-ai";
-import { AgentDoc, AssistantEntry, CompactionEntry, defineDoc, defineEntry, LiveDoc, SystemEntry, type LiveState, type AgentState, type Conversation, type ConversationId, type Harness, type RegistryReader } from "@earendil-works/pi-durable";
+import { AgentDoc, AssistantEntry, CompactionEntry, ResetEntry, ToolResultEntry, defineDoc, defineEntry, LiveDoc, SystemEntry, type LiveState, type AgentState, type Conversation, type ConversationId, type Harness, type RegistryReader } from "@earendil-works/pi-durable";
 import { errorMessage, escapeHtml } from "@kintsugi/shared";
 import type { BuiltinAgentIntegration } from "./integrations.ts";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { carriedSnapshotIds, lastAssistantEntry, latestOptimizerEntry, nativeOptimizerTool, nativeOptimizerTrajectory, optimizerSections, optimizerMessageSections } from "./token-optimizer-source.ts";
 import { tokenOptimizerConfiguration, type TokenOptimizerConfiguration } from "./token-optimizer-config.ts";
-import { WorkspaceAdmission } from "./durable-lifecycle.ts";
+import { WorkspaceAdmission, durableStopEntry } from "./durable-lifecycle.ts";
 import { WorkspaceAgents } from "./durable-workspace.ts";
 import { readWorkspaceTitle } from "@kintsugi/workspace";
 import {actionLinkHtml} from "@kintsugi/design-system/action-link";
@@ -29,15 +32,41 @@ export const tokenOptimizerIntegration:BuiltinAgentIntegration = {id:"token-opti
   const live = view.docs[LiveDoc.definition.kind] as LiveState | undefined, current = live?.run && !live.run.afterRun ? runIdentity(live.run) : null;
   const operations = new Set(view.entries.flatMap(entry => OptimizerOperationEntry.is(entry) ? [entry.data.id] : []));
   const order = new Map<string,number>();
+  const inputs = view.entries.flatMap((entry,index) => {
+    if (SteeringEntry.is(entry) || GoalContextEntry.is(entry) || durablePlanContextEntry.is(entry) || CompactionEntry.is(entry) || ResetEntry.is(entry)) return [];
+    return (entry.model ?? []).flatMap((message,offset) => message.role === "user" ? [{index,key:offset === 0 ? String(entry.id) : `${entry.id}:message:${offset}`}] : []);
+  });
+  const inputAt = new Map(inputs.map(input => [input.index,input]));
+  const owners = new Map<string,string>();
+  let previousInput:string|undefined, idle=true;
+  const endingCalls = new Set<string>();
+  const preparation = new Set(["optimizer.prepare-tools","optimizer.tool-judge","optimizer.apply-tools"]);
   view.entries.forEach((entry,index) => {
     const key = OptimizerOperationEntry.is(entry) ? `optimizer:${fingerprint(entry.data.id)}` : `${entry.id}:optimizer`;
-    if (!order.has(key)) order.set(key,index);
+    if (!order.has(key)) {
+      order.set(key,index);
+      if (OptimizerOperationEntry.is(entry) || OptimizerNotice.is(entry)) {
+        const next = inputs.find(input => input.index > index);
+        const owner = OptimizerOperationEntry.is(entry) && preparation.has(entry.data.name) && idle ? next?.key : previousInput ?? next?.key;
+        if (owner) owners.set(key,owner);
+      }
+    }
+    const input = inputAt.get(index);
+    if (input) {previousInput=input.key;idle=false;}
+    if (ResetEntry.is(entry)) {previousInput=undefined;idle=true;}
+    if (codemodeTemplateRunEndEntry.is(entry)) endingCalls.add(entry.data.callId);
+    if (ToolResultEntry.is(entry) && !entry.data.diagnostics?.some(item => item.code === "aborted") && entry.model?.some(message => message.role === "toolResult" && endingCalls.has(message.toolCallId))) idle=true;
+    if (durableStopEntry.is(entry) || entry.model?.some(message => message.role === "assistant" && (isFinalAssistantMessage(message.content,message.stopReason) || message.stopReason === "aborted" || message.stopReason === "error"))) idle=true;
   });
   return {rows:[...optimizerOperationRows(view,current),...view.entries.flatMap(entry => OptimizerNotice.is(entry) && !(entry.data.code === "still-stuck" && operations.has(`nudge:${entry.data.id}`)) ? [{type:"extension" as const,key:String(entry.id)+":optimizer",timestamp:entry.data.at,render:(ctx:Parameters<typeof ids.abortForm>[0]) => {
     // Offer Stop only while the run the notice is about is still going; the composer owns the abort form.
     const stop = entry.data.code === "still-stuck" && current !== null && entry.data.runId === current ? buttonHtml({type:"submit",variant:"secondary",content:{kind:"caption",caption:"Stop"},attributesHtml:`form="${ids.abortForm(ctx)}"`}) : "";
     return transcriptRow(`<div class="agent-note system token-optimizer-note" role="status"><p>${escapeHtml(entry.data.text)}</p>${stop}${entry.data.code === "optimizer-command" ? actionLinkHtml({href:`/settings?section=token-optimizer&focus=${encodeURIComponent(JSON.stringify([ctx.workspaceId,ctx.agentId]))}`,variant:"secondary",content:{kind:"caption",caption:"Settings"}}) : ""}</div>`);
-  }}] : [])].sort((a,b) => order.get(a.key)!-order.get(b.key)!)};
+  }}] : [])].sort((a,b) => order.get(a.key)!-order.get(b.key)!).flatMap(row => {
+    const owner=owners.get(row.key);
+    // Preparation can precede admission. Keep it with the eventual prompt, never above it.
+    return owner ? [{...row,afterInputEntryId:owner}] : row.key.endsWith(":optimizer") ? [row] : [];
+  })};
 }};
 export const NativeOptimizerSessions = defineDoc<{sessions:Record<string,{host:HostSession;begin:number;end:number|null}>}>({kind:"kintsugi.token-optimizer.sessions",version:1,scope:"session",initial:() => ({sessions:{}}),checkpointWhen:() => false});
 const NativeEpoch = defineDoc<{id:string|null}>({kind:"kintsugi.token-optimizer.epoch",version:1,scope:"conversation",history:"latest",fork:"initial",initial:() => ({id:null}),checkpointWhen:() => false});

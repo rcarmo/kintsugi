@@ -1,3 +1,4 @@
+import {McpRecallSettingsSchema} from "@kintsugi/token-economizer/core";
 import {join} from "node:path";
 import {McpOAuthVault} from "./mcp-oauth.ts";
 import {Type,type Static} from "typebox";
@@ -5,7 +6,8 @@ import {Value} from "typebox/value";
 import {getKintsugiRuntimeContext,isNotFoundError,writeJsonAtomic} from "@kintsugi/core";
 import {mcpEndpoint,type McpHttpConnection} from "./mcp-client.ts";
 const idSchema=Type.String({pattern:"^[a-zA-Z0-9_-]{1,128}$"});
-const serverSchema=Type.Object({id:idSchema,name:Type.String({pattern:"^[a-z][a-z0-9_]{0,31}$"}),url:Type.String({maxLength:2048}),bearer:Type.String({maxLength:8192}),transport:Type.Optional(Type.Enum(["http","stdio"])),auth:Type.Optional(Type.Enum(["bearer","oauth"])),command:Type.Optional(Type.Array(Type.String({minLength:1,maxLength:4096}),{minItems:1,maxItems:128})),workdir:Type.Optional(Type.String({maxLength:4096})),oauth:Type.Optional(Type.Object({clientId:Type.Optional(Type.String({maxLength:2048})),clientSecret:Type.Optional(Type.String({maxLength:8192})),scope:Type.Optional(Type.String({maxLength:2048}))},{additionalProperties:false})),allowHttp:Type.Boolean(),timeoutSeconds:Type.Integer({minimum:1,maximum:300}),enabled:Type.Boolean(),workspaceId:idSchema,agentIds:Type.Array(idSchema,{maxItems:100}),revision:Type.Integer({minimum:1})},{additionalProperties:false});
+const accessIdentity=(server:McpConnection)=>JSON.stringify([server.workspaceId,server.url,server.bearer,server.transport,server.auth,server.command,server.workdir,server.oauth]);
+const serverSchema=Type.Object({id:idSchema,name:Type.String({pattern:"^[a-z][a-z0-9_]{0,31}$"}),url:Type.String({maxLength:2048}),bearer:Type.String({maxLength:8192}),transport:Type.Optional(Type.Enum(["http","stdio"])),auth:Type.Optional(Type.Enum(["bearer","oauth"])),command:Type.Optional(Type.Array(Type.String({minLength:1,maxLength:4096}),{minItems:1,maxItems:128})),workdir:Type.Optional(Type.String({maxLength:4096})),oauth:Type.Optional(Type.Object({clientId:Type.Optional(Type.String({maxLength:2048})),clientSecret:Type.Optional(Type.String({maxLength:8192})),scope:Type.Optional(Type.String({maxLength:2048}))},{additionalProperties:false})),allowHttp:Type.Boolean(),timeoutSeconds:Type.Integer({minimum:1,maximum:300}),enabled:Type.Boolean(),workspaceId:idSchema,agentIds:Type.Array(idSchema,{maxItems:100}),revision:Type.Integer({minimum:1}),accessEpoch:Type.Optional(Type.String({maxLength:128})),recall:Type.Optional(McpRecallSettingsSchema)},{additionalProperties:false});
 const storeSchema=Type.Object({version:Type.Literal(1),servers:Type.Array(serverSchema,{maxItems:100})},{additionalProperties:false});
 export type McpConnection=Static<typeof serverSchema>;
 export type PublicMcpConnection=Omit<McpConnection,"bearer"|"oauth"> & {oauth?:Omit<NonNullable<McpConnection["oauth"]>,"clientSecret">};
@@ -27,6 +29,7 @@ export class McpConnectionStore {
         if(candidate.auth!=="oauth"&&!candidate.bearer)throw new Error("Enter a bearer token or choose OAuth.");
         if(candidate.auth==="oauth")candidate.bearer="";else delete candidate.oauth;
       }Value.Assert(serverSchema,candidate);if(/[\r\n]/.test(candidate.bearer))throw new Error("Token must not contain line breaks.");
+      candidate.accessEpoch=previous&&accessIdentity(previous)===accessIdentity(candidate)?input.accessEpoch??previous.accessEpoch??crypto.randomUUID():crypto.randomUUID();
       if(this.servers.some(item=>item.id!==candidate.id&&item.workspaceId===candidate.workspaceId&&item.name===candidate.name))throw new Error("This workspace already has an MCP server with that name.");
       const next=[...this.servers.filter(item=>item.id!==candidate.id),candidate];Value.Assert(storeSchema,{version:1,servers:next});await writeJsonAtomic(join(this.directory,"mcp/connections.json"),{version:1,servers:next},{mode:0o600});this.servers=next;
       await Promise.all([...this.listeners].map(listener=>listener()));return candidate.id;});this.tail=result.then(()=>{},()=>{});return result;

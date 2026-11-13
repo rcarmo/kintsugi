@@ -1,3 +1,4 @@
+import {createMcpRecallExtension} from "./mcp-recall.ts";
 import {BACKGROUND_CONTEXT as context} from "@earendil-works/chord/context";
 import type {McpClient} from "@earendil-works/pi-mcp";
 import {defineExtension,type Registry,type Harness} from "@earendil-works/pi-durable";
@@ -10,6 +11,7 @@ const statuses=new Map<string,McpConnectionStatus>();
 export const mcpConnectionStatus=(id:string)=>statuses.get(id);
 /** Registry updates replace schemas; the wrapper also checks revocation on every call. */
 export function createWorkspaceMcpRuntime(workspaceId:string,registry:Registry,harness:()=>Harness,store:McpConnectionStore) {
+  registry.install(createMcpRecallExtension({workspaceId,harness,connections:store}));
   const clients=new Map<string,{revision:number;client:McpClient;close:()=>Promise<void>}>();let stop:(()=>void)|undefined,closed=false;
   let tail=Promise.resolve();
   async function refreshNow(){

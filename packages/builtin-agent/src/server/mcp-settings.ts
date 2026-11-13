@@ -1,3 +1,4 @@
+import {defaultMcpRecallSettings,McpRecallSettingsSchema} from "@kintsugi/token-economizer/core";
 import {handleMcpOAuth} from "./mcp-oauth-routes.ts";
 import {Type} from "typebox";
 import {Value} from "typebox/value";
@@ -10,6 +11,7 @@ import {listWorkspaceAgents} from "./agent-store.ts";
 import {mcpConnections,type PublicMcpConnection} from "./mcp-connections.ts";
 import {mcpConnectionStatus,testMcpConnection} from "./mcp-runtime.ts";
 import {mcpFailure} from "./mcp-client.ts";
+class McpRecallSettingsError extends Error {}
 const panel="mcp_connection_controls";
 const button=(caption:string,action?:string)=>buttonHtml({type:"submit",variant:"secondary",content:{kind:"caption",caption},attributesHtml:action?`formaction="/settings/mcp/${action}"`:undefined});
 const field=(label:string,input:string)=>`<label class="settings-field"><span>${label}</span>${input}</label>`;
@@ -21,6 +23,17 @@ async function scopeOptions(selected?:PublicMcpConnection){
   if(current&&!options.some(item=>item.value===current))options.push({value:current,label:`${selected!.workspaceId} — ${selected!.agentIds.join(", ")||"all Agents"}`});
   return `<select class="popup-select" data-controller="popup-select" name="scope" aria-label="Access" required><option value="">Choose workspace or Agent…</option>${options.map(item=>`<option value="${h(item.value)}"${item.value===current?" selected":""}>${h(item.label)}</option>`).join("")}</select>`;
 }
+function recallEditor(server?:PublicMcpConnection){
+  const settings=server?.recall??defaultMcpRecallSettings();
+  return disclosureHtml({summary:{kind:"compact",label:{kind:"text",text:"Output recall"}},bodyHtml:
+    field("Model output",`<select class="popup-select" data-controller="popup-select" name="recallMode">${[["off","Off"],["observe","Watch"],["active","On"]].map(([value,label])=>`<option value="${value}"${settings.mode===value?" selected":""}>${label}</option>`).join("")}</select>`)+
+    `<p class="settings-help">Watch keeps originals. On also shortens large MCP-only output for the model. Scripts keep full values. No model calls.</p>`+
+    field("Retention (days)",`<input class="text-field" type="number" name="recallDays" min="1" max="90" required value="${settings.maxAgeDays}">`)+
+    field("Retained items",`<input class="text-field" type="number" name="recallItems" min="1" max="256" required value="${settings.maxItems}">`)+
+    field("Retained payload bytes",`<input class="text-field" type="number" name="recallBytes" min="4096" max="16777216" required value="${settings.maxBytes}">`)+
+    disclosureHtml({summary:{kind:"compact",label:{kind:"text",text:"Declarative profiles (JSON)"}},bodyHtml:field("Profiles",`<textarea class="text-field" name="recallProfiles" rows="5" spellcheck="false">${h(JSON.stringify(settings.profiles,null,2))}</textarea>`)+`<p class="settings-help">Up to 32 profiles. Tool names support *. Kinds: json-list, browser-snapshot, text. Optional path, fields and maxItems (1–20). First matching profile wins.</p><pre><code>${h(JSON.stringify([{name:"issues",tool:"mcp__*__issues",kind:"json-list",path:"items",fields:["id","title","status"],maxItems:8}],null,2))}</code></pre>`})+
+    `<p class="settings-help">Recall tools search and retrieve this Agent’s retained data. Pins obey storage caps. Forget and expiry leave journal evidence intact. Maximum result: 1 MiB.</p>`});
+}
 async function editor(server?:PublicMcpConnection){const id=server?.id??crypto.randomUUID();return `<form method="post" action="/settings/mcp/save" data-turbo="true" class="form-stack"><input type="hidden" name="id" value="${h(id)}">
   ${field("Name",`<input class="text-field" name="name" required pattern="[a-z][a-z0-9_]{0,31}" value="${h(server?.name??"memento")}" placeholder="memento">`)}
   ${field("Transport",`<select class="popup-select" data-controller="popup-select" name="transport"><option value="http">Streamable HTTP</option><option value="stdio"${server?.transport==="stdio"?" selected":""}>Workspace stdio</option></select>`)}
@@ -30,6 +43,7 @@ async function editor(server?:PublicMcpConnection){const id=server?.id??crypto.r
   ${disclosureHtml({summary:{kind:"compact",label:{kind:"text",text:"OAuth client (optional)"}},bodyHtml:field("Client ID",`<input class="text-field" name="clientId" value="${h(server?.oauth?.clientId??"")}" autocomplete="off">`)+field("Client secret",`<input class="text-field" type="password" name="clientSecret" autocomplete="new-password" placeholder="Leave blank to keep saved secret">`)+field("Scopes",`<input class="text-field" name="oauthScope" value="${h(server?.oauth?.scope??"")}">`)+`<p class="settings-help">Leave the client ID blank for dynamic registration. For a fixed client, use this app’s origin plus <code>/settings/mcp/oauth/${h(id)}/callback</code> as the redirect URL.</p>`})}
   ${disclosureHtml({summary:{kind:"compact",label:{kind:"text",text:"Workspace command (stdio)"}},bodyHtml:field("Command arguments (JSON array)",`<textarea class="text-field" name="command" rows="3" placeholder='["bun", "/work/mcp-server.ts"]'>${h(JSON.stringify(server?.command??[]))}</textarea>`)+field("Working directory",`<input class="text-field" name="workdir" value="${h(server?.workdir??"/work")}">`)+`<p class="settings-help">Runs inside the selected workspace as agent, not on the app host. No shell expansion. Stdout must contain only MCP messages.</p>`})}
   ${field("Access",await scopeOptions(server))}
+  ${recallEditor(server)}
   ${field("Request timeout (seconds)",`<input class="text-field" type="number" name="timeoutSeconds" min="1" max="300" value="${server?.timeoutSeconds??30}">`)}
   <label><input type="checkbox" name="allowHttp" value="true"${server?.allowHttp?" checked":""}> Allow HTTP on a trusted network</label>
   <p class="settings-help">Tools are available through code mode. Tokens stay outside Agent sandboxes. Memento uses a principal bearer token, not browser sign-in.</p>
@@ -57,12 +71,16 @@ export const mcpSettingsContribution:SettingsContribution={id:"mcp",label:"MCP s
       const clientId=String(form.get("clientId")??"");
       const command:unknown=JSON.parse(String(form.get("command")??"[]"));if(!Value.Check(Type.Array(Type.String()),command))throw new Error("Use a JSON command argument array.");
       const transport=form.get("transport")==="stdio"?"stdio":"http",auth=form.get("auth")==="oauth"?"oauth":"bearer";
-      await store.save({id,transport,auth,command,workdir:String(form.get("workdir")??"/work"),oauth:{clientId:clientId||undefined,clientSecret:String(form.get("clientSecret")??"")||(sameEndpoint&&previous?.oauth?.clientId===clientId?previous?.oauth?.clientSecret:undefined),scope:String(form.get("oauthScope")??"")||undefined},name:String(form.get("name")??""),url:endpoint,bearer:String(form.get("bearer")??"").trim()||(sameEndpoint?previous?.bearer:"")||"",workspaceId:scope[0],agentIds:scope[1]?[scope[1]]:[],allowHttp:form.get("allowHttp")==="true",timeoutSeconds:Number(form.get("timeoutSeconds")??30),enabled:true});
+      let profiles:unknown;
+      try {profiles=JSON.parse(String(form.get("recallProfiles")??"[]"));}catch {throw new McpRecallSettingsError("Profiles must be valid JSON.");}
+      const recall=form.has("recallMode")?{mode:String(form.get("recallMode")),maxAgeDays:Number(form.get("recallDays")),maxItems:Number(form.get("recallItems")),maxBytes:Number(form.get("recallBytes")),profiles}:previous?.recall??defaultMcpRecallSettings();
+      if(!Value.Check(McpRecallSettingsSchema,recall))throw new McpRecallSettingsError("Check recall limits and profile fields, kinds and item limits.");
+      await store.save({id,transport,auth,command,recall,workdir:String(form.get("workdir")??"/work"),oauth:{clientId:clientId||undefined,clientSecret:String(form.get("clientSecret")??"")||(sameEndpoint&&previous?.oauth?.clientId===clientId?previous?.oauth?.clientSecret:undefined),scope:String(form.get("oauthScope")??"")||undefined},name:String(form.get("name")??""),url:endpoint,bearer:String(form.get("bearer")??"").trim()||(sameEndpoint?previous?.bearer:"")||"",workspaceId:scope[0],agentIds:scope[1]?[scope[1]]:[],allowHttp:form.get("allowHttp")==="true",timeoutSeconds:Number(form.get("timeoutSeconds")??30),enabled:true});
       message=transport!=="stdio"&&auth==="oauth"?"Saved. Sign in to connect.":(await testMcpConnection(store.credential(id)!)).message;
     }else if(!previous)throw new Error("Unknown connection");
     else if(match[1]==="test")message=(await testMcpConnection(previous)).message;
     else if(match[1]==="remove"){await store.remove(id);message="Connection removed.";}
     else {await store.save({...previous,enabled:match[1]!=="disable"});message=match[1]==="reconnect"?"Reconnect requested.":match[1]==="enable"?"Connection enabled.":"Connection disabled.";}
     return turboStreamResponse(turboStream("replace",panel,await renderMcpSettings(message)));
-  }catch(error){return turboStreamResponse(turboStream("replace",panel,await renderMcpSettings(mcpFailure(error))),{status:422});}
+  }catch(error){return turboStreamResponse(turboStream("replace",panel,await renderMcpSettings(error instanceof McpRecallSettingsError?error.message:mcpFailure(error))),{status:422});}
 }};

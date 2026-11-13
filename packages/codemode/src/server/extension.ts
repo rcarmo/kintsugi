@@ -2,8 +2,8 @@ import { visibleMcpAgent } from "@kintsugi/builtin-agent/server/mcp-access";
 import { attributeModelToolUsage } from "@kintsugi/builtin-agent/server/model-tool-usage";
 import type { JsonValue } from "@earendil-works/chord/json";
 import { defineEntry, type Extension, type JsonObject, type NestedToolExecutionResult, type ToolExecutionApi } from "@earendil-works/pi-durable";
-import { CODEMODE_TOOL_NAME, createCodemodeExtension, type CodemodeToolInput } from "@earendil-works/pi-durable/codemode";
-import type { CodemodeSandbox } from "@earendil-works/pi-codemode";
+import { CODEMODE_TOOL_NAME, createCodemodeExtension, createCodemodeTool, type CodemodeToolInput } from "@earendil-works/pi-durable/codemode";
+import { CodemodeSandbox, type CodemodeResult } from "@earendil-works/pi-codemode";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { isJsonObject } from "@kintsugi/core";
@@ -21,7 +21,7 @@ const imageBlockSchema = Type.Object({ type: Type.Literal("image"), data: Type.S
 const maxRecordedArgumentsChars = 64 * 1024;
 
 export { codemodeCallEntry, type CallStart, type CallEnd } from "@kintsugi/builtin-agent/server/codemode-call";
-import { codemodeCallEntry, type CallStart, type CallEnd } from "@kintsugi/builtin-agent/server/codemode-call";
+import { McpScriptOutputDoc, codemodeCallEntry, type CallStart, type CallEnd } from "@kintsugi/builtin-agent/server/codemode-call";
 
 /** A value as JSON for people to read: image data, which is long and unreadable, shows as its length. */
 function displayJson(value: JsonValue, indent?: number): string {
@@ -106,7 +106,23 @@ export function createWorkspaceCodemodeExtension(workspaceId: string, sandbox: C
       const input = args as CodemodeToolInput;
       const script = await resolveScript(readScriptFile, input.code, api, context);
       if ("error" in script) return script.error;
-      return await tool.execute({ code: script.code }, recordingCalls({ ...api, env, async agent(context) {return visibleMcpAgent(workspaceId,api.conversationId,await api.agent(context),api,context);} }), context);
+      // Observe the public sandbox result before SDK token clipping, without changing it.
+      const observed = new class extends CodemodeSandbox {
+        override start(code: string, options: Parameters<CodemodeSandbox["start"]>[1]) {
+          const run=sandbox.start(code,options);
+          const result=run.result.then(async (result:CodemodeResult)=>{
+            if(result.ok && result.calls.length && result.calls.every(call=>call.name.startsWith("mcp__")) && result.output.every(item=>item.type==="text")) {
+              const pieces=result.output.flatMap(item=>item.type==="text"?[item.console?`<console_output>\n${item.text}\n</console_output>`:item.text]:[]);
+              if(result.value!==undefined)pieces.push(Value.Check(textSchema,result.value)?result.value:JSON.stringify(result.value));
+              const raw=pieces.join("\n");
+              if(Buffer.byteLength(raw)<=1024*1024)await api.commit(async tx=>{const staged=await tx.doc(McpScriptOutputDoc,api.taskId);if(Object.keys(staged.calls).length===result.calls.length)staged.raw=raw;},context);
+            }
+            return result;
+          });
+          return {result,get finished(){return run.finished;},deliver:run.deliver.bind(run)};
+        }
+      }();
+      return await attributeModelToolUsage(createCodemodeTool({sandbox:observed})).execute({ code: script.code }, recordingCalls({ ...api, env, async agent(context) {return visibleMcpAgent(workspaceId,api.conversationId,await api.agent(context),api,context);} }), context);
     },
   }) };
 }
