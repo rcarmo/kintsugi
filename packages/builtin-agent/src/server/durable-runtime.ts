@@ -58,6 +58,7 @@ export async function openDurableAgentRuntime(
   const { harness } = workspace;
   const tokenOptimizer = harnessOptions.tokenOptimizer;
   await tokenOptimizer?.attach();
+  await harnessOptions.mcp?.attach();
   const agents = new Map<string, Promise<Awaited<ReturnType<typeof controller>>>>();
   const observers = new Set<() => Promise<void>>();
   observers.add(await registerDurableTelemetry(harness, workspaceId));
@@ -603,6 +604,7 @@ export async function openDurableAgentRuntime(
     /** Host shutdown/unload: stop observation and scheduling, not the task's effects. */
     async suspend() {
       suspended = true;
+      await harnessOptions.mcp?.close();
       await tokenOptimizer?.close();
       await Promise.all([...observers].map(stop => stop()));
       await workspace.close();

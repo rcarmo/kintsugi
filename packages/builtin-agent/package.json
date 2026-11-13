@@ -14,7 +14,8 @@
     "./server/render-composer": "./src/server/render-composer.ts",
     "./server/model-tool-usage": "./src/server/durable-model-tool-usage.ts",
     "./server/codemode-worker-admission": "./src/server/codemode-worker-admission.ts",
-    "./server/codemode-call": "./src/server/codemode-call.ts"
+    "./server/codemode-call": "./src/server/codemode-call.ts",
+    "./server/mcp-access": "./src/server/mcp-access.ts"
   },
   "dependencies": {
     "@kintsugi/core": "workspace:*",
@@ -36,7 +37,8 @@
     "proper-lockfile": "4.1.2",
     "@kintsugi/legacy-converter": "workspace:*",
     "@kintsugi/agent": "workspace:*",
-    "@kintsugi/token-economizer": "workspace:*"
+    "@kintsugi/token-economizer": "workspace:*",
+    "@earendil-works/pi-mcp": "1.5.2"
   },
   "devDependencies": {
     "@types/web-push": "3.6.4",

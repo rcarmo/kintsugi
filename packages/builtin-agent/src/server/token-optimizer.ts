@@ -1,3 +1,6 @@
+import { createOptimizerOutputExtension } from "./token-optimizer-output.ts";
+import { createOptimizerGoalsExtension } from "./token-optimizer-goals.ts";
+import { agentPlanStore } from "@kintsugi/agent/server/plan";
 import { contextSection, fingerprint, scopeKey, sessionKey, type AttachmentType, type LearningSession } from "@kintsugi/token-economizer/core";
 import { createSdkModelTransport, createTokenEconomizer, decodeArguments, decodeResult, detach, KnowledgeDoc, RunDoc, runIdentity, SessionsDoc, type HostDomain, type HostSession, type Knowledge } from "@kintsugi/token-economizer/pi-durable";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
@@ -12,6 +15,7 @@ import { tokenOptimizerConfiguration, type TokenOptimizerConfiguration } from ".
 import { WorkspaceAdmission } from "./durable-lifecycle.ts";
 import { WorkspaceAgents } from "./durable-workspace.ts";
 import { readWorkspaceTitle } from "@kintsugi/workspace";
+import {actionLinkHtml} from "@kintsugi/design-system/action-link";
 import { buttonHtml } from "@kintsugi/design-system/button";
 import { ids } from "@kintsugi/agent/server/render-context";
 import { transcriptRow } from "@kintsugi/agent/server/render-markup";
@@ -32,7 +36,7 @@ export const tokenOptimizerIntegration:BuiltinAgentIntegration = {id:"token-opti
   return {rows:[...optimizerOperationRows(view,current),...view.entries.flatMap(entry => OptimizerNotice.is(entry) && !(entry.data.code === "still-stuck" && operations.has(`nudge:${entry.data.id}`)) ? [{type:"extension" as const,key:String(entry.id)+":optimizer",timestamp:entry.data.at,render:(ctx:Parameters<typeof ids.abortForm>[0]) => {
     // Offer Stop only while the run the notice is about is still going; the composer owns the abort form.
     const stop = entry.data.code === "still-stuck" && current !== null && entry.data.runId === current ? buttonHtml({type:"submit",variant:"secondary",content:{kind:"caption",caption:"Stop"},attributesHtml:`form="${ids.abortForm(ctx)}"`}) : "";
-    return transcriptRow(`<div class="agent-note system token-optimizer-note" role="status"><p>${escapeHtml(entry.data.text)}</p>${stop}</div>`);
+    return transcriptRow(`<div class="agent-note system token-optimizer-note" role="status"><p>${escapeHtml(entry.data.text)}</p>${stop}${entry.data.code === "optimizer-command" ? actionLinkHtml({href:`/settings?section=token-optimizer&focus=${encodeURIComponent(JSON.stringify([ctx.workspaceId,ctx.agentId]))}`,variant:"secondary",content:{kind:"caption",caption:"Settings"}}) : ""}</div>`);
   }}] : [])].sort((a,b) => order.get(a.key)!-order.get(b.key)!)};
 }};
 export const NativeOptimizerSessions = defineDoc<{sessions:Record<string,{host:HostSession;begin:number;end:number|null}>}>({kind:"kintsugi.token-optimizer.sessions",version:1,scope:"session",initial:() => ({sessions:{}}),checkpointWhen:() => false});
@@ -137,6 +141,14 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
   };
   const transport = createSdkModelTransport(options.models);
   const optimizer = createTokenEconomizer({harness:options.harness,backgroundOwner:() => {if (maintenance === undefined) throw new Error("Optimizer maintenance owner is not attached");return maintenance;},domain,...transport,onOperation:recordOptimizerOperation,policy:host => options.configuration.policy(options.workspaceId,actor(host)),onNotice:async notice => {if (["tools-applied","tools-restored","tool-publication-refused","still-stuck"].includes(notice.code)) return;const rows = (await options.harness().snapshot(NativeOptimizerSessions,context))?.sessions, host = rows?.[notice.sessionId]?.host ?? [...subagents.values()].find(row => row.id === notice.sessionId);if (host) await options.harness().commit(async tx => {const state = await tx.doc(NativeNotices);if (state.ids.includes(notice.id)) return;await tx.appendEntry(OptimizerNotice,host.conversationId,{data:{id:notice.id,text:notice.text,at:Date.now(),code:notice.code,runId:notice.runId}});state.ids.push(notice.id);},context);},onError:error => console.error("Token optimizer observation failed",error)});
+  const outputExtension = createOptimizerOutputExtension(async id => {const host = await domain.session(id);return host && !host.delegated ? options.configuration.policy(options.workspaceId,actor(host)) : null;});
+  const goalExtension = createOptimizerGoalsExtension({harness:options.harness,host:domain.session,policy:host => options.configuration.policy(options.workspaceId,actor(host)),drained:optimizer.drained,async plan(host) {
+    // Child Agents have separate plans/tasks; never borrow the root's objective.
+    const child = host.parent ? (await options.harness().snapshot(WorkspaceAgents,context))?.agents.find(record => record.durableId === host.conversationId || record.branches?.includes(host.conversationId)) : undefined;
+    if (host.parent && !child) return null;
+    const plan = agentPlanStore().read(options.workspaceId,child?.agentId ?? actor(host));return plan.revision ? {revision:plan.revision,steps:plan.plan} : null;
+  }});
+  optimizer.extension = {...optimizer.extension,hooks:[...optimizer.extension.hooks ?? [],...outputExtension.hooks ?? [],...goalExtension.hooks ?? []]};
   async function start(conversation:Conversation,record:Pick<DurableAgentRecord,"agentId"|"parentId"|"readOnly"|"oneShotCallId">,event:"startup"|"new"|"resume"|"fork" = "startup",parentGroup?:string) {
     if (record.parentId || record.readOnly || record.oneShotCallId) return;
     if (event === "startup" && hosts.has(conversation.id)) return hosts.get(conversation.id)!
@@ -222,6 +234,8 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
       const outcome = await Promise.race([work,new Promise<null>(resolve => setTimeout(resolve,promptPickLimitMs,null))]);
       picks.set(id,{at:Date.now(),ms:Date.now()-began,hidden:outcome && "mask" in outcome ? outcome.mask : null,note:outcome === null ? "Took too long, so the prompt went ahead with the current tools." : "error" in outcome ? outcome.error : null});
     },
+    async hostForAgent(agentId:string) {const record=(await options.harness().snapshot(WorkspaceAgents,context))?.agents.find(record=>record.agentId===agentId);const host=record&&hosts.get(record.durableId);if(!host)throw new Error("This Agent has no optimizer session.");return host;},
+    async commandNotice(host:HostSession,id:string,text:string) {await options.harness().commit(async tx=>{const state=await tx.doc(NativeNotices);const key=`command:${host.id}:${id}`;if(state.ids.includes(key))return;state.ids.push(key);await tx.appendEntry(OptimizerNotice,host.conversationId,{data:{id:key,text,at:Date.now(),code:"optimizer-command"}});},context);},
     host(id:ConversationId) {const host = hosts.get(id);if (!host) throw new Error("This Agent has no optimizer logical session");return host;},
     async detach() {detached = true;await events;stop?.();observer?.();await optimizer.close();await chipRefresh;if (active.get(options.workspaceId) === this) active.delete(options.workspaceId);},
     async close() {await events;for (const id of [...hosts.keys()]) await end(id);await this.detach();},

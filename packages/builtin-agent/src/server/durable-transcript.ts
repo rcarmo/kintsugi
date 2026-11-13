@@ -3,6 +3,7 @@ import { integrationTranscript } from "./integrations.ts";
 import { applyTranscriptContributions } from "@kintsugi/agent/server/transcript-contributions";
 import { durableTimingEntry, DurableTurnTiming } from "./durable-timing.ts";
 import { durableStopEntry } from "./durable-lifecycle.ts";
+import { GoalContextEntry } from "./token-optimizer-goals.ts";
 import { durablePlanContextEntry } from "./durable-plan.ts";
 import { SteeringEntry } from "@kintsugi/token-economizer/pi-durable";
 import { OptimizerOperationEntry } from "./token-optimizer-operations.ts";
@@ -145,7 +146,7 @@ export function projectDurableTranscript(view: ConversationView): TranscriptItem
   // starts with its head marker, which sorting by ID would move after the entries it keeps.
   for (const entry of view.entries) {
     // Model context snapshots are not user submissions or turn boundaries.
-    if (durablePlanContextEntry.is(entry)) continue;
+    if (durablePlanContextEntry.is(entry) || GoalContextEntry.is(entry)) continue;
     if (codemodeTemplateRunEndEntry.is(entry)) {
       runEndingCalls.add(entry.data.callId);
       continue;

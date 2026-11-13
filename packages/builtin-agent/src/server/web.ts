@@ -1,3 +1,4 @@
+import { mcpSettingsContribution } from "./mcp-settings.ts";
 import { tokenOptimizerSettingsContribution, tokenOptimizerOpenApiPaths } from "./token-optimizer-settings.ts";
 import { tokenOptimizerIntegration } from "./token-optimizer.ts";
 import { optimizerToolPresentations } from "./token-optimizer-presentation.ts";
@@ -100,7 +101,7 @@ async function applyNewAgentSettings(agent: WorkspaceAgentInfo, source: Workspac
 export const builtinAgentWorkspaceModule: WorkspaceModule = {
   id: "builtin-agent",
   staticFiles: { "/token-optimizer.css": { url: new URL("../client/token-optimizer.css", import.meta.url), contentType: "text/css; charset=utf-8" } },
-  settingsContributions:[tokenOptimizerSettingsContribution],
+  settingsContributions:[tokenOptimizerSettingsContribution,mcpSettingsContribution],
   cableChannels: [{
     name: "agent",
     async subscribe(identifier, listener, events, shown) {

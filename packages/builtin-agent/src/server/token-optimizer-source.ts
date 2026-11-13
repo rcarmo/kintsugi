@@ -82,7 +82,7 @@ function readSource(entries:readonly EntryRecord[],host:HostSession) {
       }
     } else if (ToolResultEntry.is(entry)) for (const message of entry.model ?? []) if (message.role === "toolResult") {
       const source = calls.get(message.toolCallId);if (!source) return {kind:"unreadable" as const,reason:"Tool result has no visible originating arguments"};
-      capture(source.name,source.args,{name:source.name,structured:null,details:null,output:contentText(message.content),isError:message.isError,diagnostics:entry.data.diagnostics.map(diagnostic => ({code:diagnostic.code ?? "",message:diagnostic.message}))},String(entry.byTaskId),null,source.runId,message.timestamp);
+      capture(source.name,source.args,{name:source.name,structured:null,details:JSON.parse(JSON.stringify(message.details ?? null)),output:contentText(message.content),isError:message.isError,diagnostics:entry.data.diagnostics.map(diagnostic => ({code:diagnostic.code ?? "",message:diagnostic.message}))},String(entry.byTaskId),null,source.runId,message.timestamp);
     }
   }
   return {kind:"read" as const,observations:observed,prompts,activity,unfinished:starts.size > 0};

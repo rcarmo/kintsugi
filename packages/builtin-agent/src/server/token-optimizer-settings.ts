@@ -43,6 +43,7 @@ function presetOf(policy: Policy): Preset {
 }
 function applyPreset(policy: Policy, preset: Exclude<Preset, "custom">) {
   const assisted = preset === "assisted";
+  policy.reduceOutputs = true;policy.goalChecks = true;
   policy.microSkills = assisted ? "both" : "envfacts";
   policy.loop = assisted ? "judge" : "rules";
   policy.judge = "generative";
@@ -84,6 +85,9 @@ function modelOptions(catalogue: Catalogue, classifier: boolean, selected: Model
 function advancedHtml(policy: Policy, catalogue: Catalogue) {
   const savers = policy.savers, budget = policy.budget;
   const features = `<div class="token-optimizer__custom form-stack">${heading("Features")}
+    <input type="hidden" name="nativeChecks" value="true">
+    ${checkboxRow("reduceOutputs", "Compact test and compiler output", policy.reduceOutputs ?? false, "Keeps full logs and script results. No model calls.")}
+    ${checkboxRow("goalChecks", "Keep the current task in view", policy.goalChecks ?? false, "Checks the latest request, active plan and unverified edits. Shares the nudge limit.")}
     ${selectRow("microSkills", "Repository facts", policy.microSkills, [["off", "Off"], ["envfacts", "From tool results"], ["distiller", "Written by a model"], ["both", "Both"]])}
     ${selectRow("loop", "Runs going in circles", policy.loop, [["off", "Leave alone"], ["rules", "Nudge using rules"], ["judge", "Nudge using rules and a judge"]])}
     ${selectRow("judge", "Stuck-run judge", policy.judge, judgeOptions, "Used when nudges include a judge.")}
@@ -136,7 +140,7 @@ function settingsForm(config: OptimizerConfig, catalogue: Catalogue, view: View)
     ${choices("Status", ([["off", "Nothing new is learned or applied."], ["observe", "Learns and shows what it would do. Agents are unchanged."], ["active", "Applies what it learns to new and resumed Agent sessions."]] as const).map(([value, hint]) => choice("mode", value, mode === value, modeLabels[value], hint)).join(""))}
     <div class="token-optimizer__when-on form-stack">
       ${choices("What it does", [
-        choice("preset", "basic", preset === "basic", "Basic", "Remembers repository facts, nudges runs going in circles and suggests unused tools to hide. No extra model calls."),
+        choice("preset", "basic", preset === "basic", "Basic", "Remembers facts, compacts test output, checks task progress and suggests unused tools to hide. No extra model calls."),
         choice("preset", "assisted", preset === "assisted", "Model-assisted", "Basic, plus a model that writes facts, judges stuck runs and picks tools for a task."),
         choice("preset", "custom", preset === "custom", "Custom", "Choose each feature under Advanced settings."),
       ].join(""))}
@@ -342,6 +346,7 @@ function policyFromForm(form: FormData, current: Policy) {
     Object.assign(policy, { thresholds });
   }
   if (preset === "custom") {
+    if (form.has("nativeChecks")) {policy.reduceOutputs = form.get("reduceOutputs") === "true";policy.goalChecks = form.get("goalChecks") === "true";}
     for (const name of ["microSkills", "loop", "judge", "level", "pruning", "toolJudge"] as const) if (form.has(name)) Object.assign(policy, { [name]: text(name) });
     policy.redirects = number("redirects", "Nudges per prompt", policy.redirects, { max: 10 });
     if (form.has("savers.auditPercent")) {

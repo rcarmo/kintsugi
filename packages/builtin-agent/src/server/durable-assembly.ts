@@ -1,3 +1,5 @@
+import { mcpConnections } from "./mcp-connections.ts";
+import { createWorkspaceMcpRuntime } from "./mcp-runtime.ts";
 import { nativeOptimizerOptions, type createNativeTokenOptimizer } from "./token-optimizer.ts";
 import { createNativePlanExtension } from "./durable-plan.ts";
 import { durablePromptCache } from "./durable-prompt-cache.ts";
@@ -33,7 +35,7 @@ export function createDurableWorkspaceRegistry(workspaceId: string, options: Wor
 
 /** No AgentSession, delegation coordinator, or host-local filesystem environment. */
 /** Our Harness always gets one `Models`, never a function returning the current one. */
-export type DurableHarnessOptions = HarnessOptions & { models: Models; tokenOptimizer?:ReturnType<typeof createNativeTokenOptimizer> };
+export type DurableHarnessOptions = HarnessOptions & { models: Models; tokenOptimizer?:ReturnType<typeof createNativeTokenOptimizer>; mcp?:ReturnType<typeof createWorkspaceMcpRuntime> };
 
 export async function createDurableHarnessOptions(workspaceId: string, options: WorkspaceAgentToolOptions, writeTiming: WriteDurableTiming, harness: () => Harness): Promise<DurableHarnessOptions> {
   const models = await createPiModelRuntime();
@@ -53,6 +55,7 @@ export async function createDurableHarnessOptions(workspaceId: string, options: 
   registry.install(tokenOptimizer.optimizer.extension);
   return {
     tokenOptimizer,
+    mcp:createWorkspaceMcpRuntime(workspaceId,registry,harness,await mcpConnections()),
     models: templates.models(delegation?.models ?? models),
     registry,
     settings: { documentRetentionMs: 60_000, stream: { cacheRetention: "short" }, compaction: { enabled: true, keepRecentTokens: 6000 } },

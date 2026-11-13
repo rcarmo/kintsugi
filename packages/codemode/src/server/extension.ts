@@ -1,3 +1,4 @@
+import { visibleMcpAgent } from "@kintsugi/builtin-agent/server/mcp-access";
 import { attributeModelToolUsage } from "@kintsugi/builtin-agent/server/model-tool-usage";
 import type { JsonValue } from "@earendil-works/chord/json";
 import { defineEntry, type Extension, type JsonObject, type NestedToolExecutionResult, type ToolExecutionApi } from "@earendil-works/pi-durable";
@@ -97,7 +98,7 @@ export function createWorkspaceCodemodeExtension(workspaceId: string, sandbox: C
   const extension = createCodemodeExtension({ sandbox });
   // Code mode saves the images a script shows to files in the workspace, so the agent can use them later.
   const env = new WorkspaceFileSystem(workspaceId);
-  return { ...extension, tools: extension.tools?.map(attributeModelToolUsage).map(tool => tool.name !== CODEMODE_TOOL_NAME ? tool : {
+  return { ...extension, sections:extension.sections?.map(section => ({...section,async render(input,context) {return section.render({...input,agent:await visibleMcpAgent(workspaceId,input.conversationId,input.agent,input.read,context)},context);}})), tools: extension.tools?.map(attributeModelToolUsage).map(tool => tool.name !== CODEMODE_TOOL_NAME ? tool : {
     ...tool,
     description: `${tool.description}\n\n${scriptFileDescription}`,
     execute: async (args, api, context) => {
@@ -105,7 +106,7 @@ export function createWorkspaceCodemodeExtension(workspaceId: string, sandbox: C
       const input = args as CodemodeToolInput;
       const script = await resolveScript(readScriptFile, input.code, api, context);
       if ("error" in script) return script.error;
-      return await tool.execute({ code: script.code }, recordingCalls({ ...api, env }), context);
+      return await tool.execute({ code: script.code }, recordingCalls({ ...api, env, async agent(context) {return visibleMcpAgent(workspaceId,api.conversationId,await api.agent(context),api,context);} }), context);
     },
   }) };
 }

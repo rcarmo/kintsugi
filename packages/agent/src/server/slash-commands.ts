@@ -25,7 +25,7 @@ type SlashCommand = BuiltinSlashCommand | {
 
 export function slashCommands(templates: readonly PromptTemplate[], skills: readonly Pick<Skill, "name" | "description">[], mode: "builtin" | "cli" = "builtin", additionalCommands: readonly BuiltinSlashCommand[] = []): SlashCommand[] {
   const commands: SlashCommand[] = [
-    ...builtinSlashCommands.filter((command) => (mode === "builtin" || command.trigger !== "/compact") && !additionalCommands.some(extra => extra.trigger === command.trigger)),
+    ...builtinSlashCommands.filter((command) => (mode === "builtin" || !["/compact","/tokeneconomizer"].includes(command.trigger)) && !additionalCommands.some(extra => extra.trigger === command.trigger)),
     ...additionalCommands,
     ...templates.filter((template) => template.trigger !== "/tree" && !additionalCommands.some(command => command.trigger === template.trigger)).map((template) => ({
       kind: "prompt-template" as const,

@@ -169,3 +169,11 @@ License: Apache License 2.0 (packages/token-economizer/LICENSE).
 Adaptations include durable SDK storage/steering, provider-independent inference,
 redaction, safe detectors, opt-in controls, classifiers and bounded call savers.
 The upstream checkout has no separate NOTICE file.
+
+Selected test-runner and compiler output reducers are adapted from mcp-recall,
+Copyright 2026 sakebomb, Apache License 2.0.
+Source: https://github.com/sakebomb/mcp-recall
+Pinned revision: f00e8c766697b07a8abaf50448feeca918b2a1d6 (1.21.0).
+Adapted files: src/handlers/bash-test.ts and src/handlers/bash-compilers.ts.
+Changes: typed inputs, local adapters and conservative diagnostic-preservation gates.
+License and upstream notice: packages/token-economizer/src/core/output/mcp-recall/.

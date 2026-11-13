@@ -70,7 +70,7 @@ function documents(entry: EntryRecord, record: DurableAgentRecord, branch: numbe
       const text = contentText(message.content);
       if (text) docs.push({ ...base, sourceKey, kind: "history", role: message.role, tool: "", text });
     } else if (message.role === "toolResult" && message.toolName !== "search_history") {
-      docs.push({ ...base, sourceKey, kind: "output", role: "tool", tool: message.toolName, text: stripTerminalEscapes(contentText(message.content)) });
+      docs.push({ ...base, sourceKey, kind: "output", role: "tool", tool: message.toolName, text: stripTerminalEscapes(Value.Check(Type.Object({optimizerRawOutput:Type.String()}),message.details) ? message.details.optimizerRawOutput : contentText(message.content)) });
       if (message.toolName === "bash" && Value.Check(outputPathSchema, message.details)) pending.push({ ...base, sourceKey: `${sourceKey}:saved`, kind: "output", role: "tool", tool: "bash", path: message.details.fullOutputPath });
     }
   }

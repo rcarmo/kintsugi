@@ -113,6 +113,7 @@
         "@earendil-works/pi-ai": "catalog:",
         "@earendil-works/pi-coding-agent": "catalog:",
         "@earendil-works/pi-durable": "catalog:",
+        "@earendil-works/pi-mcp": "1.5.2",
         "@kintsugi/agent": "workspace:*",
         "@kintsugi/core": "workspace:*",
         "@kintsugi/design-system": "workspace:*",

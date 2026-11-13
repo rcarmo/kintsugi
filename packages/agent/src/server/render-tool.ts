@@ -433,8 +433,12 @@ function renderCodemodeDetail(ctx: AgentRenderContext, key: string, tool: ToolVi
   const output = done ? codemodeOutput(tool).text : "";
   const images = done ? toolResultImagesHtml(ctx, tool) : "";
   const outputBody = !output ? "" : tool.status === "error" ? `<pre class="agent-tool-error-output">${escapeHtml(output)}</pre>` : outputHtml(output, "agent-tool-result agent-tool-region-body", "agent-tool-code agent-tool-region-body");
+  const raw = tool.details?.optimizerRawOutput;
+  const original = Value.Check(Type.String(),raw) && raw !== output ? raw : undefined;
+  const originalHtml = original === undefined ? "" : codeBlockHtml(original,undefined,"agent-tool-code");
+  const resultViews = original === undefined ? fullscreenSourceRegion("Result", `${outputBody ? copyableToolBody(outputBody, "result") : ""}${images}`, `${outputBody}${images}`) : `<section class="agent-tool-region">${comparisonHeader("Result", "As emitted")}<div class="agent-region-pane region-primary-pane">${fullscreenSourceRegion("As emitted",copyableToolBody(originalHtml,"original output"),originalHtml)}${images}</div><div class="agent-region-pane region-model-pane">${fullscreenSourceRegion("As seen by model",copyableToolBody(outputBody,"model output"),outputBody)}${images}</div></section>`;
   const resultSection = outputBody || images ? codemodeSectionHtml("agent-codemode-result", "Result", true,
-    `<div class="agent-tool-detail">${fullscreenSourceRegion("Result", `${outputBody ? copyableToolBody(outputBody, "result") : ""}${images}`, `${outputBody}${images}`)}</div>`) : "";
+    `<div class="agent-tool-detail">${resultViews}</div>`) : "";
   return `<div class="agent-codemode-detail">${script}${execution}${resultSection}</div>`;
 }
 

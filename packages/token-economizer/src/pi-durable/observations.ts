@@ -80,8 +80,8 @@ export function createCommittedObservations(options: {harness:() => Harness;doma
               const message = change.value.model?.find(message => message.role === "toolResult");if (!message || message.role !== "toolResult") continue;
               const taskId = change.value.byTaskId;if (!taskId) continue;
               const live = publication.changes.find(candidate => candidate.type === "document" && candidate.kind === "change" && candidate.record.kind === LiveDoc.definition.kind);
-              let details: JsonValue = null;
-              if (live?.type === "document" && live.kind === "change" && live.value.tools !== undefined) {
+              let details: JsonValue = message.details === undefined ? null : JSON.parse(JSON.stringify(message.details));
+              if (details === null && live?.type === "document" && live.kind === "change" && live.value.tools !== undefined) {
                 const slots = live.value.tools;Value.Assert(liveResultSchema,slots);
                 // SAFETY: Public LiveDoc publication data is strict JSON; only its shape is narrowed above.
                 details = (slots.find(slot => slot.taskId === taskId)?.details ?? null) as JsonValue;
@@ -119,7 +119,7 @@ export function createCommittedObservations(options: {harness:() => Harness;doma
         const message = entry?.model?.find(message => message.role === "toolResult");
         if (!entry || !message || message.role !== "toolResult") continue;
         tracked.add(slot.taskId);
-        queue(slot.taskId,{name:slot.name,structured:null,details:slot.details ?? null,output:contentText(message.content),isError:message.isError,diagnostics:entry.data.diagnostics.map(d => ({code:d.code ?? "",message:d.message}))},false);
+        queue(slot.taskId,{name:slot.name,structured:null,details:message.details === undefined ? slot.details ?? null : JSON.parse(JSON.stringify(message.details)),output:contentText(message.content),isError:message.isError,diagnostics:entry.data.diagnostics.map(d => ({code:d.code ?? "",message:d.message}))},false);
       }
       for (const slot of live?.nestedTools ?? []) {
         if (slot.status !== "done") continue;

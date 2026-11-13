@@ -11,6 +11,8 @@ export interface BuiltinSlashCommand {
 }
 
 export const builtinSlashCommands: readonly BuiltinSlashCommand[] = [{
+  kind:"builtin",source:"kintsugi",name:"tokeneconomizer",trigger:"/tokeneconomizer",description:"Inspect or control this Agent’s token optimizer without a model call.",argumentHint:"[status|help|settings|on|watch|off|restore]",preserveArguments:true,
+}, {
   kind: "builtin",
   source: "kintsugi",
   name: "compact",

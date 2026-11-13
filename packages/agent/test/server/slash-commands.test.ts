@@ -19,7 +19,7 @@ describe("slash commands", () => {
 
     const html = renderSlashCommandCatalog(templates, [skill]);
 
-    expect((html.match(/data-command-trigger=/g) ?? []).length).toBe(22);
+    expect((html.match(/data-command-trigger=/g) ?? []).length).toBe(23);
     expect(html).toContain('data-command-trigger="/tree" data-command-action="notice" data-command-message="/tree feature is coming soon!"');
     expect(html).toContain("/tree — Coming soon.");
     expect(html).toContain('data-completion-kind="prompt-template"');

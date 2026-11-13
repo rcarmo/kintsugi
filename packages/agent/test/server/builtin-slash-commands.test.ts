@@ -10,6 +10,7 @@ describe("Slash commands", () => {
     const commands = slashCommands([template], [{ name: "review", description: "Review changes" }]);
     expect(commands.find((command) => command.trigger === "/new")?.kind).toBe("builtin");
     expect(commands.find((command) => command.trigger === "/compact")?.kind).toBe("builtin");
+    expect(commands.find((command) => command.trigger === "/tokeneconomizer")?.kind).toBe("builtin");
     expect(commands.find((command) => command.trigger === "/land")?.kind).toBe("prompt-template");
     expect(commands.find((command) => command.trigger === "/skill:review")?.kind).toBe("skill");
     expect(commands.find((command) => command.trigger === "/new")).not.toHaveProperty("prompt");
@@ -23,6 +24,7 @@ describe("Slash commands", () => {
   test("only Prompt templates expand into prompt text", () => {
     expect(expandSlashCommandText("/land release", [template])).toBe("Push to release");
     expect(expandSlashCommandText(" /compact  Keep test commands. ", [template])).toBe("/compact  Keep test commands.");
+    expect(expandSlashCommandText(" /tokeneconomizer restore bash read ", [template])).toBe("/tokeneconomizer restore bash read");
     expect(expandSlashCommandText(" /name my-custom-name ", [template])).toBe("/name my-custom-name");
     expect(expandSlashCommandText(" /new ignored arguments ", [template])).toBe("/new");
     expect(expandSlashCommandText(" /park ignored arguments ", [template])).toBe("/park");

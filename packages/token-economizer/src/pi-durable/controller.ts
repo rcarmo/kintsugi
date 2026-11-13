@@ -242,6 +242,7 @@ export function createTokenEconomizer(options:TokenEconomizerOptions) {
     clearClassifiers:training.clear,
     reviewSample:training.review,
     async retryModelCalls() {const state = await options.harness().snapshot(JobsDoc,BACKGROUND_CONTEXT);for (const account of state?.paused ?? []) await queue.retry(account);},
+    drained:recorder.drained,
     async close() {await recorder.drained();detachObserver?.();detachObserver = null;},
   };
 }

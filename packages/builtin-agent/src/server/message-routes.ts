@@ -1,3 +1,4 @@
+import {parseOptimizerCommand,runOptimizerCommand} from "./token-optimizer-command.ts";
 import { suggestAgentSlug } from "@kintsugi/agent/server/slug-suggestion";
 import { knownWorkspaceAgentRequest } from "./runtime.ts";
 import { Type } from "typebox";
@@ -35,6 +36,13 @@ async function submitMessage(workspaceId: string, agentId: string, request: Requ
   if (mode !== "send" && mode !== "steer" && mode !== "followUp") {
     const message = "Mode must be send, steer, or followUp";
     return json ? Response.json({ error: { code: "invalid_arguments", message } }, { status: 422 }) : turboStreamResponse("", { status: 422 });
+  }
+  const optimizerCommand = parseOptimizerCommand(text);
+  if (optimizerCommand) {
+    await resolveAgentController(agent,options);
+    const result = await runOptimizerCommand(workspaceId,agentId,optimizerCommand,requestId);
+    await removeInitialPromptDraft(workspaceId,agentId);
+    return json ? Response.json({command:"tokeneconomizer",...result}) : turboStreamResponse("");
   }
   if (text.trim() === "/new") {
     const runtime = await resolveAgentController(agent, options);

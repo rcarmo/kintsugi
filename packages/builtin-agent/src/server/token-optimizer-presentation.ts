@@ -83,6 +83,10 @@ export function optimizerSummary(operation:OptimizerOperation):string {
     const reply = object(parsedReply(output));
     if (done && operation.name === "optimizer.loop-judge" && flag(reply?.stuck) !== undefined) what += flag(reply?.stuck) ? " · looks stuck" : " · making progress";
     if (done && operation.name === "optimizer.tool-judge") {const {hide,keep} = toolVerdicts(output);what += hide.length ? ` · could hide ${plural(hide.length,"tool")}` : keep.length ? " · keep current tools" : " · no decision";}
+  } else if (operation.name === "optimizer.goal-check") {
+    const labels = new Map([["goal-reminder","Recalled the current task"],["hypothesis-change","Suggested a different hypothesis"],["verification-debt","Flagged unverified edits"],["completion-check","Checked remaining deliverables"]]);
+    what = labels.get(text(input?.reason) ?? "") ?? "Checked task progress";
+    if (text(output?.delivery) === "simulated") what += " (Watch only)";
   } else if (operation.name === "optimizer.nudge") {
     what = text(output?.delivery) === "simulated" ? "Would have nudged the Agent (Watch only)" : text(output?.action) === "notice" ? "Run still looks stuck" : text(output?.delivery) === "queued" ? "Queued a nudge for the Agent" : text(output?.delivery) === "undelivered" ? "Nudge was not delivered" : "Nudged the Agent";
   } else if (operation.name === "optimizer.prepare-tools") {
@@ -172,7 +176,10 @@ function modelRows(operation:OptimizerOperation,input:JsonObject|undefined,outpu
 
 function otherRows(operation:OptimizerOperation,input:JsonObject|undefined,output:JsonObject|undefined):Row[] {
   const rows:Row[] = [];
-  if (operation.name === "optimizer.nudge") {
+  if (operation.name === "optimizer.goal-check") {
+    rows.push({label:"Check",html:para(text(output?.text) ?? "")});
+    rows.push({label:"Delivery",html:para(text(output?.delivery) === "simulated" ? "Watch only: not sent to the Agent." : "Included before the next response. No extra model call.")});
+  } else if (operation.name === "optimizer.nudge") {
     const delivery = text(output?.delivery), message = text(output?.text), reason = text(input?.reason);
     rows.push({label:"Message",html:message ? `<p class="token-optimizer-op__quote">${escapeHtml(message)}</p>` : para("A notice that the run still looks stuck.")});
     const reasons = new Map([["envelope","The run exceeded its usual work budget."],["judge","The run’s recent work looks stuck."]]);
@@ -218,5 +225,5 @@ const presentation:AgentToolPresentation = {
   summary(tool) {const operation = operationOf(tool);return operation ? optimizerSummary(operation) : undefined;},
   detail(_ctx,tool) {const operation = operationOf(tool);return operation ? optimizerDetail(operation) : undefined;},
 };
-export const optimizerOperationNames = ["optimizer.learn","optimizer.fold","optimizer.nudge","optimizer.prepare-tools","optimizer.apply-tools","optimizer.restore-tools","optimizer.fit",...modelPurposes.keys()];
+export const optimizerOperationNames = ["optimizer.learn","optimizer.fold","optimizer.nudge","optimizer.goal-check","optimizer.prepare-tools","optimizer.apply-tools","optimizer.restore-tools","optimizer.fit",...modelPurposes.keys()];
 export const optimizerToolPresentations = new Map(optimizerOperationNames.map(name => [name,presentation]));

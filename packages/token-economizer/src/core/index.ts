@@ -35,3 +35,5 @@ export * from "./classify/bernoulli.ts";
 export * from "./classify/routing.ts";
 export * from "./classify/artifacts.ts";
 export * from "./savers.ts";
+export * from "./output/reduce.ts";
+export * from "./goals.ts";

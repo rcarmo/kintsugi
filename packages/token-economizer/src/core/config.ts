@@ -16,6 +16,8 @@ export const PolicySchema = Type.Object({
   toolJudge: Type.Enum(["none", "generative", "classifier", "cascade"]),
   /** Run the task judge on each new prompt while idle. Optional so older saved settings still load. */
   autoToolPicks: Type.Optional(Type.Boolean()),
+  reduceOutputs: Type.Optional(Type.Boolean()),
+  goalChecks: Type.Optional(Type.Boolean()),
   generativeModel: model, classifierModel: model,
   models:Type.Object({proposer:model,loopJudge:model,writer:model,toolJudge:model,loopClassifier:model,toolClassifier:model},{additionalProperties:false}),
   thresholds:Type.Object({min_turns:Type.Optional(positive),edit_churn:Type.Optional(positive),distinct_edit_files:Type.Optional(positive),error_outputs:Type.Optional(positive),stagnation:Type.Optional(Type.Number({minimum:0,maximum:1})),envelope_margin:Type.Optional(Type.Number({exclusiveMinimum:0})),envelope_pct:Type.Optional(Type.Number({minimum:0,maximum:100})),envelope_min_samples:Type.Optional(positive),judge_confidence:Type.Optional(Type.Number({minimum:0,maximum:1})),backstop_mult:Type.Optional(Type.Number({exclusiveMinimum:0})),gate_min_turns:Type.Optional(positive),gate_error_outputs:Type.Optional(positive),nudge_on_ambiguous:Type.Optional(Type.Boolean())},{additionalProperties:false}),

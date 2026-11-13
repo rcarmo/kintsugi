@@ -1,0 +1,37 @@
+import {afterEach,expect,test} from "bun:test";
+import {mkdtemp,rm} from "node:fs/promises";
+import {join} from "node:path";
+import {tmpdir} from "node:os";
+import {BACKGROUND_CONTEXT as context} from "@earendil-works/chord/context";
+import {createModels,fauxProvider} from "@earendil-works/pi-ai";
+import {createRegistry,Harness,MemoryStorage} from "@earendil-works/pi-durable";
+import {parseOptimizerCommand,runOptimizerCommand} from "../../src/server/token-optimizer-command.ts";
+import {tokenOptimizerConfiguration} from "../../src/server/token-optimizer-config.ts";
+import {createNativeTokenOptimizer} from "../../src/server/token-optimizer.ts";
+import {WorkspaceAgents} from "../../src/server/durable-workspace.ts";
+const cleanup:(()=>Promise<void>)[]=[];
+afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
+test("optimizer command parser accepts documented actions and rejects accidental prompts",()=>{
+  expect(parseOptimizerCommand(" /tokeneconomizer ")).toEqual({action:"status",names:[]});
+  expect(parseOptimizerCommand("/tokeneconomizer restore bash read")).toEqual({action:"restore",names:["bash","read"]});
+  for(const action of ["help","settings","on","watch","off","status"] as const)expect(parseOptimizerCommand(`/tokeneconomizer ${action}`)?.action).toBe(action);
+  expect(parseOptimizerCommand("/tokeneconomizers")).toBeUndefined();expect(parseOptimizerCommand("ordinary message")).toBeUndefined();
+  expect(()=>parseOptimizerCommand("/tokeneconomizer invent")).toThrow();expect(()=>parseOptimizerCommand("/tokeneconomizer on unexpected")).toThrow();
+});
+test("optimizer commands use native actions, change only the Agent override and never invoke a model",async()=>{
+  const dir=await mkdtemp(join(tmpdir(),"optimizer-command-")),old=process.env.KINTSUGI_DATA_DIR;process.env.KINTSUGI_DATA_DIR=dir;
+  cleanup.push(async()=>{if(old===undefined)delete process.env.KINTSUGI_DATA_DIR;else process.env.KINTSUGI_DATA_DIR=old;await rm(dir,{recursive:true,force:true});});
+  const configuration=tokenOptimizerConfiguration();await configuration.load();const registry=createRegistry(),models=createModels(),faux=fauxProvider();models.setProvider(faux.provider);let harness:Harness;
+  const native=createNativeTokenOptimizer({workspaceId:"fixture",models,registry,harness:()=>harness,configuration});registry.install(native.optimizer.extension);
+  harness=await Harness.open(new MemoryStorage(),{registry,models},context);cleanup.push(async()=>{await native.close();await harness.close(context);});
+  const conversation=await harness.root(context);await harness.commit(async tx=>{(await tx.doc(WorkspaceAgents)).agents.push({agentId:"agent",durableId:conversation.id,label:"Agent",title:"Agent"});},context);
+  await native.attach();await native.start(conversation,{agentId:"agent"});
+  const run=(action:"status"|"help"|"settings"|"on"|"watch"|"off"|"restore")=>runOptimizerCommand("fixture","agent",{action,names:[]},crypto.randomUUID());
+  expect((await run("status")).text).toContain("Off");expect((await run("help")).text).toContain("restore");expect((await run("settings")).settingsUrl).toContain("section=token-optimizer");
+  await expect(run("on")).rejects.toThrow("Enable the optimizer");
+  const config=configuration.snapshot();config.policy.enabled=true;await configuration.configure(config);
+  await run("on");expect(configuration.policy("fixture","agent").mode).toBe("active");expect(configuration.policy("fixture","other").mode).toBe("observe");
+  await run("watch");expect(configuration.policy("fixture","agent").mode).toBe("observe");
+  await run("off");expect(configuration.policy("fixture","agent").mode).toBe("off");expect((await run("restore")).text).toContain("No hidden tools");
+  expect(faux.state.callCount).toBe(0);expect(configuration.snapshot().workspaces).toEqual({});
+});
