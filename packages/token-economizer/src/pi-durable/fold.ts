@@ -18,7 +18,10 @@ import type { createInferenceQueue } from "./sidecall.ts";
 export function createMechanismFolder(options: {harness:() => Harness;domain:HostDomain;queue:ReturnType<typeof createInferenceQueue>;now?:() => number}): SessionFolder {
   return async ({knowledge,policy,session,host,trajectory,signal,incremental}) => {
     const learning = session.learning ? structuredClone(session.learning) : undefined;
-    const hasEvidence = trajectory.observations.length > 0;
+    // File-read bodies and non-shell tool output are not fact-detector inputs. Their truncation
+    // must not veto an otherwise complete shell/edit digest for the whole reply.
+    const observations = trajectory.observations.filter(call => call.semantic === "shell" || call.semantic === "edit");
+    const hasEvidence = observations.length > 0;
     if (learning && hasEvidence) learning.ticks++;
     const now = (options.now ?? Date.now)();
     // Live proposals need three evidence-bearing checkpoints; all attempts share a ten-minute cooldown.
@@ -27,7 +30,9 @@ export function createMechanismFolder(options: {harness:() => Harness;domain:Hos
     const proposalDue = !learning || !incremental && learning.lastProposalAt === null || learning.ticks >= Math.max(3,policy.proposeEvery) && (learning.lastProposalAt === null || now-learning.lastProposalAt >= 600_000);
     let novelty = structuredClone(knowledge.novelty);
     let environment = knowledge.environment, distiller = knowledge.distiller, render = knowledge.render, injectedIds = knowledge.injectedIds;
-    const observations = trajectory.observations, complete = observations.every(call => call.coverage === "complete");
+    const complete = observations.every(call => call.coverage === "complete");
+    const diagnostics = {at:now,observations:trajectory.observations.length,factObservations:observations.length,incomplete:observations.filter(call => call.coverage !== "complete").length,proposer:"not-selected",notes:Array<string>()};
+    if (learning) learning.lastCheck = diagnostics;
     const envSelected = policy.microSkills === "envfacts" || policy.microSkills === "both", paidSelected = policy.microSkills === "distiller" || policy.microSkills === "both";
     if (envSelected && (!learning || hasEvidence)) environment = updateEnvironment(environment,complete ? observeEnvironment(observations,host.repositoryRoot) : null,session.injectedIds,learning?.credits);
     const renders:NonNullable<Knowledge["renders"]> = knowledge.renders ? structuredClone(knowledge.renders) : {environment:"",distilled:"",ids:[]};
@@ -36,6 +41,7 @@ export function createMechanismFolder(options: {harness:() => Harness;domain:Hos
     if (paidSelected && (!learning || hasEvidence || !incremental)) {
       const model = modelFor(policy,"proposer"), account = model ? JSON.stringify([host.scope.host,model.provider]) : "";
       const paused = (await options.harness().snapshot(JobsDoc,BACKGROUND_CONTEXT))?.paused.includes(account) ?? false;
+      diagnostics.proposer = !complete ? "incomplete-evidence" : !inferenceAllowed(policy) ? "inference-disabled" : !model ? "no-model" : paused ? "auth-paused" : !proposalDue ? learning?.lastProposalAt ? "cooldown-or-cadence" : "waiting-for-checkpoints" : "waiting-for-cadence";
       const tick = learning && !hasEvidence ? {state:distiller,prompt:proposalDue && inferenceAllowed(policy) && model && !paused && distiller.window.length && distiller.now-distiller.last_propose >= policy.proposeEvery ? buildProposerPrompt(host.scope.repository,distiller,[],envSelected ? free.claims : []) : null} : updateDistiller(distiller,complete ? genericDigest(distillObservations,session.id,[host.repositoryRoot],"") : null,distillObservations.filter(call => call.semantic === "shell").map(call => ({command:call.command,output:call.output})),policy.proposeEvery,inferenceAllowed(policy) && model !== null && !paused && proposalDue,host.scope.repository,envSelected ? free.claims : [],learning?.credits);
       distiller = tick.state;
       if (tick.prompt && model && (!policy.savers.novelty || distiller.now-novelty.lastSkip >= policy.proposeEvery)) {
@@ -50,6 +56,7 @@ export function createMechanismFolder(options: {harness:() => Harness;domain:Hos
         if (skip) novelty = {...novelty,...evaluated!.state};
         const key = JSON.stringify([host.scope.host,host.scope.repository,host.scope.environment,host.id,"proposer",distiller.now]);
         const admission = !unchanged && (!skip || audit) ? await options.queue.enqueue(host.conversationId,{id:key,purpose:audit ? "audit" : "proposer",auditFor:"proposer",model,prompt:tick.prompt,maxOutputTokens:policy.budget.maxOutputTokens,deadlineMs:policy.budget.deadlineMs},{sessionKey:JSON.stringify([JSON.stringify([host.scope.host,host.scope.repository,host.scope.environment]),host.id]),account,runId:null,revision:String(policy.version),digest:key,estimatedMaximumCost:null}) : {job:null};
+        diagnostics.proposer = unchanged ? "unchanged-evidence" : skip && !audit ? "novelty-skip" : admission.job ? "attempted" : "budget-or-policy-blocked";
         // No budget or paused runner makes no attempt and must not consume the cadence.
         if (admission.job?.taskId) {
           if (learning) {learning.lastProposalAt = now;learning.lastProposalDigest = proposalDigest;learning.ticks = 0;}
@@ -57,7 +64,7 @@ export function createMechanismFolder(options: {harness:() => Harness;domain:Hos
           const job = (await options.harness().snapshot(JobsDoc,BACKGROUND_CONTEXT))!.jobs[key];
           if (job.status !== "cancelled") {
             if (audit) {novelty.audits++;const preview = completeProposal(distiller,job.status === "complete" ? job.result!.text : null).state;novelty.missed += preview.facts.filter(fact => !distiller.facts.some(prior => prior.spec.id === fact.spec.id)).length;}
-            else {if (evaluated) novelty = {...novelty,...evaluated.state};distiller = completeProposal(distiller,job.status === "complete" ? job.result!.text : null).state;
+            else {if (evaluated) novelty = {...novelty,...evaluated.state};const completed = completeProposal(distiller,job.status === "complete" ? job.result!.text : null);distiller = completed.state;diagnostics.notes = completed.diagnostics.slice(0,8).map(note => note.slice(0,160));
               // Grounding may have credited a newly admitted fact using this very session.
               const digest = distiller.window.find(row => row.iid === session.id);
               if (learning && digest) for (const fact of distiller.facts) {

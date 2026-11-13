@@ -108,7 +108,7 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
           const output:JsonObject = result ? {
             environmentFacts:result.environment.facts.length,distilledFacts:result.distiller.facts.length,
             newFacts:current.filter(fact => !previous.has(fact.id)).map(fact => fact.id),
-            facts:current.slice(-40),changes,
+            facts:current.slice(-40),changes,learning:result.learning?.lastCheck ?? null,
             toolSuggestions:result.tools.proposal,hiddenTools:result.tools.applied,sessions:result.tools.sessions,prompts:result.tools.prompts,
             activePrefixChanged:false,
           } : {error:trajectory.kind === "ready" ? "No learning result" : trajectory.reason};

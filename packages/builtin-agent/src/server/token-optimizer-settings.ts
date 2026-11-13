@@ -210,7 +210,12 @@ async function troubleshootingHtml(workspaceId: string, agentId: string, data: S
   const artifacts = [classes?.loop?.identity, ...classes?.tools.map(tool => tool.identity) ?? [], ...classes?.text ?? []].filter(item => item !== undefined);
   const active = artifacts.filter(item => item.state === "active_bands").length;
   const on = policy.mode !== "off", usesClassifiers = on && (policy.savers.localLoop || policy.savers.toolPrefilter || policy.savers.localToolDrops || policy.judge !== "generative" || ["classifier", "cascade"].includes(policy.toolJudge));
+  const checkpoint = data.session?.learning?.lastCheck;
   const lines = [
+    data.session?.learning ? `Learning checkpoints: ${data.session.learning.processed} processed of ${data.session.learning.requested} requested. A completed reply is a checkpoint; /new starts a separate evidence session.` : "No learning checkpoint yet.",
+    checkpoint ? `Last check: ${checkpoint.factObservations} fact-relevant results out of ${checkpoint.observations} tool results${checkpoint.incomplete ? `; ${checkpoint.incomplete} incomplete results blocked fact learning` : ""}.` : "",
+    checkpoint ? `Fact proposer: ${checkpoint.proposer.replaceAll("-", " ")}${checkpoint.notes.length ? ` · ${checkpoint.notes.join("; ")}` : ""}.` : "",
+    data.session?.foldError ? `Last learning error: ${data.session.foldError}` : "",
     `Model calls: ${accounting.calls} of ${budget.callsPerSession} this session, ${accounting.dailyCalls} of ${budget.callsPerDay} today in this workspace${accounting.reservations.length ? ` (${accounting.reservations.length} in progress)` : ""}.`,
     usesClassifiers || artifacts.length ? `Classifiers: ${active} active of ${artifacts.length}; ${plural(classes?.samples.filter(sample => sample.label !== null).length ?? 0, "labelled example")}; ${classes?.skipped ?? 0} judge calls saved; ${classes?.audits ?? 0} double-checks, ${classes?.disagreements ?? 0} disagreements.` : "",
     classes?.lastError ? `Last classifier note: ${classes.lastError}` : "",

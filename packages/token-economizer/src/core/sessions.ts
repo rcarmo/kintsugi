@@ -8,12 +8,13 @@ export type LearningSession = {
   transcriptActivity: number; recordActivity: number; folded: boolean; foldedAt: number | null;
   cutoff: string | null; claim: string | null; foldError: string | null;
   /** Optional for journals predating live learning. Cursor advances atomically with learned state. */
-  learning?: { cutoff: string | null; credits: import("./microskills/lifecycle.ts").LearningCredits; ticks: number; lastProposalAt: number | null; lastProposalDigest?: string; requested: number; processed: number; lastRun: string | null; toolCounted?: boolean; toolPrompts?: number; finalRequested?: boolean };
+  learning?: { cutoff: string | null; credits: import("./microskills/lifecycle.ts").LearningCredits; ticks: number; lastProposalAt: number | null; lastProposalDigest?: string; requested: number; processed: number; lastRun: string | null; toolCounted?: boolean; toolPrompts?: number; finalRequested?: boolean; lastCheck?: {at:number;observations:number;factObservations:number;incomplete:number;proposer:string;notes:string[]} };
   section: string; injectedIds: string[]; frozenMask: string[]; appendedAfterFold: boolean;
 };
 function copySession(prior: LearningSession): LearningSession {
   const next = { ...prior, scope: { ...prior.scope }, injectedIds: [...prior.injectedIds], frozenMask: [...prior.frozenMask] };
   if (prior.learning) next.learning = {...prior.learning,credits:{confirms:[...prior.learning.credits.confirms],contradicts:[...prior.learning.credits.contradicts],exercises:[...prior.learning.credits.exercises]}};
+  if (next.learning && prior.learning?.lastCheck) next.learning.lastCheck = {...prior.learning.lastCheck,notes:[...prior.learning.lastCheck.notes]};
   return next;
 }
 

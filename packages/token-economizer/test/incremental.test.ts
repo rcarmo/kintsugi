@@ -77,3 +77,17 @@ test("repeated turns cannot promote a fact or supply duplicate grounding citatio
   expect(state.facts[0]!.life.state).toBe("CANDIDATE");expect(state.window).toHaveLength(1);
   expect(admitFact(state,{id:"duplicate",claim:"The tests use pytest.",detector:{scope:"missing_command",confirm:"command not found"},cite:["same-session","same-session"]})).toEqual({accepted:false,reason:"grounding-fail(1/2)"});
 });
+test("irrelevant partial reads do not veto shell learning; partial shell evidence still does",async () => {
+  const f = await setup();f.policy.microSkills = "envfacts";
+  await f.checkpoint([{...observation("read"),semantic:"read",coverage:"partial"},observation("complete")]);
+  expect(f.knowledge.environment.facts.map(fact => fact.id)).toContain("absent_tool:pytest");
+  expect(f.session.learning!.lastCheck).toMatchObject({observations:2,factObservations:1,incomplete:0,proposer:"not-selected"});
+  const g = await setup();g.policy.microSkills = "envfacts";
+  await g.checkpoint([{...observation("partial"),coverage:"partial"}]);
+  expect(g.knowledge.environment.facts).toHaveLength(0);
+  expect(g.session.learning!.lastCheck).toMatchObject({observations:1,factObservations:1,incomplete:1});
+  expect(f.calls+g.calls).toBe(0);
+  const reads = await setup();
+  for (let i=0;i<4;i++) await reads.checkpoint([{...observation(`read-${i}`),semantic:"read",coverage:"partial"}]);
+  expect(reads.session.learning!.ticks).toBe(0);expect(reads.calls).toBe(0);expect(reads.knowledge.distiller.window).toHaveLength(0);
+});

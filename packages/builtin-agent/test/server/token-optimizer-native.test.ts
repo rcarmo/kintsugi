@@ -39,13 +39,14 @@ async function settleLearning(harness:Harness) {
     for (const row of pending) {await harness.waitForTask(row.record.id,context);waited.add(row.record.id);}
   }
 }
-async function setup(kind:"memory"|"sqlite"|"jsonl" = "memory",overrideConfig?:TokenOptimizerConfiguration) {
+async function setup(kind:"memory"|"sqlite"|"jsonl" = "memory",overrideConfig?:TokenOptimizerConfiguration,withLongRead = false) {
   const path = await mkdtemp(join(tmpdir(),"native-optimizer-"));cleanups.push(() => rm(path,{recursive:true,force:true}));
   const configuration = overrideConfig ?? new TokenOptimizerConfiguration(path);await configuration.load();
   const models = createModels(), faux = fauxProvider({tokensPerSecond:100_000});models.setProvider(faux.provider);
   const registry = createRegistry();let harness:Harness, failing = false, failureOutput = "AssertionError: repeated test failure", gate:Promise<void>|null = null;const entered = Promise.withResolvers<void>();
   registry.install(createWorkspaceCodemodeExtension("fixture",new CodemodeSandbox(),async () => ({text:""})));
   registry.install(defineExtension({name:"fixture-tools",tools:[defineTool({name:"bash",description:"Run",parameters:Type.Object({command:Type.String()}),structuredOutputSchema:Type.Object({output:Type.String(),exitCode:Type.Integer(),aborted:Type.Boolean(),timedOut:Type.Boolean(),truncated:Type.Boolean()}),replay:"safe",async execute() {if (gate) {entered.resolve();await gate;gate = null;}return {structuredOutput:{output:failing ? failureOutput : "passed",exitCode:failing ? 1 : 0,aborted:false,timedOut:false,truncated:false},details:{exitCode:failing ? 1 : 0,aborted:false,timedOut:false}};}}),defineTool({name:"rare",description:"Rare helper",parameters:Type.Object({}),execute:async () => ({output:[{type:"text",text:"done"}]})}),defineTool({name:"plan",description:"Plan",parameters:Type.Object({}),execute:async () => ({output:[{type:"text",text:"done"}]})})]}));
+  if (withLongRead) registry.install(defineExtension({name:"long-read-fixture",tools:[defineTool({name:"read",description:"Read fixture",parameters:Type.Object({path:Type.String()}),replay:"safe",async execute(){return {output:[{type:"text",text:"x".repeat(20_000)}]};}})]}));
   const native = createNativeTokenOptimizer({workspaceId:"fixture",models,registry,harness:() => harness,configuration});registry.install(native.optimizer.extension);
   harness = await Harness.open(kind === "memory" ? new MemoryStorage() : kind === "sqlite" ? await openNodeSqliteStorage(join(path,"state.sqlite")) : await openNodeJsonlStorage(join(path,"journal"),context),{models,registry},context);cleanups.push(async () => {await native.close();await harness.close(context);});
   const root = await harness.commit(tx => tx.createConversation({ownership:{kind:"ownerless"}}),context), conversation = (await harness.conversation(root.id,context))!;
@@ -498,4 +499,13 @@ test("optimizer display receipts redact and bound nested values without changing
   expect(JSON.stringify(receipt.data)).not.toContain("must-not-persist");expect(JSON.stringify(receipt.data)).not.toContain("another-secret");expect(JSON.stringify(receipt.data)).not.toContain("sk-abcdefghijklmnopqrstuv");
   expect(String(receipt.data.input.text)).toContain("[display truncated]");expect(JSON.stringify(input)).toBe(original);
   expect(receipt.model).toBeUndefined();expect(receipt.data.output).toMatchObject({cost:null,usage:null});
+});
+
+test("a partial read result must not discard complete shell evidence from the same completed reply",async()=>{
+  const f=await setup("memory",undefined,true),config=f.configuration.snapshot();Object.assign(config.policy,{enabled:true,microSkills:"envfacts",loop:"off",pruning:"propose"});await f.configuration.configure(config);const active=f.configuration.snapshot();active.policy.mode="active";await f.configuration.configure(active);
+  // A real native read result exceeds the learner's 16 KiB bound. Its text is not an environment-fact input.
+  f.fail("pytest: command not found");f.faux.setResponses([fauxAssistantMessage([fauxToolCall("codemode",{code:"await tools.read({path:'large.ts'});await tools.bash({command:'pytest'});"})],{stopReason:"toolUse"}),fauxAssistantMessage("Done")]);
+  await(await f.conversation.submit({type:"input",content:"Check the project",requestId:"partial-read-evidence"},context)).wait(context);
+  for(let n=0;n<200&&((await f.native.optimizer.status(f.host)).session?.learning?.processed??0)<1;n++){await settleLearning(f.harness);await Bun.sleep(5);}
+  const state=await f.native.optimizer.status(f.host);expect(state.session?.ended).toBeNull();expect(state.session?.learning?.processed).toBe(1);expect(state.knowledge?.environment.facts.map(fact=>fact.id)).toContain("absent_tool:pytest");expect(f.faux.state.callCount).toBe(2);
 });
