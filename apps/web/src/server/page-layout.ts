@@ -58,6 +58,7 @@ ${options.devReload ? `
 ::view-transition-old(root), ::view-transition-new(root) { animation-duration: 120ms; }
 ` : ""}</style>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<script src="${assetPath("/layout.js")}"></script>
 <meta name="turbo-cache-control" content="no-cache">
 <title>${escapeHtml(title)}</title>
 <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32">

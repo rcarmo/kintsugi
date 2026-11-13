@@ -18,7 +18,8 @@
     "./system-version": "./src/system-version.ts",
     "./workspace-resources": "./src/workspace-resources.ts",
     "./resource-compatibility": "./src/resource-compatibility.ts",
-    "./text-selection": "./src/text-selection.ts"
+    "./text-selection": "./src/text-selection.ts",
+    "./layout-preference": "./src/layout-preference.ts"
   },
   "dependencies": {
     "@kintsugi/core": "workspace:*",

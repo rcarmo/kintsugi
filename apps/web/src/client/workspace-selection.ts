@@ -2,7 +2,7 @@ import { flushPreviewFrames } from "@kintsugi/proxy-ingress/preview-client";
 import { restoreAppSettingsDestination } from "./app-settings-controller.ts";
 import { restoreTemplateSettingsDestination } from "./template-settings-controller.ts";
 import { markActiveWorkspaceRow } from "./workspace-presentation.ts";
-import { phoneLayoutMediaQuery } from "@kintsugi/shared";
+import { isCompactLayout, layoutPreferenceEvent } from "@kintsugi/shared";
 import { Controller } from "@hotwired/stimulus";
 import { liveSurfaceReady, prepareLiveSurface, releaseLiveSurface } from "./live-surface.ts";
 import { controllerForElement, registerWorkspaceControllers, workspaceNavigationController } from "./workspace-controller-registry.ts";
@@ -53,6 +53,7 @@ class WorkspaceSelectionController extends Controller<HTMLElement> {
     document.addEventListener("kintsugi:workspace-pane-hidden", this.reportVisibility);
     document.addEventListener("visibilitychange", this.reportVisibility);
     document.addEventListener("kintsugi:mobile-workspace-pane-changed", this.reportVisibility);
+    document.addEventListener(layoutPreferenceEvent, this.reportVisibility);
     window.addEventListener("popstate", this.historyChanged);
     this.historyChanged();
   }
@@ -66,6 +67,7 @@ class WorkspaceSelectionController extends Controller<HTMLElement> {
     document.removeEventListener("kintsugi:workspace-pane-hidden", this.reportVisibility);
     document.removeEventListener("visibilitychange", this.reportVisibility);
     document.removeEventListener("kintsugi:mobile-workspace-pane-changed", this.reportVisibility);
+    document.removeEventListener(layoutPreferenceEvent, this.reportVisibility);
     window.removeEventListener("popstate", this.historyChanged);
     window.KintsugiCable?.reportVisibility({ surfaceKeys: [] });
   }
@@ -186,7 +188,7 @@ class WorkspaceSelectionController extends Controller<HTMLElement> {
   }
   private readonly reportVisibility = (): void => {
     const workspaceId = this.visibleWorkspaceId();
-    const hidden = document.hidden || this.element.inert || (window.matchMedia(phoneLayoutMediaQuery).matches && this.element.closest(".is-mobile-workspace-pane-open") !== null);
+    const hidden = document.hidden || this.element.inert || (isCompactLayout() && this.element.closest(".is-mobile-workspace-pane-open") !== null);
     const mount = this.mountTargets.find(item => item.dataset.workspaceId === workspaceId);
     const surfaceKeys = !hidden && mount ? [...mount.querySelectorAll<HTMLElement>('[data-workspace-surface-visible="true"]')].map(pane => `${pane.dataset.workspacePaneRole === "agent" ? "agent:" : ""}${pane.dataset.workspacePaneId}`) : [];
     window.KintsugiCable?.reportVisibility({ workspaceId: hidden ? undefined : workspaceId, surfaceKeys });

@@ -13,7 +13,7 @@ import { tabHtml, tabStripHtml } from "@kintsugi/design-system/tab-strip";
 import { domId, escapeHtml, turboStream, workspaceWorkViewLabelDomId } from "@kintsugi/shared";
 import { formatShortcutBinding } from "../shortcut-binding.ts";
 import { agentPaneSlotDomId, renderAgentPane, renderMobileAgentAttention, type AgentPaneContribution } from "./agent-pane.ts";
-import { renderPwaReminder } from "./pwa-reminder.ts";
+import { renderLayoutPicker } from "./layout-picker.ts";
 import type { WorkspaceDeletionState } from "./workspace-registry.ts";
 import { outdatedImageMessage } from "./workspace-warnings.ts";
 import type { WorkspaceWorkViewState } from "@kintsugi/workspace";
@@ -203,7 +203,7 @@ export function renderWorkspacePane(presentation: WorkspacePanePresentation, sid
   const back = buttonHtml({ type: "button", variant: "secondary", content: { kind: "icon-only", iconHtml: Icons.Back, label: "Back to workspaces" }, attributesHtml: 'data-action="workspace-pane#back"' });
   return `<div class="fixed-shell-workspace-pane" data-controller="workspace-pane"><div class="fixed-shell-workspace-main">${panelHtml({
     element: { tag: "aside",  attributesHtml: 'aria-label="Workspaces"' },
-    headerHtml: `<div class="workspace-pane-header" data-workspace-pane-target="workspacesHeader"><span class="panel__title">${Icons.Cloud}Workspaces</span>${buttonGroupHtml({ orientation: "horizontal", semantics: "layout", itemsHtml: `${renderPwaReminder()}${moduleActionsHtml}${settings}${barButton("Collapse Workspace pane", "click->workspace-navigation#toggleWorkspacePaneCollapsed", Icons.Panel, "data-collapse-workspace-pane")}` })}</div>
+    headerHtml: `<div class="workspace-pane-header" data-workspace-pane-target="workspacesHeader"><span class="panel__title">${Icons.Cloud}<span>Workspaces</span></span>${buttonGroupHtml({ orientation: "horizontal", semantics: "layout", itemsHtml: `${renderLayoutPicker()}${moduleActionsHtml}${settings}${barButton("Collapse Workspace pane", "click->workspace-navigation#toggleWorkspacePaneCollapsed", Icons.Panel, "data-collapse-workspace-pane")}` })}</div>
       <div class="workspace-pane-header" data-workspace-pane-target="pickerHeader" hidden>${back}<span class="panel__title">New workspace</span></div>`,
     bodyHtml: `<div class="workspace-pane-viewport" data-workspace-pane-target="body"><div class="workspace-pane-slides">
       <section class="workspace-pane-slide" data-workspace-pane-target="workspaces" aria-label="Workspaces">

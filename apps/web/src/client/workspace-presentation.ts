@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 
-import { focusLikelyOpensSoftwareKeyboard, phoneLayoutMediaQuery, workspaceAgentSelectionEvent, type WorkspaceClientApplication, type WorkspaceClientControllerConstructor, type WorkspaceClientSurfaceVisibilityContext } from "@kintsugi/shared";
+import { focusLikelyOpensSoftwareKeyboard, isCompactLayout, layoutPreferenceEvent, workspaceAgentSelectionEvent, type WorkspaceClientApplication, type WorkspaceClientControllerConstructor, type WorkspaceClientSurfaceVisibilityContext } from "@kintsugi/shared";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 import { liveSurfaceReady, prepareLiveSurface, stopLiveSurface } from "./live-surface.ts";
@@ -91,7 +91,6 @@ export function createWorkspacePresentationController(
     declare readonly element: HTMLElement;
     declare readonly workspaceIdValue: string;
     private state!: PersonalNavigationState;
-    private media?: MediaQueryList;
     private sizeObserver?: ResizeObserver;
     private preferredAgentWidth?: number;
     private resize?: { startX: number; startAgentWidth: number };
@@ -102,8 +101,7 @@ export function createWorkspacePresentationController(
     connect(): void {
       const initialUrl = new URL(location.href);
       this.state = this.restoreState();
-      this.media = window.matchMedia(phoneLayoutMediaQuery);
-      this.media.addEventListener("change", this.viewportChanged);
+      document.addEventListener(layoutPreferenceEvent, this.viewportChanged);
       this.element.addEventListener("kintsugi:workspace-mount-visible", this.mountVisible);
       this.element.addEventListener("live:structure", this.structureChanged);
       this.element.addEventListener("kintsugi:workspace-mount-hidden", this.mountHidden);
@@ -123,7 +121,7 @@ export function createWorkspacePresentationController(
     }
 
     disconnect(): void {
-      this.media?.removeEventListener("change", this.viewportChanged);
+      document.removeEventListener(layoutPreferenceEvent, this.viewportChanged);
       this.element.removeEventListener("kintsugi:workspace-mount-visible", this.mountVisible);
       this.element.removeEventListener("live:structure", this.structureChanged);
       this.element.removeEventListener("kintsugi:workspace-mount-hidden", this.mountHidden);
@@ -349,7 +347,7 @@ export function createWorkspacePresentationController(
       if (contextual) this.element.dataset.activeContextualWork = key;
     }
 
-    private get isPhone(): boolean { return this.media?.matches ?? window.matchMedia(phoneLayoutMediaQuery).matches; }
+    private get isPhone(): boolean { return isCompactLayout(); }
     private get agentPane(): HTMLElement { return this.element.querySelector<HTMLElement>("[data-workspace-presentation-target='agentPane']")!; }
     private get storageKey(): string { return workspaceNavigationStorageKey(this.workspaceIdValue); }
 

@@ -12,7 +12,7 @@ import { registerSettingsContribution } from "./registry.ts";
 
 type SettingsSurface = "settings" | "onboarding";
 
-const sectionId = "settings-sec-git-hosting";
+const sectionId = "settings_git_hosting";
 
 function disconnectConfirmation(provider: GitHostingProvider): string {
   return destructiveConfirmationHtml({

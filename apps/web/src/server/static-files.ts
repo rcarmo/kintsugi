@@ -15,6 +15,7 @@ function workspaceModuleStaticFiles(): Record<string, StaticFileEntry> {
 const moduleFiles = workspaceModuleStaticFiles();
 
 export const clientEntrypoints: StaticFileRegistry = {
+  "/layout.js": { url: new URL("../client/layout-startup.ts", import.meta.url), contentType: "text/javascript; charset=utf-8", bundle: "iife" },
   "/workspace.js": { url: new URL("../client/workspace.ts", import.meta.url), contentType: "text/javascript; charset=utf-8" },
   "/design-system.js": { url: new URL("../../../../packages/design-system/catalogue/client.ts", import.meta.url), contentType: "text/javascript; charset=utf-8" },
   ...Object.fromEntries(Object.entries(moduleFiles).filter(([, entry]) => entry.bundle)),

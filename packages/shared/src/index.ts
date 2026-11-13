@@ -1,6 +1,8 @@
 import type { KintsugiEventBus, JsonObject, JsonValue } from "@kintsugi/core";
 import type { TSchema } from "typebox";
 import { escapeHtml } from "./html.ts";
+import { isCompactLayout } from "./layout-preference.ts";
+export { phoneLayoutMediaQuery, isCompactLayout, layoutPreferenceEvent } from "./layout-preference.ts";
 import type { WorkspaceGateway } from "./workspace-gateway.ts";
 export * from "./workspace-gateway.ts";
 
@@ -390,7 +392,6 @@ export interface WorkspaceClientSurfaceVisibilityContext {
   application: WorkspaceClientApplication;
 }
 
-export const phoneLayoutMediaQuery = "(max-width: 700px), (hover: none) and (pointer: coarse)";
 /** The composer rules are about available space, not touch: mobile is a viewport of 700px or less. */
 export const mobileComposerMediaQuery = "(max-width: 700px)";
 
@@ -424,7 +425,7 @@ export function isWorkspacePaneVisible(element: Element): boolean {
   if (presentationPane) {
     if (!presentationPane.classList.contains("is-active")) return false;
     const presentation = presentationPane.closest<HTMLElement>(".fixed-workspace-presentation")!;
-    if (window.matchMedia(phoneLayoutMediaQuery).matches) {
+    if (isCompactLayout()) {
       return presentationPane.dataset.workspacePaneRole === "agent"
         ? presentation.dataset.phoneDestination === "agents"
         : presentation.dataset.phoneDestination === `work:${presentationPane.dataset.workspacePaneId}`;

@@ -1,4 +1,5 @@
 import { registerLiveSurfaces } from "./live-surface.ts";
+import { installLayoutPreference } from "@kintsugi/shared/layout-preference";
 /// <reference lib="dom" />
 
 import { Application as StimulusApplication, Controller as StimulusController } from "@hotwired/stimulus";
@@ -15,7 +16,7 @@ import * as Turbo from "@hotwired/turbo";
 import { NavigationOriginController } from "./navigation-origin-controller.ts";
 import { BrowserTitleController } from "./browser-title-controller.ts";
 import { ConnectionModeSettingsController } from "./connection-mode-settings.ts";
-import { PwaReminderController } from "./pwa-reminder.ts";
+import { LayoutPickerController } from "./layout-picker.ts";
 import { registerWorkspaceAppFrameController } from "./workspace-app-frame.ts";
 import { installWorkspaceCable } from "./workspace-cable.ts";
 import { clientHooks } from "./workspace-client-hooks.ts";
@@ -43,6 +44,7 @@ const Controller: WorkspaceClientControllerConstructor = StimulusController;
 const application = StimulusApplication.start();
 application.register("navigation-origin", NavigationOriginController);
 application.register("browser-title", BrowserTitleController);
+installLayoutPreference();
 installSoftwareKeyboardTracking();
 initializeWorkspaceControllerRegistry(application);
 
@@ -58,7 +60,7 @@ Turbo.StreamActions["select-workspace"] = function selectWorkspace(this: HTMLEle
 for (const module of workspaceClientModules) await module.install({ application, Controller, hooks: clientHooks });
 registerWorkspaceControllers({
   "connection-mode-settings": ConnectionModeSettingsController,
-  "pwa-reminder": PwaReminderController,
+  "layout-picker": LayoutPickerController,
   "workspace-presentation": createWorkspacePresentationController(Controller, application, clientHooks),
 });
 registerWorkspaceNavigationControllers();

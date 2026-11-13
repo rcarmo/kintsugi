@@ -103,11 +103,12 @@ turbo-frame { display: contents; }
 .fixed-shell-pane-collections { height: 100%; min-height: 0; display: flex; flex-direction: column; }
 .fixed-shell-pane-collections > #global_sidebar_contributions { flex: 0 0 auto; }
 .fixed-shell-workspace-main { flex: 1; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
-.workspace-pane-header > .button-group { gap: 2px; }
+.workspace-pane-header > .button-group { gap: 2px; flex-shrink: 0; }
 /* The pane body is a two-slide track: workspaces, then the "New workspace" template picker. */
 .workspace-pane-header { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
 .workspace-pane-header[hidden] { display: none; }
 .workspace-pane-header > .panel__title { flex: 1; min-width: 0; }
+.workspace-pane-header > .panel__title > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-pane-viewport { height: 100%; min-height: 0; overflow: hidden; }
 .workspace-pane-slides { height: 100%; min-height: 0; display: flex; }
 .fixed-shell-workspace-pane.is-picking-template .workspace-pane-slides { transform: translateX(-100%); }
@@ -190,26 +191,25 @@ turbo-frame { display: contents; }
 .fixed-shell-live-body { min-width: 0; min-height: 100%; }
 
 .fixed-shell-work-pane { position: relative; min-width: 360px; flex: 1; }
-@media (min-width: 701px) and (hover: hover) and (pointer: fine) {
-  .fixed-shell-app > .fixed-shell-workspace-pane {
+:where(html[data-kintsugi-layout="desktop"]) .fixed-shell-app > .fixed-shell-workspace-pane {
     position: absolute;
     inset: var(--fixed-shell-gap) auto var(--fixed-shell-gap) var(--fixed-shell-gap);
     z-index: 1;
     transform: translateX(0);
     transition: transform 160ms ease-out, opacity 160ms ease-out, visibility 160ms;
   }
-  .fixed-shell-app > .fixed-shell-app-main { margin-left: calc(var(--fixed-workspace-width) + var(--fixed-shell-gap)); }
-  .fixed-shell-app.is-workspace-pane-collapsed > .fixed-shell-app-main { margin-left: 0; }
-  .fixed-shell-app.is-workspace-pane-collapsed > .fixed-shell-workspace-pane {
+:where(html[data-kintsugi-layout="desktop"]) .fixed-shell-app > .fixed-shell-app-main { margin-left: calc(var(--fixed-workspace-width) + var(--fixed-shell-gap)); }
+:where(html[data-kintsugi-layout="desktop"]) .fixed-shell-app.is-workspace-pane-collapsed > .fixed-shell-app-main { margin-left: 0; }
+:where(html[data-kintsugi-layout="desktop"]) .fixed-shell-app.is-workspace-pane-collapsed > .fixed-shell-workspace-pane {
     transform: translateX(calc(-100% - var(--fixed-shell-gap)));
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
   }
-  .fixed-workspace-presentation .fixed-shell-main { position: relative; }
+:where(html[data-kintsugi-layout="desktop"]) .fixed-workspace-presentation .fixed-shell-main { position: relative; }
   /* Keep embedded surfaces at their final size: animating flex/width makes
    * terminals and browsers relayout on every frame. Only composite the slide. */
-  .fixed-shell-work-pane {
+:where(html[data-kintsugi-layout="desktop"]) .fixed-shell-work-pane {
     position: absolute;
     inset: 0 0 0 auto;
     width: calc(100% - var(--fixed-agent-width) - var(--fixed-shell-gap));
@@ -219,28 +219,25 @@ turbo-frame { display: contents; }
   /* A transformed ancestor confines fixed-position fullscreen surfaces to the
    * Work pane. Keep the live content in place, but release that containing block
    * immediately while fullscreen is open. */
-  .fixed-shell-work-pane:has(.kintsugi-fullscreen-live) {
+:where(html[data-kintsugi-layout="desktop"]) .fixed-shell-work-pane:has(.kintsugi-fullscreen-live) {
     transform: none;
     transition: none;
   }
-  .fixed-workspace-presentation:not(.is-work-pane-open) .fixed-shell-work-pane {
+:where(html[data-kintsugi-layout="desktop"]) .fixed-workspace-presentation:not(.is-work-pane-open) .fixed-shell-work-pane {
     transform: translateX(calc(100% + var(--fixed-shell-gap)));
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
   }
-}
 
 /* Below the preferred pane minimums (380 + 360 + 8), shrink both panes
  * side by side until the mobile layout takes over. Query the space beside
  * the sidebar so neither pane overflows the available desktop width. */
-@media (min-width: 701px) and (hover: hover) and (pointer: fine) {
-  @container workspace-content (width < 748px) {
-    .fixed-shell-agent-pane { min-width: 0; flex: 0 1 calc((100% - var(--fixed-shell-gap)) * 380 / 740); }
-    .fixed-shell-work-pane { min-width: 0; width: calc((100% - var(--fixed-shell-gap)) * 360 / 740); }
-    .fixed-shell-work-resizer { display: none; }
+@container workspace-content (width < 748px) {
+    :where(html[data-kintsugi-layout="desktop"]) .fixed-shell-agent-pane { min-width: 0; flex: 0 1 calc((100% - var(--fixed-shell-gap)) * 380 / 740); }
+    :where(html[data-kintsugi-layout="desktop"]) .fixed-shell-work-pane { min-width: 0; width: calc((100% - var(--fixed-shell-gap)) * 360 / 740); }
+    :where(html[data-kintsugi-layout="desktop"]) .fixed-shell-work-resizer { display: none; }
   }
-}
 
 .fixed-shell-work-resizer { position: absolute; z-index: 3; top: 0; bottom: 0; left: -4px; width: 8px; cursor: col-resize; touch-action: none; }
 .fixed-shell-work-resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 1px; background: transparent; }
@@ -265,52 +262,57 @@ turbo-frame { display: contents; }
 
 html.software-keyboard-visible .fixed-shell-app .fixed-shell-mobile-nav { display: none; }
 
-@media (max-width: 700px), (hover: none) and (pointer: coarse) {
-  /* Each bar owns an intrinsic row: button size, padding, border and safe area
+/* Each bar owns an intrinsic row: button size, padding, border and safe area
    * participate in layout instead of being duplicated in a pane inset. */
-  .fixed-shell-app { display: grid; grid-template: minmax(0, 1fr) auto / minmax(0, 1fr); gap: 0; padding: 0; }
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-app { display: grid; grid-template: minmax(0, 1fr) auto / minmax(0, 1fr); gap: 0; padding: 0; }
   /* Fit the root, not individual descendants inside clipped full-height panes.
    * The keyboard arrangement snaps the shell above the (predicted) keyboard in
    * one step; it never follows the keyboard's animation. The shell is always
    * fixed: switching its position would make WebKit restore stale scroll
    * offsets inside it a frame later. */
-  .fixed-shell-app {
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-app {
     position: fixed; left: 0; right: 0; top: var(--software-keyboard-top, 0px); bottom: var(--software-keyboard-inset, 0px); height: auto;
   }
   /* Workspace mounts own their bar; the overlaid workspace list uses the
    * outer grid's Kintsugi-bar row independently. */
-  .fixed-shell-app-main { grid-area: 1 / 1 / -1 / -1; }
-  .fixed-workspace-presentation, .workspace-boot { display: grid; grid-template: minmax(0, 1fr) auto / minmax(0, 1fr); padding: 0; }
-  .fixed-shell-main { position: relative; display: block; grid-area: 1 / 1; }
-  .workspace-boot > .main { grid-area: 1 / 1; min-height: 0; }
-  .workspace-boot .body { gap: 12px; }
-  .workspace-boot-progress { padding-top: 16px; }
-  .workspace-boot-actions { margin-top: 16px; padding-top: 12px; }
-  .workspace-deletion-presentation { place-items: stretch; overflow: clip; }
-  .workspace-deletion-state { min-height: 0; overflow: auto; padding: 24px 16px; }
-  .fixed-shell-workspace-pane, .fixed-shell-agent-pane, .fixed-shell-work-pane { position: absolute; inset: 0; width: 100%; max-width: none; min-width: 0; margin: 0 !important; border: 0; border-radius: 0; opacity: 0; visibility: hidden; pointer-events: none; transform: none; transition: opacity 150ms ease; }
-  .fixed-shell-app > .fixed-shell-workspace-pane { position: relative; grid-area: 1 / 1; min-height: 0; z-index: 20; }
-  .fixed-shell-app:not(:has(.workspace-detail-mount.visible)):not(:has(.template-settings-host)) > .fixed-shell-workspace-pane,
-  .fixed-shell-app.is-mobile-workspace-pane-open > .fixed-shell-workspace-pane,
-  .fixed-workspace-presentation[data-phone-destination="agents"] .fixed-shell-agent-pane,
-  .fixed-workspace-presentation[data-phone-destination^="work:"] .fixed-shell-work-pane { opacity: 1; visibility: visible; pointer-events: auto; }
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-app-main { grid-area: 1 / 1 / -1 / -1; }
+:where(html[data-kintsugi-layout="compact"]) .fixed-workspace-presentation,
+:where(html[data-kintsugi-layout="compact"]) .workspace-boot { display: grid; grid-template: minmax(0, 1fr) auto / minmax(0, 1fr); padding: 0; }
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-main { position: relative; display: block; grid-area: 1 / 1; }
+:where(html[data-kintsugi-layout="compact"]) .workspace-boot > .main { grid-area: 1 / 1; min-height: 0; }
+:where(html[data-kintsugi-layout="compact"]) .workspace-boot .body { gap: 12px; }
+:where(html[data-kintsugi-layout="compact"]) .workspace-boot-progress { padding-top: 16px; }
+:where(html[data-kintsugi-layout="compact"]) .workspace-boot-actions { margin-top: 16px; padding-top: 12px; }
+:where(html[data-kintsugi-layout="compact"]) .workspace-deletion-presentation { place-items: stretch; overflow: clip; }
+:where(html[data-kintsugi-layout="compact"]) .workspace-deletion-state { min-height: 0; overflow: auto; padding: 24px 16px; }
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-workspace-pane,
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-agent-pane,
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-work-pane { position: absolute; inset: 0; width: 100%; max-width: none; min-width: 0; margin: 0 !important; border: 0; border-radius: 0; opacity: 0; visibility: hidden; pointer-events: none; transform: none; transition: opacity 150ms ease; }
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-app > .fixed-shell-workspace-pane { position: relative; grid-area: 1 / 1; min-height: 0; z-index: 20; }
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-app:not(:has(.workspace-detail-mount.visible)):not(:has(.template-settings-host)) > .fixed-shell-workspace-pane,
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-app.is-mobile-workspace-pane-open > .fixed-shell-workspace-pane,
+:where(html[data-kintsugi-layout="compact"]) .fixed-workspace-presentation[data-phone-destination="agents"] .fixed-shell-agent-pane,
+:where(html[data-kintsugi-layout="compact"]) .fixed-workspace-presentation[data-phone-destination^="work:"] .fixed-shell-work-pane { opacity: 1; visibility: visible; pointer-events: auto; }
   /* Mobile Work navigation lives in the bottom workspace bar and More menu. */
-  .fixed-shell-work-pane > .panel > .panel__header { display: none; }
-  .fixed-shell-work-resizer, [data-show-work-pane], [data-show-workspace-pane], [data-collapse-workspace-pane] { display: none; }
-  .fixed-shell-mobile-nav { position: relative; grid-area: 2 / 1; z-index: 30; min-width: 0; display: flex; align-items: center; gap: 8px; margin-top: 2px; padding: 4px 4px calc(4px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--fixed-shell-border); background: var(--panel); }
-  .fixed-shell-kintsugi-bar { display: none; align-items: center; }
-  .fixed-shell-app:where(.is-mobile-workspace-pane-open, :not(:has(.workspace-detail-mount.visible))) > .fixed-shell-kintsugi-bar { display: flex; }
-  .fixed-shell-app.is-mobile-workspace-pane-open .fixed-shell-workspace-bar { visibility: hidden; pointer-events: none; }
-  .workspace-empty-artwork { display: none; }
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-work-pane > .panel > .panel__header { display: none; }
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-work-resizer,
+:where(html[data-kintsugi-layout="compact"]) [data-show-work-pane],
+:where(html[data-kintsugi-layout="compact"]) [data-show-workspace-pane],
+:where(html[data-kintsugi-layout="compact"]) [data-collapse-workspace-pane] { display: none; }
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-mobile-nav { position: relative; grid-area: 2 / 1; z-index: 30; min-width: 0; display: flex; align-items: center; gap: 8px; margin-top: 2px; padding: 4px 4px calc(4px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--fixed-shell-border); background: var(--panel); }
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-kintsugi-bar { display: none; align-items: center; }
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-app:where(.is-mobile-workspace-pane-open, :not(:has(.workspace-detail-mount.visible))) > .fixed-shell-kintsugi-bar { display: flex; }
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-app.is-mobile-workspace-pane-open .fixed-shell-workspace-bar { visibility: hidden; pointer-events: none; }
+:where(html[data-kintsugi-layout="compact"]) .workspace-empty-artwork { display: none; }
   /* Clearance inside the overflow strip also accommodates the pressed offset. */
-  .fixed-shell-mobile-scroll { min-width: 0; display: flex; align-items: center; flex: 1; padding-block: 1px; overflow: hidden; }
-  .fixed-shell-kintsugi-bar, .fixed-shell-mobile-scroll { gap: 20px; }
-  .fixed-shell-mobile-scroll.is-compact { gap: 8px; }
-  .fixed-shell-mobile-nav [hidden] { display: none; }
-  .fixed-shell-mobile-nav button > svg { width: calc(21px * var(--popular-button-scale)); height: calc(21px * var(--popular-button-scale)); }
-  .fixed-shell-mobile-nav :is([data-mobile-destination], [data-mobile-more], #fixed_shell_kintsugi_next_attention) > .status-dot.attention { position: absolute; top: 7px; right: calc(50% - 15px); }
-  .fixed-shell-more-close-section:has([data-more-close-destination]:not([hidden])) { margin-top: 4px; padding-top: 5px; border-top: 1px solid var(--line); }
-}
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-mobile-scroll { min-width: 0; display: flex; align-items: center; flex: 1; padding-block: 1px; overflow: hidden; }
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-kintsugi-bar,
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-mobile-scroll { gap: 20px; }
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-mobile-scroll.is-compact { gap: 8px; }
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-mobile-nav [hidden] { display: none; }
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-mobile-nav button > svg { width: calc(21px * var(--popular-button-scale)); height: calc(21px * var(--popular-button-scale)); }
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-mobile-nav :is([data-mobile-destination], [data-mobile-more], #fixed_shell_kintsugi_next_attention) > .status-dot.attention { position: absolute; top: 7px; right: calc(50% - 15px); }
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-more-close-section:has([data-more-close-destination]:not([hidden])) { margin-top: 4px; padding-top: 5px; border-top: 1px solid var(--line); }
 
 @media (prefers-reduced-motion: reduce) {
   .fixed-shell-workspace-pane, .fixed-shell-work-pane, .fixed-shell-agent-pane, .fixed-workspace-presentation .fixed-shell-main { transition-duration: 1ms !important; }
@@ -429,12 +431,6 @@ button.settings-link:disabled { opacity: .45; cursor: default; filter: none; }
 #fixed_shell_kintsugi_next_attention:not([data-preloaded-attention]) .status-dot { display: none; }
 
 /* Installation help composes shared dialog and controls. */
-.pwa-reminder-body { display: grid; gap: 16px; }
-.pwa-reminder-body ol { padding-inline-start: 24px; margin-bottom: 0; }
-.pwa-reminder-body p { margin: 0; }
-.pwa-reminder-body li + li { margin-top: 10px; }
-.pwa-reminder-guide { margin: 16px 0; }
-.pwa-reminder-guide svg { display: block; width: 100%; height: auto; }
 
 /* Model setup leaves composer drafts and attachments usable. */
 .composer-connect-action { display: none; }
@@ -525,10 +521,8 @@ body[data-live-ready="true"] .browser-transport-status { display: none; }
   .template-settings-toolbar { gap: 8px; }
 }
 .fixed-shell-app-main:has(.template-settings-host) > .workspace-detail-host { visibility: hidden; }
-@media (max-width: 700px), (hover: none) and (pointer: coarse) {
-  .fixed-shell-app:has(.template-settings-host) > .fixed-shell-workspace-pane { opacity: 0; visibility: hidden; pointer-events: none; }
-  .fixed-shell-app:has(.template-settings-host) > .fixed-shell-kintsugi-bar { display: none; }
-}
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-app:has(.template-settings-host) > .fixed-shell-workspace-pane { opacity: 0; visibility: hidden; pointer-events: none; }
+:where(html[data-kintsugi-layout="compact"]) .fixed-shell-app:has(.template-settings-host) > .fixed-shell-kintsugi-bar { display: none; }
 
 /* App settings uses the same panel composition as template settings. */
 #app_settings_host { display: contents; }
