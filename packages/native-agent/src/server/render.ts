@@ -46,7 +46,7 @@ export function createNativeAgentRendering<Runtime extends NativeAgentRuntime>(o
       { target: ids.transcript(ctx), html: transcriptHtml(runtime) },
       { target: ids.background(ctx), html: renderBackgroundActivities(ctx, options.background?.activities(runtime) ?? []) },
       { target: ids.actions(ctx), html: renderPromptActions(ctx, runtime.isTurnRunning, runtime.isBusy) },
-      { target: ids.stats(ctx), html: renderAgentPaneComposerFooter(ctx, options.stats(runtime)), morph: false },
+      { target: ids.stats(ctx), html: renderAgentPaneComposerFooter(ctx, options.stats(runtime)) },
       { target: ids.completionCatalog(ctx), html: runtime.completionCatalog },
     ];
   }

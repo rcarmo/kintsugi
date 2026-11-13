@@ -25,6 +25,8 @@ interface SharedComposerSelectionsOptions {
   selectedThinkingLevel: string;
   autosubmitThinking?: boolean;
   connectedProvider?: boolean;
+  /** Keep client-enhanced controls until their server-rendered settings change. */
+  preserveControls?: boolean;
 }
 
 function renderModelSelection(formId: string, models: ComposerModelOption[], connectedProvider = false, readOnly = false): string {
@@ -62,9 +64,16 @@ export function renderSharedComposerSelections(options: SharedComposerSelections
     ? `<span class="composer-selection-field"${autosubmit}><select class="composer-selection popup-select" data-controller="popup-select" data-popup-placement="above" name="thinkingLevel" form="${escapeHtml(options.thinkingLevelFormId)}" title="Thinking level">${options.thinkingLevels.map((level) => `<option value="${escapeHtml(level)}"${level === options.selectedThinkingLevel ? " selected" : ""}>${escapeHtml(level)}</option>`).join("")}</select></span>`
     : "";
   const ready = options.models.some((model) => model.selected && model.available !== false);
-  return `<span class="composer-selections" data-model-ready="${ready}">
-${renderModelSelection(options.modelFormId, options.models, options.connectedProvider, options.readOnly)}
-${ready ? thinkingSelection : ""}
+  const content = `${renderModelSelection(options.modelFormId, options.models, options.connectedProvider, options.readOnly)}
+${ready ? thinkingSelection : ""}`;
+  // Popup selects add their own button and menu. Morphing those enhancements
+  // away would leave a retained select without its controls. A content-keyed
+  // island keeps them for usage updates, but replaces them for new settings.
+  const island = options.preserveControls
+    ? ` id="${escapeHtml(`${options.modelFormId}_controls_${Bun.hash(`${ready}:${content}`).toString(36)}`)}" data-turbo-permanent`
+    : "";
+  return `<span class="composer-selections" data-model-ready="${ready}"${island}>
+${content}
 </span>`;
 }
 

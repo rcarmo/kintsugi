@@ -45,7 +45,7 @@ export class AgentPresentation {
   private chromeRegions(): LiveRegion[] {
     return [
       { target: ids.actions(this), html: renderPromptActions(this, this.isStreaming, this.controller.hasStoppableWork, "followUp") },
-      { target: ids.stats(this), html: renderAgentPaneComposerFooter(this, this.stats()), morph: false },
+      { target: ids.stats(this), html: renderAgentPaneComposerFooter(this, this.stats()) },
       { target: ids.completionCatalog(this), html: this.catalog },
       { target: notificationControlId(this), html: renderNotificationControl(this, this.isStreaming), action: "replace" },
       ...(this.failure ? [{ target: ids.notices(this), html: renderNotice("error", "This Agent view disconnected. Reload to reconnect.") }] : []),

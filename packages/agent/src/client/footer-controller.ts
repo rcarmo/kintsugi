@@ -13,14 +13,24 @@ export function createAgentFooterController(Controller: WorkspaceClientControlle
       this.mutationObserver = new MutationObserver(this.schedule);
       this.mutationObserver.observe(this.element, { childList: true, subtree: true, characterData: true });
       document.fonts.addEventListener("loadingdone", this.schedule);
+      this.element.addEventListener("turbo:before-morph-attribute", this.preserveLayout);
     }
 
     disconnect(): void {
       this.resizeObserver.disconnect();
       this.mutationObserver.disconnect();
       document.fonts.removeEventListener("loadingdone", this.schedule);
+      this.element.removeEventListener("turbo:before-morph-attribute", this.preserveLayout);
       cancelAnimationFrame(this.frame);
     }
+
+    /** Width fitting owns visibility; a stats morph must not reveal every item
+     * while waiting for the next layout frame. */
+    private preserveLayout = (event: Event): void => {
+      // SAFETY: Turbo supplies the attribute mutation descriptor.
+      const { attributeName } = (event as CustomEvent<{ attributeName: string }>).detail;
+      if (attributeName === "hidden" && event.target instanceof HTMLElement && event.target.hasAttribute("data-footer-drop")) event.preventDefault();
+    };
 
     private schedule = (): void => {
       cancelAnimationFrame(this.frame);

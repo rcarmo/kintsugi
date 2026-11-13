@@ -199,5 +199,6 @@ ${renderSharedComposerSelections({
     selectedThinkingLevel: stats.thinkingLevel,
     autosubmitThinking: true,
     connectedProvider: stats.connectedProvider,
+    preserveControls: true,
   })}`;
 }
