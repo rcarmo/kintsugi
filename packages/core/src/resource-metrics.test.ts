@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cpusetSize, ioCounters, readCgroupResourceCounter, resourceReading, unavailableResourceCounter, type ResourceCounter } from "./resource-metrics.ts";
+import { cpusetSize, hostAvailableMemory, ioCounters, readCgroupResourceCounter, resourceReading, unavailableResourceCounter, type ResourceCounter } from "./resource-metrics.ts";
 
 const counter = (changes: Partial<ResourceCounter> = {}): ResourceCounter => ({ identity: "container:started", at: 1000, state: "running", cpuUsec: 1000000, cpus: .5, memory: 1024, memoryLimit: 4096, readBytes: 100, writeBytes: 300, ...changes });
 test("CPU normalizes elapsed cumulative use by effective fractional cores; I/O reports byte rates", () => {
@@ -30,10 +30,18 @@ test("quota-window bursts remain visible above 100% rather than silently alterin
 test("I/O sums the kernel's reported device counters, ignores operation/discard counts, and distinguishes empty from malformed", () => {
   expect(ioCounters("8:0 rbytes=100 wbytes=200 rios=1 wios=2 dbytes=999\n8:16 wbytes=40 rbytes=20\n")).toEqual({ readBytes: 120, writeBytes: 240 });
   expect(ioCounters("")).toEqual({ readBytes: 0, writeBytes: 0 });
+  expect(ioCounters("8:0 rbytes=100 wbytes=200 cost.usage=1.23 cost.wait=0.00")).toEqual({ readBytes: 100, writeBytes: 200 });
+  expect(ioCounters("8:0 rbytes=9007199254740992 wbytes=0").readBytes).toBe(9007199254740992);
   expect(() => ioCounters("8:0 rbytes=-1")).toThrow(); expect(() => ioCounters("8:0 wbytes=garbage")).toThrow();
   expect(() => ioCounters("not-a-device rbytes=1")).toThrow(); expect(() => ioCounters("8:0 garbage")).toThrow();
   expect(cpusetSize("0-3,7,9-10\n")).toBe(7);
   expect(() => cpusetSize("4-2")).toThrow(); expect(() => cpusetSize("oops")).toThrow();
+});
+test("host available RAM uses MemAvailable including reclaimable cache, not MemFree or a guessed zero", () => {
+  expect(hostAvailableMemory("MemTotal: 10000 kB\nMemFree: 100 kB\nMemAvailable: 5000 kB\n")).toBe(5000 * 1024);
+  expect(hostAvailableMemory("MemFree: 100 kB\n")).toBeNull();
+  expect(hostAvailableMemory("MemAvailable: 0 kB\n")).toBe(0);
+  expect(hostAvailableMemory("MemAvailable: invalid kB\n")).toBeNull();
 });
 test("cgroup sampling includes mount-root/ancestor quotas and memory limits without sleeping", async () => {
   const root = await mkdtemp(join(tmpdir(), "kintsugi-meter-cgroup-"));

@@ -14,6 +14,8 @@ export type ResourceCounter = Static<typeof resourceCounterSchema>;
 export const resourceSnapshotSchema = Type.Object({
   scope: Type.Union([Type.Literal("system"), Type.Literal("local")]),
   system: resourceCounterSchema,
+  // Optional on the compatibility-6 wire contract: older System builds omit it.
+  hostMemoryAvailable: Type.Optional(reading),
   workspaces: Type.Record(Type.String(), resourceCounterSchema),
 });
 export type ResourceSnapshot = Static<typeof resourceSnapshotSchema>;
@@ -27,11 +29,12 @@ export function ioCounters(text: string) {
     const [device, ...fields] = line.trim().split(/\s+/);
     if (!/^\d+:\d+$/.test(device!) || !fields.length) throw new Error("Invalid cgroup I/O device");
     for (const field of fields) {
-      if (!/^[a-z_]+=\d+$/.test(field)) throw new Error("Invalid cgroup I/O field");
+      if (!/^[a-z_][a-z_.0-9]*=[^\s=]+$/.test(field)) throw new Error("Invalid cgroup I/O field");
       const [key, raw] = field.split("=");
+      // Kernels may append fields such as cost.usage=1.23; those are not byte counters.
       if (key !== "rbytes" && key !== "wbytes") continue;
       const value = Number(raw);
-      if (!Number.isSafeInteger(value) || value < 0) throw new Error("Invalid cgroup I/O counter");
+      if (!/^\d+$/.test(raw!) || !Number.isFinite(value) || !Number.isInteger(value) || value < 0) throw new Error("Invalid cgroup I/O counter");
       if (key === "rbytes") readBytes += value; else writeBytes += value;
     }
   }
@@ -92,6 +95,15 @@ export async function readCgroupResourceCounter(root: string, identity: string, 
     memory: number(memory), memoryLimit,
     ...(io === null ? { readBytes: null, writeBytes: null } : ioCounters(io)),
   };
+}
+
+export function hostAvailableMemory(text: string): number | null {
+  const available = text.match(/^MemAvailable:\s+(\d+)\s+kB$/m);
+  return available ? Number(available[1]) * 1024 : null;
+}
+export async function readHostAvailableMemory(): Promise<number | null> {
+  const text = await optionalFile("/proc/meminfo");
+  return text === null ? null : hostAvailableMemory(text);
 }
 
 export interface ResourceReading {

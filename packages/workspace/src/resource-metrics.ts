@@ -1,7 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { runDocker, withCommandSignal } from "@kintsugi/core";
-import { readCgroupResourceCounter, unavailableResourceCounter, resourceSnapshotSchema, type ResourceSnapshot, type ResourceCounter } from "@kintsugi/core/resource-metrics";
+import { readCgroupResourceCounter, readHostAvailableMemory, unavailableResourceCounter, resourceSnapshotSchema, type ResourceSnapshot, type ResourceCounter } from "@kintsugi/core/resource-metrics";
+import { createWorkspaceCounterProbe } from "@kintsugi/core/resource-probe";
 import { hostAvailable, hostRequest, readSystemVersion } from "@kintsugi/host/control";
 import { resourceMetersSystemVersion } from "@kintsugi/shared/system-version";
 import { Type } from "typebox";
@@ -35,18 +36,20 @@ async function localWorkspaceCounters(ids: readonly string[], signal: AbortSigna
   return result;
 }
 
+const localWorkspaceProbe = createWorkspaceCounterProbe(localWorkspaceCounters, {
+  onError: error => console.error("Local workspace resource inspection failed", error),
+});
+
 export async function inspectResourceCounters(workspaceIds: readonly string[], signal: AbortSignal): Promise<ResourceSnapshot> {
   const ids = Value.Parse(Type.Array(Type.String({ pattern: "^[a-zA-Z0-9][a-zA-Z0-9_.-]*$" }), { maxItems: 32 }), [...new Set(workspaceIds)]);
   if (hostAvailable()) {
     if (await readSystemVersion((input, init) => fetch(input, { ...init, signal })) < resourceMetersSystemVersion) throw new Error("Update System for live resource meters.");
     return Value.Parse(resourceSnapshotSchema, await hostRequest({ operation: "meters", workspaceIds: ids }, undefined, { signal }));
   }
-  const [system, workspaces] = await Promise.all([
+  const [system, workspaces, hostMemoryAvailable] = await Promise.all([
     readCgroupResourceCounter("/sys/fs/cgroup", "local"),
-    localWorkspaceCounters(ids, signal).catch(error => {
-      if (!signal.aborted) console.error("Local workspace resource inspection failed", error);
-      return Object.fromEntries(ids.map(id => [id, unavailableResourceCounter()]));
-    }),
+    localWorkspaceProbe.read(ids, signal),
+    readHostAvailableMemory(),
   ]);
-  return { scope: "local", system, workspaces };
+  return { scope: "local", system, workspaces, hostMemoryAvailable };
 }

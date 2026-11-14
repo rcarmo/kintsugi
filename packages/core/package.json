@@ -5,7 +5,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./json-settings": "./src/json-settings.ts",
-    "./resource-metrics": "./src/resource-metrics.ts"
+    "./resource-metrics": "./src/resource-metrics.ts",
+    "./resource-history": "./src/resource-history.ts",
+    "./resource-probe": "./src/resource-probe.ts"
   },
   "dependencies": {
     "typebox": "^1.0.57"

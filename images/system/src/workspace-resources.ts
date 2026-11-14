@@ -17,7 +17,7 @@ type RecordState = Static<typeof recordSchema>;
 // Docker is a privileged external boundary. Do not return its Env/Cmd/Error or arbitrary image metadata in diagnostics.
 const inspectSchema = Type.Array(Type.Object({ Id: Type.String(), Name: Type.String(), Config: Type.Object({ Image: Type.Optional(Type.String()), ExposedPorts: Type.Optional(Type.Union([Type.Null(), Type.Record(Type.String(), Type.Unknown())])), Labels: Type.Union([Type.Null(), Type.Record(Type.String(), Type.String())]) }), State: Type.Object({ Running: Type.Boolean(), OOMKilled: Type.Boolean(), Pid: Type.Integer(), ExitCode: Type.Integer(), FinishedAt: Type.String(), StartedAt: Type.Optional(Type.String()), Status: Type.Optional(Type.String()) }), NetworkSettings: Type.Optional(Type.Object({ Networks: Type.Optional(Type.Record(Type.String(), Type.Object({ IPAddress: Type.Optional(Type.String()), GlobalIPv6Address: Type.Optional(Type.String()) }))), Ports: Type.Optional(Type.Union([Type.Null(), Type.Record(Type.String(), Type.Union([Type.Null(), Type.Array(Type.Object({ HostIp: Type.String(), HostPort: Type.String() }))]))])) })), RestartCount: Type.Integer(), HostConfig: Type.Object({ CpusetCpus: Type.Optional(Type.String()), RestartPolicy: Type.Optional(Type.Object({ Name: Type.String() })), Memory: Type.Number(), MemorySwap: Type.Number(), NanoCpus: Type.Number(), PidsLimit: Type.Union([Type.Null(), Type.Number()]) }) }));
 type Container = Static<typeof inspectSchema>[number];
-export function createWorkspaceResourceControl(options: { memory: number; cpus: number; pids?: number; swap?: number; swapSupported?: boolean; systemMemory?: number; sample?: (container: Container) => Promise<WorkspaceResourceUsage>; cgroupParent: string; docker(...args: string[]): Promise<string>; file?: string; appData?: string; policyFile?: string; park?: (id: string) => Promise<void>; readOom?: (container: Container) => Promise<number>; now?: () => number }) {
+export function createWorkspaceResourceControl(options: { memory: number; cpus: number; pids?: number; swap?: number; swapSupported?: boolean; systemMemory?: number; sample?: (container: Container) => Promise<WorkspaceResourceUsage>; cgroupParent: string; docker(...args: string[]): Promise<string>; meterDocker?(signal: AbortSignal, ...args: string[]): Promise<string>; file?: string; appData?: string; policyFile?: string; park?: (id: string) => Promise<void>; readOom?: (container: Container) => Promise<number>; now?: () => number }) {
   const file = options.file ?? "/data/supervisor/workspace-resources.json";
   const baseDefaults = workspaceResourceDefaults(options.memory, options.cpus);
   const pidsCapacity = options.pids ?? 1024;
@@ -46,10 +46,10 @@ export function createWorkspaceResourceControl(options: { memory: number; cpus: 
   const memoryPolicy = (): WorkspaceMemoryPolicySnapshot => ({ maximumMemory: budget, configuredMaximumMemory, capacity, defaultMemory: defaults.memory, defaultPids: defaults.pids, configuredDefaultPids, pidsCapacity });
   const save = () => writeJsonAtomic(file, state, { mode: 0o600 });
   const idOf = (c: Container) => { const id = c.Config.Labels?.["com.kintsugi.workspace-id"]; return id && /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(id) && c.Config.Labels?.["com.kintsugi.type"] === "workspace" && c.Name === `/kintsugi-${id}` ? id : undefined; };
-  async function containers(selected?: readonly string[]) {
+  async function containers(selected?: readonly string[], execute = options.docker) {
     const filter = selected ? ["--filter", `name=^/kintsugi-(${selected.map(id => id.replaceAll(".", "\\.")).join("|")})$`] : [];
-    const ids = (await options.docker("ps", "-aq", "--filter", "label=com.kintsugi.type=workspace", ...filter)).split(/\s+/).filter(Boolean);
-    return ids.length ? Value.Parse(inspectSchema, JSON.parse(await options.docker("inspect", ...ids))).filter(c => idOf(c)) : [];
+    const ids = (await execute("ps", "-aq", "--filter", "label=com.kintsugi.type=workspace", ...filter)).split(/\s+/).filter(Boolean);
+    return ids.length ? Value.Parse(inspectSchema, JSON.parse(await execute("inspect", ...ids))).filter(c => idOf(c)) : [];
   }
   function entry(c: Container): RecordState {
     const id = idOf(c)!;
@@ -179,10 +179,12 @@ export function createWorkspaceResourceControl(options: { memory: number; cpus: 
   }
   const summary = () => ({ budget, aggregateMemory: options.memory, aggregateSwap: options.swap ?? 0, defaults, totalWorkspaces: Object.keys(state ?? {}).length, workspaces: Object.fromEntries(Object.entries(state ?? {}).sort(([,a],[,b]) => (b.blockedAt ?? 0) - (a.blockedAt ?? 0)).slice(0,128)) });
   return {
-    async counters(ids: readonly string[]): Promise<Record<string, ResourceCounter>> {
+    async counters(ids: readonly string[], signal?: AbortSignal): Promise<Record<string, ResourceCounter>> {
+      const meterDocker = options.meterDocker;
+      const execute = signal && meterDocker ? (...args: string[]) => meterDocker(signal, ...args) : options.docker;
       const readings: Record<string, ResourceCounter> = Object.fromEntries(ids.map(id => [id, unavailableResourceCounter()]));
       if (!ids.length) return readings;
-      for (const container of await containers(ids)) {
+      for (const container of await containers(ids, execute)) {
         const id = idOf(container)!;
         if (!ids.includes(id)) continue;
         if (!container.State.Running) { readings[id] = unavailableResourceCounter("stopped"); continue; }
