@@ -106,6 +106,8 @@ export interface WebAppDeps {
 export interface WebApp {
   fetch(request: Request): Promise<Response>;
   invalidateWorkspace(workspaceId: string): void;
+  startResourceCollection(): void;
+  stopResourceCollection(): void;
   subscribeShell(listener: (html: string) => void): Promise<import("@kintsugi/shared").CableChannelSubscription>;
   subscribeResources(identifier: CableIdentifier, listener: (html: string) => void): import("@kintsugi/shared").CableChannelSubscription;
   subscribeSurface(identifier: CableIdentifier, listener: (html: string) => void, shown?: LiveRegionDigests): Promise<import("@kintsugi/shared").CableChannelSubscription>;
@@ -157,6 +159,7 @@ export function createWebApp(deps: WebAppDeps): WebApp {
   );
   const resourceMeters = createResourceMeters({
     load: deps.resourceCounters,
+    workspaceIds: () => registry.list().filter(entry => !entry.parked).map(entry => entry.id),
     workspace(id) {
       const entry = deps.registry.get(id);
       return entry ? { id, title: workspaceTitle(entry), parked: entry.parked } : undefined;
@@ -1346,6 +1349,8 @@ export function createWebApp(deps: WebAppDeps): WebApp {
   }
 
   return {
+    startResourceCollection: resourceMeters.start,
+    stopResourceCollection: resourceMeters.stop,
     subscribeShell: listener => shell.subscribe(listener),
     subscribeResources(identifier, listener) {
       if (identifier.channel !== "resources") throw new Error("Expected resource meters channel");

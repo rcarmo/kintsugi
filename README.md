@@ -12,7 +12,7 @@ Kintsugi accepts direct pull requests without a prior issue. See [Contributing](
 
 - **Agents:** editable per-Agent plans shared through the `plan` tool; native code mode with slash templates, one-shot agents and subagents; a Background view for delegated work; full-text search over Agent history.
 - **Token savings:** an opt-in [token optimizer](#token-optimizer); stable prompt prefixes, append-only plan context and Codex WebSocket delta reuse; cache-hit reporting; optional [Graphite telemetry](#token-telemetry).
-- **Workspaces:** live RAM, swap, CPU and task limits; out-of-memory protection; usage and restart diagnostics; sidebar CPU, memory and I/O meters for the selected workspace and System. Home and Settings stay usable when a workspace hangs.
+- **Workspaces:** live RAM, swap, CPU and task limits; out-of-memory protection; usage and restart diagnostics; sidebar CPU, RAM and I/O charts, collected continuously for System and all unparked workspaces, even with no browser open. Home and Settings stay usable when a workspace hangs.
 - **Networking:** trusted LAN access through Caddy TLS with 1,000 preview origins; opt-in private-network access with exact host and port grants; a scoped [management API](#management-api).
 - **Credentials and Git:** an instance credential catalogue with per-template grants and proxy-side substitution, so Agents only see placeholders; a [Gitea](#git-hosting) connection.
 - **Files:** Draw.io editing, CSV/TSV tables, and read-only DOCX, Excel/ODS and PPTX views.
@@ -23,7 +23,7 @@ Kintsugi accepts direct pull requests without a prior issue. See [Contributing](
 
 ## Install
 
-The current release is [v0.6.9](https://github.com/rcarmo/kintsugi/releases/tag/v0.6.9) ([release notes](release_notes/v0.6.9.md)). Use a dedicated Linux server with Docker:
+The current release is [v0.6.10](https://github.com/rcarmo/kintsugi/releases/tag/v0.6.10) ([release notes](release_notes/v0.6.10.md)). Use a dedicated Linux server with Docker:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/rcarmo/kintsugi/main/scripts/install.sh -o /tmp/install-kintsugi.sh

@@ -398,6 +398,7 @@ const adminServers = await startOptionalAdminBindings({
 });
 for (const listener of adminServers) console.log(`Admin API listening on ${listener.hostname}:${listener.port}`);
 const serverPort = server.port ?? requestedPort;
+app.startResourceCollection();
 
 void kintsugiEvents.emit("kintsugi_host_started", {
   workspaces: persistedWorkspaces.map(({ id, parked }) => ({ id, parked: Boolean(parked) })),
@@ -420,6 +421,7 @@ let hostStopping = false;
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => {
   if (hostStopping) return;
   hostStopping = true;
+  app.stopResourceCollection();
   server.stop();
   for (const listener of adminServers) listener.stop();
   void app.provisioning.drain().then(() => kintsugiEvents.emit("kintsugi_host_stopping", {})).then(() => process.exit(0), error => {

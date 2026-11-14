@@ -6,6 +6,7 @@ import { Type, type Static } from "typebox";
 const reading = Type.Union([Type.Number({ minimum: 0 }), Type.Null()]);
 export const resourceCounterSchema = Type.Object({
   identity: Type.String(), at: Type.Number(),
+  observedAt: Type.Optional(Type.Number()),
   state: Type.Union([Type.Literal("running"), Type.Literal("stopped"), Type.Literal("unavailable")]),
   cpuUsec: reading, cpus: reading, memory: reading, memoryLimit: reading,
   readBytes: reading, writeBytes: reading,
@@ -90,7 +91,7 @@ export async function readCgroupResourceCounter(root: string, identity: string, 
     if (limit !== null) memoryLimit = Math.min(memoryLimit, limit);
   }
   return {
-    identity, at: performance.now(), state: cpu === null && memory === null && io === null ? "unavailable" : "running",
+    identity, at: performance.now(), observedAt: Date.now(), state: cpu === null && memory === null && io === null ? "unavailable" : "running",
     cpuUsec: number(cpu?.match(/^usage_usec (\d+)$/m)?.[1] ?? null), cpus,
     memory: number(memory), memoryLimit,
     ...(io === null ? { readBytes: null, writeBytes: null } : ioCounters(io)),
