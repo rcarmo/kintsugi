@@ -692,3 +692,14 @@ circle.resource-meter-trace { fill: currentColor; stroke: none; }
 .resource-meter-memory-used, .resource-meter-limit { display: block; height: 14px; overflow: hidden; text-overflow: ellipsis; }
 .resource-meter-limit { color: var(--text-muted); }
 .resource-meter-group[data-resource-stale="true"] .resource-meter-value { opacity: .55; }
+
+.mcp-connection-editor .settings-field > span { min-width: min(12rem, 35%); }
+.mcp-transport-fields, .mcp-access-workspaces, .mcp-agent-settings, .mcp-agent-choices { min-width: 0; margin: 0; padding: 0; border: 0; }
+.mcp-transport-fields:not([hidden]) { display: grid; gap: 16px; }
+.mcp-access-editor { display: grid; gap: 8px; min-width: 0; }
+.mcp-access-workspaces > legend { margin-bottom: 8px; }
+.mcp-access-row { display: block; }
+.mcp-workspace-choice, .mcp-agent-choice, .mcp-credential-reuse { display: flex; align-items: center; gap: 8px; min-height: 36px; }
+.mcp-workspace-choice > input, .mcp-agent-choice > input, .mcp-credential-reuse > input { flex: 0 0 auto; }
+.mcp-agent-choices:not([hidden]) { display: grid; margin-top: 8px; }
+.mcp-agent-choice > span { min-width: 0; overflow-wrap: anywhere; }

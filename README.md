@@ -17,12 +17,13 @@ Kintsugi accepts direct pull requests without a prior issue. See [Contributing](
 - **Credentials and Git:** an instance credential catalogue with per-template grants and proxy-side substitution, so Agents only see placeholders; a [Gitea](#git-hosting) connection.
 - **Files:** Draw.io editing, CSV/TSV tables, and read-only DOCX, Excel/ODS and PPTX views.
 - **Providers:** classifier-only credentials; Copilot, Codex and OpenCode Go usage tracking.
+- **MCP:** HTTP/OAuth servers shared across selected or all workspaces, with per-workspace Agent restrictions; workspace-bound stdio servers and bounded result recall.
 - **Updates:** a host updater with rollback, custom release sources and version pins; tag-only releases with native AMD64 and ARM64 images.
 - **Browser connection:** WebSocket live updates with an SSE fallback, chosen per browser in Settings, for browsers that can't hold a WebSocket (for example iOS with a self-signed certificate).
 
 ## Install
 
-The current release is [v0.6.7](https://github.com/rcarmo/kintsugi/releases/tag/v0.6.7) ([release notes](release_notes/v0.6.7.md)). Use a dedicated Linux server with Docker:
+The current release is [v0.6.9](https://github.com/rcarmo/kintsugi/releases/tag/v0.6.9) ([release notes](release_notes/v0.6.9.md)). Use a dedicated Linux server with Docker:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/rcarmo/kintsugi/main/scripts/install.sh -o /tmp/install-kintsugi.sh
@@ -53,7 +54,13 @@ Review full claims and evidence directly in the transcript with **Approve**, **W
 
 Each Agent's composer footer shows a small status chip while the optimizer is on; click it for what was learned, hidden or nudged, and to restore hidden tools. The cost and quality effects of Model-assisted have not been measured yet. It is a TypeScript port of Microsoft [TokenEconomizer](https://github.com/microsoft/TokenEconomizer); see the [design checklist](docs/token-economizer.md).
 
-## MCP recall
+## MCP connections and recall
+
+In **Settings → MCP servers**, configure an HTTP server once and use the searchable picker to grant selected workspaces and their Agents access. **All workspaces** includes future workspaces and all their Agents. Stdio servers stay bound to one execution workspace.
+
+Endpoint edits persist with a blank password field. Saved credentials stay bound to the old endpoint until you replace them or explicitly approve reuse; a changed connection may need enabling again. OAuth URL changes require a new sign-in.
+
+Saving a connection writes MCP settings version 2, which v0.6.8 and earlier cannot read. Keep a pre-upgrade backup if you need to downgrade.
 
 MCP connections support tool and resource discovery, including resource-only servers. Servers that advertise tool-list changes can refresh their tools without reconnecting or replaying calls.
 

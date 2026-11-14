@@ -32,7 +32,8 @@ export class McpOAuthVault implements McpOAuthServerStore {
   async load(){return (await this.read()).state;}
   async save(state:McpOAuthState){Value.Assert(stateSchema,state);await this.update(stored=>{stored.state=state;});}
   withRefreshLock<T>(fn:()=>Promise<T>){return this.locked(".refresh",fn);}
-  private options(redirectUrl:string){return {serverUrl:this.config.url,store:this,settings:{...this.config.oauth,clientRegistration:"dcr" as const},clientName:"Kintsugi",redirectUrl};}
+  private requireApprovedCredentials(){if(this.config.credentialUrl!==undefined&&this.config.credentialUrl!==this.config.url)throw new Error("Approve saved OAuth credentials for this endpoint before signing in.");}
+  private options(redirectUrl:string){this.requireApprovedCredentials();return {serverUrl:this.config.url,store:this,settings:{...this.config.oauth,clientRegistration:"dcr" as const},clientName:"Kintsugi",redirectUrl};}
   async begin(redirectUrl:string,browserToken:string){
     return this.locked(".flow",async()=>{
       const result=await startMcpSignIn(this.options(redirectUrl));
@@ -49,7 +50,7 @@ export class McpOAuthVault implements McpOAuthServerStore {
       await completeMcpSignIn({...this.options(redirectUrl),authorization:pending.authorization,response});
     });
   }
-  authProvider(){return createMcpAuthProvider({serverUrl:this.config.url,store:this,settings:()=>({...this.config.oauth,clientRegistration:"dcr"}),clientName:"Kintsugi",onChallenge:()=>{}});}
+  authProvider(){this.requireApprovedCredentials();return createMcpAuthProvider({serverUrl:this.config.url,store:this,settings:()=>({...this.config.oauth,clientRegistration:"dcr"}),clientName:"Kintsugi",onChallenge:()=>{}});}
   async clear(){await this.locked(".flow",()=>this.withRefreshLock(()=>this.update(stored=>{delete stored.state;delete stored.pending;})));}
 }
 export function mcpOAuthVault(config:McpConnection){return new McpOAuthVault(config,getKintsugiRuntimeContext().kintsugiDataDir);}

@@ -1,4 +1,5 @@
 import {createHash} from "node:crypto";
+import {mcpAgentAllowed} from "./mcp-policy.ts";
 import {defineDoc,type Harness,type ConversationId,type DocumentReader} from "@earendil-works/pi-durable";
 import type {Context} from "@earendil-works/chord/context";
 import {defaultMcpRecallSettings,recallStorageAllowed,type McpRecallSettings} from "@kintsugi/token-economizer/core";
@@ -13,7 +14,7 @@ export async function mcpRecallOwner(conversationId:ConversationId,read:Document
   if(!agent||agent.readOnly)throw new Error("No editable Agent owns this MCP recall store.");return agent.agentId;
 }
 export function mcpRecallAllowed(config:McpConnection|undefined,workspaceId:string,owner:string):config is McpConnection {
-  return Boolean(config?.enabled&&config.workspaceId===workspaceId&&(!config.agentIds.length||config.agentIds.includes(owner)));
+  return mcpAgentAllowed(config,workspaceId,owner);
 }
 const copy=(row:McpRecallRecord):McpRecallRecord=>({...row,grants:row.grants.map(grant=>({...grant})),sources:[...row.sources]});
 /** Retention bounds the live recall index. It never deletes committed source journal evidence. */
