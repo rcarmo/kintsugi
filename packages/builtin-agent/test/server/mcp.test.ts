@@ -4,12 +4,13 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {BACKGROUND_CONTEXT as context} from "@earendil-works/chord/context";
 import {createRegistry,Harness,MemoryStorage} from "@earendil-works/pi-durable";
+import {createCodemodeExtension} from "@earendil-works/pi-durable/codemode";
 import {createWorkspaceCodemodeExtension} from "../../../codemode/src/server/extension.ts";
 import {createWorkspaceMcpRuntime} from "../../src/server/mcp-runtime.ts";
 import {WorkspaceAgents} from "../../src/server/durable-workspace.ts";
 import {CodemodeSandbox} from "@earendil-works/pi-codemode";
 import {createModels,fauxProvider,fauxAssistantMessage,fauxToolCall,contentText} from "@earendil-works/pi-ai";
-import {connectMcpHttp,mcpEndpoint,mcpFailure} from "../../src/server/mcp-client.ts";
+import {connectMcpHttp,mcpEndpoint,mcpFailure,mcpToolsExtension} from "../../src/server/mcp-client.ts";
 import {McpConnectionStore,mcpConnections} from "../../src/server/mcp-connections.ts";
 const cleanup:(()=>Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
@@ -100,4 +101,50 @@ test("resource-only servers connect without unsupported tool discovery and follo
   expect(tools).toEqual([]);expect(methods).not.toContain("tools/list");
   expect((await client.listResources()).map(row=>row.uri)).toEqual(["memory://first","memory://second"]);
   expect((await client.readResource("memory://first")).contents[0]).toMatchObject({text:"original resource"});
+});
+
+const statusPayload={status:"success",data:{ready:true}};
+const statusText=JSON.stringify(statusPayload);
+const statusSchema={type:"object",properties:{status:{type:"string"}},required:["status"]};
+for(const fixture of [
+  {label:"schema-less text plus structured content",schema:undefined,result:{content:[{type:"text",text:statusText}],structuredContent:statusPayload},value:statusText,rejects:false},
+  {label:"schema-less structured-only content",schema:undefined,result:{content:[],structuredContent:statusPayload},value:JSON.stringify(statusPayload,null,2),rejects:false},
+  {label:"schema-less structured null",schema:undefined,result:{content:[],structuredContent:null},value:"null",rejects:false},
+  {label:"schema-less plain text",schema:undefined,result:{content:[{type:"text",text:"ready"}]},value:"ready",rejects:false},
+  {label:"explicit error despite success-looking payload",schema:undefined,result:{content:[{type:"text",text:statusText}],structuredContent:statusPayload,isError:true},value:undefined,rejects:true},
+  {label:"declared structured output",schema:statusSchema,result:{content:[{type:"text",text:statusText}],structuredContent:statusPayload},value:statusPayload,rejects:false},
+  {label:"invalid declared structured output",schema:statusSchema,result:{content:[{type:"text",text:"invalid status"}],structuredContent:{status:42}},value:undefined,rejects:true},
+])test(`MCP nested result contract: ${fixture.label}`,async()=>{
+  let calls=0;
+  const server=Bun.serve({port:0,async fetch(request){
+    if(request.method==="GET")return new Response(null,{status:405});
+    if(request.method==="DELETE")return new Response(null,{status:200});
+    // SAFETY: Only our SDK client sends JSON-RPC to this private loopback fixture.
+    const rpc=await request.json() as {id?:number;method:string};
+    if(rpc.id===undefined)return new Response(null,{status:202});
+    let result;
+    switch(rpc.method){
+      case "initialize":result={protocolVersion:"2025-03-26",capabilities:{tools:{}},serverInfo:{name:"fixture",version:"1"}};break;
+      case "tools/list":result={tools:[{name:"probe",inputSchema:{type:"object",properties:{}},outputSchema:fixture.schema}]};break;
+      case "tools/call":calls++;result=fixture.result;break;
+      default:throw new Error(`Unexpected RPC ${rpc.method}`);
+    }
+    return Response.json({jsonrpc:"2.0",id:rpc.id,result});
+  }});cleanup.push(async()=>{server.stop(true);});
+  const {client,tools}=await connectMcpHttp({...config,url:server.url.href,allowHttp:true});cleanup.push(()=>client.close());
+  const registry=createRegistry();registry.install(createCodemodeExtension({sandbox:new CodemodeSandbox(),models:false}));
+  registry.install(mcpToolsExtension(config,tools,async()=>client));
+  const models=createModels(),faux=fauxProvider({tokensPerSecond:100000});models.setProvider(faux.provider);
+  const harness=await Harness.open(new MemoryStorage(),{registry,models},context);cleanup.push(()=>harness.close(context));
+  const conversation=await harness.root(context);await conversation.configure({model:{provider:"faux",modelId:"faux-1"}},context);
+  const code=`let rejected=false,value;try{value=await tools.mcp__fixture__probe({});}catch{rejected=true;}
+    if(rejected!==${fixture.rejects})throw Error("Incorrect MCP error status");
+    if(!rejected&&JSON.stringify(value)!==JSON.stringify(${JSON.stringify(fixture.value)}))throw Error("Changed MCP return value");
+    return "MCP_CONTRACT_OK";`;
+  faux.setResponses([fauxAssistantMessage([fauxToolCall("codemode",{code})],{stopReason:"toolUse"}),request=>{
+    const output=request.messages.filter(message=>message.role==="toolResult").map(message=>contentText(message.content)).join("\n");
+    expect(output).toContain("MCP_CONTRACT_OK");expect(output).not.toContain("Script error");return fauxAssistantMessage("Done");
+  }]);
+  expect((await(await conversation.submit({type:"input",content:"Check MCP result contract"},context)).wait(context)).status).toBe("done");
+  expect(calls).toBe(1);
 });

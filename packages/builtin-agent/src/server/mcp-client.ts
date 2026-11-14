@@ -64,7 +64,9 @@ export function mcpToolsExtension(config:Pick<McpHttpConnection,"id"|"name"> & {
       await api.details(details(tool.name),context);
       try {
         const result = await client.callTool(tool.name,args,{signal:context.abortSignal,onProgress:progress => api.output(`${progress.message ?? "MCP request in progress"}\n`)});
-        return {output:toLlmContent(result),structuredOutput:result.structuredContent === undefined ? undefined : JSON.parse(JSON.stringify(result.structuredContent)),isError:result.isError === true,details:details(tool.name)};
+        // MCP permits structured content without an output schema; the harness does not.
+        // Schema-less tools keep their text contract, including toLlmContent's structured-only JSON rendering.
+        return {output:toLlmContent(result),structuredOutput:tool.outputSchema === undefined || result.structuredContent === undefined ? undefined : JSON.parse(JSON.stringify(result.structuredContent)),isError:result.isError === true,details:details(tool.name)};
       } catch (error) {context.abortSignal?.throwIfAborted();if(error instanceof Error)onFailure?.(error);throw new Error(mcpFailure(error));}
     },
   }));
