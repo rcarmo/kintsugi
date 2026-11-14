@@ -113,3 +113,34 @@ test("parallel duplicate MCP calls retain one source and leave script values int
 test("a script mixing On and Off connections is never reduced",async()=>{
   const f=await setup();await f.connections.save({...f.connections.credential("fixture")!,id:"fixture-off",name:"fixture_off",recall:defaultMcpRecallSettings()});await f.runtime.ready();await f.run("const a=await tools.mcp__fixture__items({});const b=await tools.mcp__fixture_off__items({});return {a,b};",text=>{expect(text).not.toContain("[MCP recall");});const rows=await f.store.read(f.conversation.id,context);expect(rows).toHaveLength(1);expect(rows[0]?.kind).toBe("mcp-envelope");expect(f.calls).toBe(2);
 });
+
+test("secret-bearing results pass through unchanged and never enter recall or script staging",async()=>{
+  const f=await setup(), secret="-----BEGIN PRIVATE KEY-----\nSYNTHETIC FIXTURE\n-----END PRIVATE KEY-----";
+  f.setItems([{id:0,title:"Sensitive fixture",body:secret}]);
+  await f.run("const r=await tools.mcp__fixture__items({});if(!r.items[0].body.includes('BEGIN PRIVATE KEY'))throw Error('changed value');return r;",text=>{expect(text).toContain("BEGIN PRIVATE KEY");expect(text).not.toContain("[MCP recall");});
+  expect(await f.store.read(f.conversation.id,context)).toHaveLength(0);
+});
+test("Off blocks recall access without changing source history; duplicate captures refresh summaries",async()=>{
+  const f=await setup();await f.run("return await tools.mcp__fixture__items({});");const row=(await f.store.read(f.conversation.id,context))[0]!;
+  await f.connections.save({...f.connections.credential("fixture")!,recall:defaultMcpRecallSettings()});
+  expect(await f.store.read(f.conversation.id,context)).toHaveLength(0);
+  await f.connections.save({...f.connections.credential("fixture")!,recall:{...defaultMcpRecallSettings(),mode:"active"}});
+  expect(await f.store.read(f.conversation.id,context)).toHaveLength(2);
+  const next=await f.store.capture(f.conversation.id,{...row,summary:"Updated summary",handler:"updated-profile"},context);
+  expect(next?.summary).toBe("Updated summary");expect(next?.handler).toBe("updated-profile");expect(next?.createdAt).toBe(row.createdAt);
+});
+test("sensitive tool names are excluded and legacy sensitive copies are removed from the live index",async()=>{
+  const f=await setup(),config=f.connections.credential("fixture")!;
+  const input={grants:[{connectionId:config.id,epoch:mcpAccessEpoch(config)}],tool:"mcp__vault__get_item",kind:"emitted-text" as const,raw:"ordinary-looking vault data",summary:"",handler:"passthrough",sources:[],isError:false};
+  expect(await f.store.capture(f.conversation.id,input,context)).toBeNull();
+  await f.harness.commit(async tx=>{(await tx.doc(McpRecallDoc,f.conversation.id)).records.legacy={...input,id:"legacy",owner:"agent",bytes:input.raw.length,createdAt:1,lastSeen:Date.now(),hits:1,pinned:true};},context);
+  expect(await f.store.read(f.conversation.id,context)).toHaveLength(0);
+});
+test("upstream exact tool filters never broaden search or forgetting to substrings",async()=>{
+  const f=await setup();await f.run("return await tools.mcp__fixture__items({});");
+  await f.run("return await tools.mcp_recall_search({query:'needle',tool:'fixture'});",text=>expect(text).not.toContain('mcp__fixture__items'));
+  await f.run("return await tools.mcp_recall_manage({action:'forget',tool:'fixture'});",text=>expect(text).toMatch(/"changed"\s*:\s*0/));
+  expect(await f.store.read(f.conversation.id,context)).toHaveLength(2);
+  await f.run("return await tools.mcp_recall_manage({action:'forget',tool:'mcp__fixture__items'});",text=>expect(text).toMatch(/"changed"\s*:\s*2/));
+  expect(await f.store.read(f.conversation.id,context)).toHaveLength(0);expect(f.calls).toBe(1);
+});

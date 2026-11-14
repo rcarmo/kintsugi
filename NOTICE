@@ -173,7 +173,13 @@ The upstream checkout has no separate NOTICE file.
 Selected test-runner and compiler output reducers are adapted from mcp-recall,
 Copyright 2026 sakebomb, Apache License 2.0.
 Source: https://github.com/sakebomb/mcp-recall
-Pinned revision: f00e8c766697b07a8abaf50448feeca918b2a1d6 (1.21.0).
-Adapted files: src/handlers/bash-test.ts and src/handlers/bash-compilers.ts.
-Changes: typed inputs, local adapters and conservative diagnostic-preservation gates.
+Pinned revision: 2db17d6d01d965e4181a8f18c674561baa588a24 (post-1.21.0).
+Adapted files: src/handlers/bash-test.ts, src/handlers/bash-compilers.ts,
+src/secrets.ts and src/denylist.ts.
+Changes: typed inputs, local adapters, conservative diagnostic-preservation gates,
+recall storage exclusion and explicit exact-name tool filters (upstream #486).
 License and upstream notice: packages/token-economizer/src/core/output/mcp-recall/.
+
+TokenEconomizer loop-guard fixes for Git global options, env/nice wrappers and Ruby
+verification are backported from 7042ea89dd5e5ecbc67ad865ad6e256e61be8bf0
+(upstream #212, #213, #209). The broader port retains its stated baseline.

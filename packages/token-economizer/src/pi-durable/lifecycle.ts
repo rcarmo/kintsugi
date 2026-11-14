@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { defineExtension, defineTask, type Harness, type ConversationId, type JsonObject } from "@earendil-works/pi-durable";
-import { observing, type Policy } from "../core/config.ts";
+import { describeKnowledge } from "../core/describe.ts";
+import { emitting, observing, type Policy } from "../core/config.ts";
 import { claimFold, deferFold, endSession, finishFold, prepareSession, recoverableSessions, sessionKey, transcriptChanged, type LearningSession } from "../core/sessions.ts";
 import { scopeKey } from "../core/types.ts";
-import { environmentClaim } from "../core/microskills/envfacts.ts";
+import { renderFacts, permittedFactSection } from "../core/microskills/render.ts";
 import { KnowledgeDoc, ObservationsDoc, SessionsDoc, type Knowledge } from "./documents.ts";
 import type { HostDomain, HostSession, SessionStart, Trajectory } from "./domain.ts";
 import type { OperationSink, OptimizerOperation } from "./operations.ts";
@@ -75,10 +76,16 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
       }
       await runtime.commit(async tx => {
         const sessions = await tx.doc(SessionsDoc), knowledge = await tx.doc(KnowledgeDoc,scopeKey(host.scope),host.scope), row = sessions.sessions[key];
+        const previousSection = row.section;
         if (!observing(options.policy(key))) {
           sessions.sessions[key] = deferFold(row,claim,runtime.now(),incremental); knowledge.foldClaim = null;
         } else {
           if (result) { knowledge.tools = result.tools; knowledge.render = result.render; knowledge.injectedIds = result.injectedIds; knowledge.environment = result.environment; knowledge.distiller = result.distiller;if (result.novelty) knowledge.novelty = result.novelty;if (result.renders) knowledge.renders = result.renders; }
+          // Re-render against CURRENT feedback, not the snapshot taken before the async fold.
+          const selected = renderFacts(knowledge.environment,knowledge.distiller,host.scope.repository,options.policy(key),knowledge.factReviews);
+          knowledge.render = selected.text;knowledge.renders = {environment:selected.environment,distilled:selected.distilled,ids:selected.ids};knowledge.injectedIds = selected.ids;
+          const learnedPrefixChanged = before && renderFacts(before.environment,before.distiller,host.scope.repository,options.policy(key),knowledge.factReviews).text !== selected.text;
+          if (incremental && row.ended === null && learnedPrefixChanged && emitting(options.policy(key)) && !row.factsSuppressed) {row.section = options.renderCached ? options.renderCached(selected.text) : selected.text;row.injectedIds = selected.ids;}
           if (incremental) {
             row.claim = null;row.cutoff = null;row.recordActivity = runtime.now();
             const checkpoint = result?.learning ?? session.learning;
@@ -98,10 +105,10 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
           await tx.createTask(row.folded || row.ended === null && !row.learning?.finalRequested ? checkpointTask : task,{key,host,incremental:row.folded || row.ended === null && !row.learning?.finalRequested},{ownership:{kind:"conversation"},conversationId:options.backgroundOwner?.() ?? host.conversationId,background:true});
         }
         if (show) {
-          const factRows = (source:Pick<Knowledge,"environment"|"distiller">) => [...source.environment.facts.map(fact => ({id:fact.id,state:fact.life.state,claim:environmentClaim(fact)})),...source.distiller.facts.map(fact => ({id:fact.spec.id,state:fact.life.state,claim:fact.spec.claim ?? fact.spec.id}))];
-          const previous = new Map(before ? factRows(before).map(fact => [fact.id,fact]) : []), current = result ? factRows(result) : [];
+          const factRows = (source:Pick<Knowledge,"environment"|"distiller"|"factReviews">) => describeKnowledge(source.environment,source.distiller,source.factReviews).facts.map(fact => ({...fact,state:fact.source === "environment" ? source.environment.facts.find(row=>row.id===fact.id)!.life.state : source.distiller.facts.find(row=>row.spec.id===fact.id)!.life.state}));
+          const previous = new Map(before ? factRows(before).map(fact => [fact.id,fact]) : []), current = result ? factRows(knowledge) : [];
           const changes = {
-            facts:current.filter(fact => {const old = previous.get(fact.id);return !old || old.state !== fact.state || old.claim !== fact.claim;}),
+            facts:current.filter(fact => {const old = previous.get(fact.id);return !old || old.state !== fact.state || old.status !== fact.status || old.claim !== fact.claim;}),
             suggestedTools:result?.tools.proposal.filter(name => !before?.tools.proposal.includes(name)) ?? [],
             withdrawnTools:before?.tools.proposal.filter(name => result && !result.tools.proposal.includes(name)) ?? [],
           };
@@ -110,7 +117,7 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
             newFacts:current.filter(fact => !previous.has(fact.id)).map(fact => fact.id),
             facts:current.slice(-40),changes,learning:result.learning?.lastCheck ?? null,
             toolSuggestions:result.tools.proposal,hiddenTools:result.tools.applied,sessions:result.tools.sessions,prompts:result.tools.prompts,
-            activePrefixChanged:false,
+            activePrefixChanged:previousSection !== row.section,
           } : {error:trajectory.kind === "ready" ? "No learning result" : trajectory.reason};
           await options.onOperation?.(tx,host.conversationId,{...activity,status:!observing(options.policy(key)) ? "cancelled" : result ? "complete" : "failed",at:runtime.now(),output});
         }
@@ -167,9 +174,11 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
       const prepared = await options.harness().commit(async tx => {
         const state = await tx.doc(SessionsDoc), knowledge = await tx.doc(KnowledgeDoc,scopeKey(host.scope),host.scope), policy = options.policy(key);
         const mode = policy.enabled ? policy.mode : "off";
-        const cached = knowledge.renders ? [policy.microSkills === "envfacts" || policy.microSkills === "both" ? knowledge.renders.environment : "",policy.microSkills === "distiller" || policy.microSkills === "both" ? knowledge.renders.distilled : ""].filter(Boolean).join("\n") : knowledge.render;
+        const selected = renderFacts(knowledge.environment,knowledge.distiller,host.scope.repository,policy,knowledge.factReviews), cached = selected.text;
         const row = prepareSession(state.sessions[key] ?? null,{id:host.id,scope:host.scope,conversation:String(host.conversationId),group:host.classificationGroup,now,
-          ...start,cachedSection:policy.microSkills === "off" ? "" : options.renderCached ? options.renderCached(cached) : cached,cachedIds:policy.microSkills === "distiller" ? [] : knowledge.renders?.ids ?? knowledge.injectedIds,publishedMask:start.runningMask ?? knowledge.tools.applied,mode});
+          ...start,cachedSection:policy.microSkills === "off" ? "" : options.renderCached ? options.renderCached(cached) : cached,cachedIds:selected.ids,publishedMask:start.runningMask ?? knowledge.tools.applied,mode});
+        row.section = row.factsSuppressed ? "" : permittedFactSection(row.section,knowledge.environment,knowledge.distiller,host.scope.repository,policy,knowledge.factReviews);
+        if (!row.section) row.injectedIds = [];
         state.sessions[key] = row; state.hosts[key] = structuredClone(host); return structuredClone(row);
       },BACKGROUND_CONTEXT);
       // The fresh snapshot is frozen before recovery can change the repository render.

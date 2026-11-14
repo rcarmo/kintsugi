@@ -16,7 +16,7 @@ import type { ModelRef } from "../core/types.ts";
 import type { ToolMapping } from "../core/observations.ts";
 import type { InferenceRequest, InferenceResult, Observation, Scope } from "../core/types.ts";
 
-export type Knowledge = { version: 1; novelty:{seen:string[];lastSkip:number;skips:number;audits:number;missed:number}; scope: Scope; environment: EnvironmentState; distiller: Distiller; envelope: EnvelopeHistory; tools: ToolEvidence; render: string; renders:{environment:string;distilled:string;ids:string[]}|null; injectedIds: string[]; foldOrder: string[]; foldQueue: string[]; foldClaim: string | null };
+export type Knowledge = { version: 1; factReviews?:import("../core/microskills/feedback.ts").FactReviews; novelty:{seen:string[];lastSkip:number;skips:number;audits:number;missed:number}; scope: Scope; environment: EnvironmentState; distiller: Distiller; envelope: EnvelopeHistory; tools: ToolEvidence; render: string; renders:{environment:string;distilled:string;ids:string[]}|null; injectedIds: string[]; foldOrder: string[]; foldQueue: string[]; foldClaim: string | null };
 export const KnowledgeDoc = defineDocFamily<Knowledge, Scope>({
   kind: "token-economizer.knowledge", version: 1, scope: "session", family: true,
   initial: scope => ({ version: 1, novelty:{seen:[],lastSkip:-999,skips:0,audits:0,missed:0},scope, environment: emptyEnvironment(), distiller: emptyDistiller(), envelope: emptyEnvelope(), tools: emptyEvidence(), render: "",renders:null, injectedIds: [], foldOrder: [], foldQueue: [], foldClaim: null }),

@@ -7,9 +7,10 @@ import { createModels } from "@earendil-works/pi-ai";
 import { createRegistry, Harness, MemoryStorage, type Storage } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { openNodeJsonlStorage } from "@earendil-works/pi-durable/storage/jsonl/node";
+import { createLifecycle } from "../src/core/microskills/lifecycle.ts";
 import { defaultPolicy, type Policy } from "../src/core/config.ts";
 import { sessionKey } from "../src/core/sessions.ts";
-import { JobsDoc, KnowledgeDoc, SessionsDoc } from "../src/pi-durable/documents.ts";
+import { JobsDoc, KnowledgeDoc, SessionsDoc, type Knowledge } from "../src/pi-durable/documents.ts";
 import { createInferenceQueue } from "../src/pi-durable/sidecall.ts";
 import { createSessionLifecycle } from "../src/pi-durable/lifecycle.ts";
 import { decodeArguments, decodeResult } from "../src/pi-durable/decode.ts";
@@ -18,7 +19,7 @@ import { scopeKey, type InferenceResult, type SideCall } from "../src/core/types
 const closes: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of closes.splice(0).reverse()) await close(); });
 const reply: InferenceResult = {text:"result",model:{provider:"fixture",id:"small"},usage:{input:4,output:2,cacheRead:0,cacheWrite:{default:0},reasoning:null},cost:.01,durationMs:1,authUnavailable:false,error:null};
-async function setup(kind: "memory" | "sqlite" | "jsonl", sideCall: SideCall = async () => reply) {
+async function setup(kind: "memory" | "sqlite" | "jsonl", sideCall: SideCall = async () => reply, beforeFold?: (knowledge:Knowledge) => Promise<void>) {
   const directory = await mkdtemp(join(tmpdir(),"token-economizer-"));
   closes.push(() => rm(directory,{recursive:true,force:true}));
   const openStorage = async (): Promise<Storage> => kind === "memory" ? new MemoryStorage() : kind === "sqlite" ? openNodeSqliteStorage(join(directory,"state.sqlite")) : openNodeJsonlStorage(join(directory,"journal"),context);
@@ -31,7 +32,7 @@ async function setup(kind: "memory" | "sqlite" | "jsonl", sideCall: SideCall = a
       const kind = trajectories.get(host.id) ?? "ready";
       return kind === "ready" ? {kind,cutoff:`end-${host.id}`,observations:[],prompts:1,transcriptActivity:0} : {kind,reason:"fixture"};
     }};
-  const lifecycle = createSessionLifecycle({harness:() => harness,domain,policy:() => policy,fold:async ({session,knowledge}) => {folds.push(session.id);return {environment:knowledge.environment,distiller:knowledge.distiller,tools:knowledge.tools,render:`prefix-${session.id}\n`,injectedIds:[session.id]};}});
+  const lifecycle = createSessionLifecycle({harness:() => harness,domain,policy:() => policy,fold:async ({session,knowledge}) => {await beforeFold?.(knowledge);folds.push(session.id);return {environment:{...knowledge.environment,facts:[{id:session.id,family:"absent_tool",params:{tool:`prefix-${session.id}`,intent:"run_tests"},life:{...createLifecycle(session.id,true,false),state:"ACTIVE",fire_num:4,fire_den:4}}]},distiller:knowledge.distiller,tools:knowledge.tools,render:"",injectedIds:[session.id]};}});
   registry.install(lifecycle.extension);
   harness = await Harness.open(await openStorage(),{registry,models:createModels()},context);
   const root = await harness.root(context);
@@ -50,7 +51,7 @@ for (const kind of ["memory","sqlite","jsonl"] as const) test(`portable ${kind}:
   expect((await f.lifecycle.sessionStarted(f.host("one"),f.start))!.section).toBe("");
   await f.lifecycle.sessionEnded(f.host("one")); await f.lifecycle.sessionEnded(f.host("one"));
   await f.settleFolds(); expect(f.folds).toEqual(["one"]);
-  expect((await f.lifecycle.sessionStarted(f.host("two"),f.start))!.section).toBe("prefix-one\n");
+  expect((await f.lifecycle.sessionStarted(f.host("two"),f.start))!.section).toContain("prefix-one");
   f.trajectories.set("two","later"); await f.lifecycle.sessionEnded(f.host("two")); await f.settleFolds();
   expect(f.folds).toEqual(["one"]);
   if (kind !== "memory") await f.reopen();
@@ -113,7 +114,7 @@ for (const kind of ["memory","sqlite","jsonl"] as const) test(`portable ${kind}:
   await f.lifecycle.sessionStarted(f.host("live"),{...f.start,event:"resume"});
   await f.lifecycle.runCompleted(f.host("live"),"run-2");await f.settleFolds();
   row = (await f.harness.snapshot(SessionsDoc,context))!.sessions[sessionKey(f.host("live").scope,"live")];
-  expect(row.learning?.processed).toBe(2);expect(cursors[1]).toBe(cutoff);expect(row.section).toBe("");
+  expect(row.learning?.processed).toBe(2);expect(cursors[1]).toBe(cutoff);expect(row.section).toContain("prefix-live");expect(row.injectedIds).toEqual(["live"]);
   await f.lifecycle.sessionEnded(f.host("live"));await f.settleFolds();
   expect((await f.harness.snapshot(KnowledgeDoc,scopeKey(f.host("live").scope),context))!.foldOrder).toHaveLength(1);
   await f.harness.commit(async tx => {delete (await tx.doc(SessionsDoc)).sessions[sessionKey(f.host("live").scope,"live")].learning;},context);
@@ -122,3 +123,36 @@ for (const kind of ["memory","sqlite","jsonl"] as const) test(`portable ${kind}:
   expect((await f.harness.snapshot(SessionsDoc,context))!.sessions[sessionKey(f.host("live").scope,"live")].learning?.toolCounted).toBe(true);
   expect((await f.harness.snapshot(KnowledgeDoc,scopeKey(f.host("live").scope),context))!.foldOrder).toHaveLength(1);
 },15_000);
+
+for (const kind of ["sqlite","jsonl"] as const) test(`portable ${kind}: feedback survives subsequent learning and storage reopen`,async()=>{
+  const f=await setup(kind),host=f.host("reviewed"),key=scopeKey(host.scope);
+  await f.lifecycle.sessionStarted(host,f.start);
+  const review={decision:"rejected" as const,at:123,note:"Unsupported by the evidence",claim:"reviewed-claim-fingerprint"};
+  await f.harness.commit(async tx=>{(await tx.doc(KnowledgeDoc,key,host.scope)).factReviews={"distilled:reviewed":review};},context);
+  await f.lifecycle.sessionEnded(host);await f.settleFolds();
+  expect((await f.harness.snapshot(KnowledgeDoc,key,context))?.factReviews?.["distilled:reviewed"]).toEqual(review);
+  await f.reopen();
+  expect((await f.harness.snapshot(KnowledgeDoc,key,context))?.factReviews?.["distilled:reviewed"]).toEqual(review);
+},15_000);
+
+for(const mode of ["active","observe"] as const) for(const suppressed of [false,true]) test(`live facts: ${mode}, explicit removal ${suppressed} controls next-request publication`,async()=>{
+  const f=await setup("memory");f.policy.mode=mode;f.domain.incrementalLearning=true;
+  const host=f.host("live");await f.lifecycle.sessionStarted(host,f.start);
+  if(suppressed)await f.harness.commit(async tx=>{(await tx.doc(SessionsDoc)).sessions[sessionKey(host.scope,host.id)].factsSuppressed=true;},context);
+  await f.lifecycle.runCompleted(host,"one");await f.settleFolds();
+  const row=(await f.harness.snapshot(SessionsDoc,context))!.sessions[sessionKey(host.scope,host.id)];
+  expect(Boolean(row.section)).toBe(mode==="active"&&!suppressed);
+  expect((await f.harness.snapshot(KnowledgeDoc,scopeKey(host.scope),context))!.environment.facts).toHaveLength(1);
+});
+test("feedback arriving during a fold cannot be overwritten or published from its stale snapshot",async()=>{
+  const entered=Promise.withResolvers<void>(),release=Promise.withResolvers<void>();
+  const f=await setup("memory",undefined,async()=>{entered.resolve();await release.promise;});
+  closes.push(async()=>release.resolve());f.domain.incrementalLearning=true;
+  const host=f.host("live");await f.lifecycle.sessionStarted(host,f.start);
+  await f.lifecycle.runCompleted(host,"one");f.harness.resume();await entered.promise;
+  await f.harness.commit(async tx=>{(await tx.doc(KnowledgeDoc,scopeKey(host.scope),host.scope)).factReviews={"environment:live":{decision:"rejected",at:1,claim:"old-claim",note:"Unsupported"}};},context);
+  release.resolve();await f.settleFolds();
+  const knowledge=(await f.harness.snapshot(KnowledgeDoc,scopeKey(host.scope),context))!;
+  expect(knowledge.factReviews!["environment:live"].decision).toBe("rejected");expect(knowledge.render).toBe("");
+  expect((await f.harness.snapshot(SessionsDoc,context))!.sessions[sessionKey(host.scope,host.id)].section).toBe("");
+});

@@ -8,6 +8,8 @@ import type { AgentToolPresentation } from "@kintsugi/agent/server";
 import { codeBlockHtml } from "@kintsugi/agent/server/render-markup";
 import { readableRawRegion } from "@kintsugi/agent/server/render-tool";
 import { formatCost, formatDuration, formatTokens, type ToolView } from "@kintsugi/agent/server/transcript";
+import type { AgentRenderContext } from "@kintsugi/agent/server/render-context";
+import { factReviewKey, inlineFactReview } from "./token-optimizer-facts.ts";
 import type { OptimizerOperation } from "@kintsugi/token-economizer/pi-durable";
 
 /** Persisted display entries are external input: read each field through a schema. */
@@ -29,10 +31,23 @@ const modelPurposes = new Map([
   ["optimizer.classifier",{asked:"to classify a decision",doing:"Classifying"}],
   ["optimizer.audit",{asked:"to double-check a local decision",doing:"Double-checking"}],
 ]);
-const factStates = new Map([["CANDIDATE","still learning"],["ACTIVE","ready for the next session"],["RETIRED","retired"]]);
+const factStates = new Map([["CANDIDATE","still learning"],["ACTIVE","active evidence; review status not recorded"],["RETIRED","retired"]]);
 const learningChangesSchema = Type.Object({facts:Type.Array(Type.Object({id:Type.String(),state:Type.String(),claim:Type.String()})),suggestedTools:Type.Array(Type.String()),withdrawnTools:Type.Array(Type.String())});
 const learningChanges = (output:JsonObject|undefined) => read(learningChangesSchema,output?.changes);
+const factSummarySchema = Type.Object({id:Type.String(),claim:Type.String(),source:Type.Enum(["environment","distilled"]),status:Type.Enum(["in-use","quiet","checking","needs-review","rejected","stale","retired"]),confirmations:Type.Number(),contradictions:Type.Number(),evidence:Type.Array(Type.String()),claimRevision:Type.String(),review:Type.Union([Type.Null(),Type.Object({decision:Type.Enum(["approved","rejected","stale"]),claim:Type.String(),at:Type.Number(),note:Type.String()})])});
 
+export function operationFacts(operation:OptimizerOperation) {return list(object(operation.output)?.facts).flatMap(value=>read(factSummarySchema,value) ?? []);}
+export function optimizerNeedsReview(operation:OptimizerOperation) {return list(object(object(operation.output)?.changes)?.facts).some(value=>read(factSummarySchema,value)?.status === "needs-review");}
+/** Overlay later review receipts for display only; never rewrite historical evidence or model context. */
+export function withCurrentFactReviews(operation:OptimizerOperation,current:Map<string,ReturnType<typeof operationFacts>[number]>):OptimizerOperation {
+  const output=object(operation.output);if(!output)return operation;
+  const refresh=(value:JsonValue)=>{const fact=read(factSummarySchema,value);return fact ? {...fact,...current.get(fact.source+":"+fact.id)} : value;};
+  const changes=object(output.changes);
+  const next:JsonObject={...output};
+  if(output.facts) next.facts=list(output.facts).map(refresh);
+  if(changes) next.changes={...changes,facts:list(changes.facts).map(value=>{const row=object(value);return row ? {...row,...object(refresh(value))} : value;})};
+  return {...operation,output:next};
+}
 /** Completed checks without a visible change stay in the journal, not the timeline. */
 export function optimizerHasChanges(operation:OptimizerOperation):boolean {
   if (operation.status !== "complete" || !["optimizer.learn","optimizer.fold"].includes(operation.name)) return true;
@@ -77,6 +92,8 @@ export function optimizerSummary(operation:OptimizerOperation):string {
     const learned = newFacts(output).length, updated = learningChanges(output)?.facts.filter(fact => !names(output?.newFacts).includes(fact.id)).length ?? 0;
     const changes = [learned ? plural(learned,"new fact") : "",updated ? plural(updated,"updated fact") : ""].filter(Boolean).join(" · ");
     what = done ? changes ? `Learned from ${label} · ${changes}` : (learningChanges(output)?.suggestedTools.length || learningChanges(output)?.withdrawnTools.length) ? "Updated tool suggestions" : `Checked ${label} · nothing new` : `Learning from ${label}`;
+  } else if (operation.name === "optimizer.fact-review") {
+    what = "Fact review saved · next request when On";
   } else if (purpose) {
     const model = modelName(input);
     what = operation.status === "queued" || operation.status === "running" ? `${purpose.doing} with ${model}` : `Asked ${model} ${purpose.asked}`;
@@ -100,6 +117,7 @@ export function optimizerSummary(operation:OptimizerOperation):string {
   } else if (operation.name === "optimizer.fit") {
     what = done ? "Retrained local classifiers" : "Retraining local classifiers";
   } else what = operation.name.replace(/^optimizer\./,"").replaceAll("-"," ");
+  if (done && optimizerNeedsReview(operation)) what += " · review proposals here";
   const status = {queued:"waiting",running:"",complete:"",failed:"failed",cancelled:"cancelled",unknown:"interrupted"}[operation.status];
   const active = operation.status === "queued" || operation.status === "running";
   const cost = count(output?.cost);
@@ -115,7 +133,7 @@ function folded(label:string,body:string) {
   return disclosureHtml({summary:{kind:"compact",label:{kind:"text",text:label}},bodyHtml:body});
 }
 
-function learningRows(operation:OptimizerOperation,input:JsonObject|undefined,output:JsonObject|undefined):Row[] {
+function learningRows(operation:OptimizerOperation,input:JsonObject|undefined,output:JsonObject|undefined,ctx?:AgentRenderContext):Row[] {
   const rows:Row[] = [], seen = count(input?.observations) ?? 0, prompts = count(input?.prompts);
   rows.push({label:"Checked",html:para(`${plural(seen,"tool result")}${prompts ? ` from ${plural(prompts,"prompt")}` : ""}.`)});
   const evidence = list(input?.evidence).flatMap(item => {
@@ -127,7 +145,10 @@ function learningRows(operation:OptimizerOperation,input:JsonObject|undefined,ou
   if (evidence.length) rows.push({label:"Evidence",html:folded(`Tool results (${evidence.length})`,bullets(evidence))});
   if (operation.status !== "complete") return rows;
   const changes = learningChanges(output), changed = changes?.facts ?? newFacts(output);
-  if (changed.length) rows.push({label:"Facts",html:bullets(changed.map(fact => `${escapeHtml(fact.claim)} <span class="token-optimizer-op__muted">(${escapeHtml(factStates.get(fact.state) ?? fact.state)})</span>`))});
+  if (changed.length) rows.push({label:"Facts",html:changed.map(fact => {
+    const reviewed = read(factSummarySchema,fact);
+    return ctx && reviewed ? inlineFactReview(ctx,factReviewKey(ctx,operation.id,reviewed),reviewed) : para(fact.claim+" ("+(factStates.get(fact.state) ?? fact.state)+")");
+  }).join("")});
   else if (!changes) rows.push({label:"Learned",html:para("No new facts.")});
   const suggested = changes?.suggestedTools ?? names(output?.toolSuggestions);
   if (suggested.length) rows.push({label:"Suggestions",html:`<p>Could hide ${toolList(suggested)}; ${suggested.length === 1 ? "it hasn’t" : "they haven’t"} been used.</p>`});
@@ -206,10 +227,14 @@ function otherRows(operation:OptimizerOperation,input:JsonObject|undefined,outpu
 }
 
 /** Human-readable detail for an optimizer operation; raw values stay available, folded away. */
-export function optimizerDetail(operation:OptimizerOperation):string {
+export function optimizerDetail(operation:OptimizerOperation,ctx?:AgentRenderContext):string {
   const input = object(operation.input), output = object(operation.output);
-  const rows = operation.name === "optimizer.learn" || operation.name === "optimizer.fold" ? learningRows(operation,input,output)
+  const rows = operation.name === "optimizer.learn" || operation.name === "optimizer.fold" ? learningRows(operation,input,output,ctx)
     : modelPurposes.has(operation.name) ? modelRows(operation,input,output) : otherRows(operation,input,output);
+  if (operation.name === "optimizer.fact-review") for (const value of list(output?.facts)) {
+    const fact = read(factSummarySchema,value);
+    if (fact) rows.push({label:"Review",html:ctx ? inlineFactReview(ctx,factReviewKey(ctx,operation.id,fact),fact) : para(fact.claim)});
+  }
   const error = text(output?.error) ?? text(output?.reason);
   if (error && operation.status !== "complete") rows.unshift({label:operation.status === "cancelled" ? "Cancelled" : "Problem",html:para(error)});
   const readable = `<table class="token-optimizer-op"><tbody>${rows.map(row => `<tr><th scope="row">${escapeHtml(row.label)}</th><td>${row.html}</td></tr>`).join("")}</tbody></table>`;
@@ -223,7 +248,7 @@ function operationOf(tool:ToolView):OptimizerOperation|undefined {
 }
 const presentation:AgentToolPresentation = {
   summary(tool) {const operation = operationOf(tool);return operation ? optimizerSummary(operation) : undefined;},
-  detail(_ctx,tool) {const operation = operationOf(tool);return operation ? optimizerDetail(operation) : undefined;},
+  detail(ctx,tool) {const operation = operationOf(tool);return operation ? optimizerDetail(operation,ctx) : undefined;},
 };
-export const optimizerOperationNames = ["optimizer.learn","optimizer.fold","optimizer.nudge","optimizer.goal-check","optimizer.prepare-tools","optimizer.apply-tools","optimizer.restore-tools","optimizer.fit",...modelPurposes.keys()];
+export const optimizerOperationNames = ["optimizer.learn","optimizer.fold","optimizer.fact-review","optimizer.nudge","optimizer.goal-check","optimizer.prepare-tools","optimizer.apply-tools","optimizer.restore-tools","optimizer.fit",...modelPurposes.keys()];
 export const optimizerToolPresentations = new Map(optimizerOperationNames.map(name => [name,presentation]));

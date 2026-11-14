@@ -5,6 +5,7 @@ import { createLifecycle, firingRate, injectable, updateEnvironmentLifecycle, cr
 import { compareCodePoints } from "../ordering.ts";
 import { factTextSafe } from "./distiller.ts";
 import { safeEnvironmentName, safeEnvironmentValue } from "../privacy.ts";
+import { factPermitted, type FactReviews } from "./feedback.ts";
 export type EnvironmentObservation = {call:number;intent:string;form:string;head:string;prefix:string;segment:string;hosts:string[];probe:string|null;outcome:string|null;labels:string[];label_err:boolean;loaded:boolean;tests_ran:boolean;env:boolean;not_found:boolean};
 export type EnvironmentDigest = {obs:EnvironmentObservation[];edited:string[];n_calls:number;env:{need:string[];sets:Record<string,string>;ok:boolean;call:number}[]};
 type Fact<F extends string,P> = {id:string;family:F;params:P;life:Lifecycle};
@@ -48,15 +49,19 @@ const errorPhrases = new Map([["module_missing","ModuleNotFoundError"],["command
 export function environmentClaim(fact: EnvironmentFact): string {
   switch (fact.family) {
     case "form_repair": {const form = workingForm(fact);const error = best(fact.params.error_counts) ?? "module_missing";return form ? `${usage(fact.params.a)} fails here with ${errorPhrases.get(error) ?? error}; ${usage(form)} works.` : "";}
-    case "boundary": return `Outbound connections to ${join(Object.keys(fact.params.hosts).sort((a,b) => fact.params.hosts[b]-fact.params.hosts[a]).slice(0,3))} are refused here; nothing can be fetched from them.`;
+    case "boundary": return `Outbound connections to ${join(Object.keys(fact.params.hosts).sort((a,b) => fact.params.hosts[b]-fact.params.hosts[a]).slice(0,3))} failed in earlier observed requests. This does not establish a permanent network restriction.`;
     case "arg_repair": {
       if (fact.params.kind === "sep") return `${usage(fact.params.form,"")} takes dotted test labels (\`module.Class.test\`, not \`module::Class::test\`).`;
       const example = Object.keys(fact.params.examples).sort((a,b) => a.split(" ")[0].length-b.split(" ")[0].length)[0] ?? "x x", space = example.indexOf(" ");
       return `${usage(fact.params.form,"")} takes test labels without the \`${fact.params.param}\` prefix (\`${example.slice(space+1)}\`, not \`${example.slice(0,space)}\`).`;
     }
-    case "env_value": {const good = best(fact.params.good) ?? "", bad = Object.keys(fact.params.bad).sort(compareCodePoints).filter(value => value !== good)[0];return `Code that imports the project needs \`${fact.params.var}\` set here: \`${fact.params.var}=${good}\` works`+(bad ? `, \`${bad}\` does not.` : ".");}
-    case "absent_tool": return `\`${fact.params.tool} …\` fails here with command not found, and no other way to run it has worked.`;
-    case "empty_probe": return "This checkout has no git remote and no branches, tags or unreachable objects beyond HEAD; its history ends at the checked-out commit.";
+    case "env_value": {const good = best(fact.params.good) ?? "", bad = Object.keys(fact.params.bad).sort(compareCodePoints).filter(value => value !== good)[0];return `Earlier project commands requested \`${fact.params.var}\` set here: \`${fact.params.var}=${good}\` works`+(bad ? `, \`${bad}\` does not.` : ".");}
+    case "absent_tool": return `\`${fact.params.tool} …\` reported command not found in earlier observed attempts. Other invocation methods were not established.`;
+    case "empty_probe": {
+      const labels = new Map([["remote","remotes"],["branch","remote branches"],["tag","version tags"],["fsck","unreachable objects"],["stash","stashes"],["refs","refs"]]);
+      const checked = Object.keys(fact.params.kinds).flatMap(kind => labels.has(kind) ? [labels.get(kind)!] : []);
+      return checked.length ? `Earlier VCS probes returned no ${join(checked)}. Other history was not established by these probes.` : "";
+    }
   }
 }
 export function labelRule(a: string,b: string): [string,string] | null {
@@ -153,10 +158,10 @@ function mergedLines(facts: EnvironmentFact[]): string[] {
   return lines;
 }
 export type EnvironmentRender = {text:string;ids:string[];claims:string[]};
-export function renderEnvironment(state: EnvironmentState,maxFacts: number,maxTokens: number): EnvironmentRender {
+export function renderEnvironment(state: EnvironmentState,maxFacts: number,maxTokens: number,reviews:FactReviews = {}): EnvironmentRender {
   const priority = {form_repair:0,arg_repair:1,env_value:2,absent_tool:3,empty_probe:4,boundary:5};
-  const candidates = state.facts.filter(f => injectable(f.life) && environmentClaim(f) && factTextSafe(environmentClaim(f))).sort((a,b) => priority[a.family]-priority[b.family] || (a.family === "form_repair" && a.params.intent === "run_interpreter" ? 0 : 1)-(b.family === "form_repair" && b.params.intent === "run_interpreter" ? 0 : 1) || firingRate(b.life)-firingRate(a.life));
+  const candidates = state.facts.filter(f => injectable(f.life) && environmentClaim(f) && factTextSafe(environmentClaim(f)) && factPermitted("environment",f.id,environmentClaim(f),reviews)).sort((a,b) => priority[a.family]-priority[b.family] || (a.family === "form_repair" && a.params.intent === "run_interpreter" ? 0 : 1)-(b.family === "form_repair" && b.params.intent === "run_interpreter" ? 0 : 1) || firingRate(b.life)-firingRate(a.life));
   let chosen: EnvironmentFact[] = [];
-  for (const fact of candidates) {const trial = [...chosen,fact];if (trial.length > maxFacts) break;if (Array.from(header+"\n"+mergedLines(trial).map(line => `- ${line}`).join("\n")).length <= maxTokens*4) chosen = trial;}
+  for (const fact of candidates) {const trial = [...chosen,fact];if (trial.length > maxFacts) break;if (Array.from(header+"\n"+mergedLines(trial).map(line => `- ${line}`).join("\n")+"\n").length <= maxTokens*4) chosen = trial;}
   return {text:chosen.length ? header+"\n"+mergedLines(chosen).map(line => `- ${line}`).join("\n")+"\n" : "",ids:chosen.map(f => f.id).sort(compareCodePoints),claims:chosen.map(environmentClaim)};
 }

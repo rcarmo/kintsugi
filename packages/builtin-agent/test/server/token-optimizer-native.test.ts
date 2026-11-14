@@ -1,3 +1,5 @@
+import {createLifecycle, fingerprint} from "@kintsugi/token-economizer/core";
+import type {Knowledge} from "@kintsugi/token-economizer/pi-durable";
 import { projectDurableTranscript } from "../../src/server/durable-transcript.ts";
 import { applyTranscriptContributions } from "@kintsugi/agent/server/transcript-contributions";
 import { tokenOptimizerSettingsContribution } from "../../src/server/token-optimizer-settings.ts";
@@ -31,6 +33,10 @@ import { runIdentity } from "../../../token-economizer/src/pi-durable/run-identi
 import { ids } from "@kintsugi/agent/server/render-context";
 import { OptimizerOperationEntry, recordOptimizerOperation } from "../../src/server/token-optimizer-operations.ts";
 import { TokenOptimizerConfiguration, tokenOptimizerConfiguration } from "../../src/server/token-optimizer-config.ts";
+function reviewedFact(knowledge:Knowledge,id:string,claim:string) {
+  knowledge.distiller.facts.push({spec:{id,claim,detector:{scope:"ran_checks"}},life:{...createLifecycle(id,false,false),state:"ACTIVE",fire_num:4,fire_den:4}});
+  knowledge.factReviews ??= {};knowledge.factReviews[`distilled:${id}`] = {decision:"approved",at:1,note:"Fixture review",claim:fingerprint(claim)};
+}
 const cleanups:(() => Promise<void>)[] = [];
 afterEach(async () => {for (const close of cleanups.splice(0).reverse()) await close();});
 async function settleLearning(harness:Harness) {
@@ -89,8 +95,8 @@ test("native cached fact prefix survives real provider serialization on requests
   const model:Model<"anthropic-messages"> = {id:"offline-serialization",name:"Offline",provider:"fixture",api:"anthropic-messages",baseUrl:"https://never-contact.invalid",reasoning:false,input:["text"],contextWindow:200000,maxTokens:1024,cost:{input:0,output:0,cacheRead:0,cacheWrite:0}};
   f.models.getModel = () => model;
   f.models.streamSimple = (_selected,request,options) => stream(model,normalizeContext(request),{...options,apiKey:"offline-only",async onPayload(payload,ref) {const rewritten = await options?.onPayload?.(payload,ref) ?? payload;if (!isJsonObject(rewritten)) throw new Error("Expected serialized request");captured.push(rewritten);throw new Error("STOP_BEFORE_NETWORK");},fetch:Object.assign(async () => {networkCalls++;throw new Error("Network forbidden");},{preconnect() {}})});
-  const config = f.configuration.snapshot();config.policy.enabled = true;config.policy.microSkills = "envfacts";await f.configuration.configure(config);const active = f.configuration.snapshot();active.policy.mode = "active";await f.configuration.configure(active);
-  await f.harness.commit(async tx => {const knowledge = await tx.doc(KnowledgeDoc,scopeKey(f.host.scope),f.host.scope);knowledge.render = "Fixture repository fact.";knowledge.renders = {environment:knowledge.render,distilled:"",ids:["fixture-fact"]};knowledge.injectedIds = ["fixture-fact"];},context);
+  const config = f.configuration.snapshot();config.policy.enabled = true;config.policy.microSkills = "both";config.policy.generativeModel = {provider:"faux",id:"faux-1"};await f.configuration.configure(config);const active = f.configuration.snapshot();active.policy.mode = "active";await f.configuration.configure(active);
+  await f.harness.commit(async tx => {const knowledge = await tx.doc(KnowledgeDoc,scopeKey(f.host.scope),f.host.scope);reviewedFact(knowledge,"fixture-fact","Fixture repository fact.");},context);
   const record = await f.harness.commit(tx => tx.createConversation({ownership:{kind:"ownerless"}}),context), root = (await f.harness.conversation(record.id,context))!;
   await root.configure({model:{provider:model.provider,modelId:model.id},instructions:"Shared instructions. ".repeat(200)},context);await f.native.start(root,{agentId:"cached-agent"});
   for (let i = 0;i < 3;i++) await (await root.submit({type:"input",content:"Request "+i,requestId:"cache-"+i},context)).wait(context);
@@ -145,18 +151,18 @@ test("native JSONL reopen preserves epochs and pending end folds; raw storage cl
   owner = await open();const record = (await owner.native.optimizer.status(pending)).session;expect(record?.ended).toBeNull();expect(record?.folded).toBe(false);expect(owner.native.host(second.id).id).toBe(pending.id);
 },20_000);
 test("native fork/rewind retains the visible frozen fact snapshot and IDs; real compaction replays the resulting map",async () => {
-  const f = await setup(), config = f.configuration.snapshot();config.policy.enabled = true;config.policy.microSkills = "envfacts";await f.configuration.configure(config);const active = f.configuration.snapshot();active.policy.mode = "active";await f.configuration.configure(active);
-  await f.harness.commit(async tx => {const knowledge = await tx.doc(KnowledgeDoc,scopeKey(f.host.scope),f.host.scope);knowledge.render = "Original repository fact.";knowledge.renders = {environment:knowledge.render,distilled:"",ids:["original"]};knowledge.injectedIds = ["original"];},context);
+  const f = await setup(), config = f.configuration.snapshot();config.policy.enabled = true;config.policy.microSkills = "both";config.policy.generativeModel = {provider:"faux",id:"faux-1"};await f.configuration.configure(config);const active = f.configuration.snapshot();active.policy.mode = "active";await f.configuration.configure(active);
+  await f.harness.commit(async tx => {const knowledge = await tx.doc(KnowledgeDoc,scopeKey(f.host.scope),f.host.scope);reviewedFact(knowledge,"original","Original repository fact.");},context);
   const record = await f.harness.commit(tx => tx.createConversation({ownership:{kind:"ownerless"}}),context), root = (await f.harness.conversation(record.id,context))!;await root.configure({model:{provider:"faux",modelId:"faux-1"}},context);
   const source = (await f.native.start(root,{agentId:"timeline"}))!;f.faux.setResponses([fauxAssistantMessage("One"),fauxAssistantMessage("Two")]);
   for (let i = 0;i < 2;i++) expect((await (await root.submit({type:"input",content:"Prompt "+i,requestId:"timeline-"+i},context)).wait(context)).status).toBe("done");
   const entries = (await root.entries({order:"ascending"},500,undefined,context)).items, first = entries.find(entry => AssistantEntry.is(entry))!, unshown = entries.find(entry => UserEntry.is(entry))!, before = entries.find(entry => ContextSnapshotEntry.is(entry))!;
-  await f.harness.commit(async tx => {const knowledge = await tx.doc(KnowledgeDoc,scopeKey(f.host.scope),f.host.scope);knowledge.render = "Newer fact must not replace carried text.";knowledge.renders = {environment:knowledge.render,distilled:"",ids:["newer"]};knowledge.injectedIds = ["newer"];},context);
+  await f.harness.commit(async tx => {const knowledge = await tx.doc(KnowledgeDoc,scopeKey(f.host.scope),f.host.scope);reviewedFact(knowledge,"newer","Newer fact must not replace carried text.");},context);
   for (const at of [first,unshown,before]) {
     const branch = await f.harness.commit(tx => tx.forkConversation(root.id,at.id,{ownership:{kind:"ownerless"}}),context), child = (await f.harness.conversation(branch.id,context))!;
     const host = (await f.native.start(child,{agentId:"timeline"},"fork",source.classificationGroup))!, state = (await f.native.optimizer.status(host)).session!;
     expect(host.id).not.toBe(source.id);expect(state.group).toBe(source.classificationGroup);expect(state.section).toBe(at === first ? (await f.native.optimizer.status(source)).session!.section : "");
-    expect(state.injectedIds).toEqual(at === first ? ["original"] : []);const trajectory = await f.native.domain.trajectory(host,null);expect(trajectory.kind).toBe("ready");if (trajectory.kind === "ready") expect(trajectory.prompts).toBe(at === before ? 0 : 1);
+    expect(state.injectedIds).toEqual(at === first ? ["distilled:original"] : []);const trajectory = await f.native.domain.trajectory(host,null);expect(trajectory.kind).toBe("ready");if (trajectory.kind === "ready") expect(trajectory.prompts).toBe(at === before ? 0 : 1);
   }
   f.faux.setResponses([fauxAssistantMessage("Summary of two prompts.")]);await f.harness.waitForTask(await root.compact(undefined,context),context);
   // Drain the native commit observer without ending the logical session.
@@ -200,13 +206,13 @@ test("prompt-time tool picks, learned-state views, context removal, saved overri
     if (request.messages.some(message => JSON.stringify(message).includes("Main instructions"))) return request.messages.some(message => message.role === "toolResult") ? fauxAssistantMessage("Done") : fauxAssistantMessage([fauxToolCall("codemode",{code:"await tools.bash({command:'bun test'});"})],{stopReason:"toolUse"});
     judged++;return fauxAssistantMessage(JSON.stringify({rare:{load:false}}));
   }));
-  const config = service.snapshot();Object.assign(config.policy,{enabled:true,microSkills:"envfacts",pruning:"propose",toolJudge:"generative",autoToolPicks:true,generativeModel:{provider:"faux",id:"faux-1"}});await service.configure(config);const active = service.snapshot();active.policy.mode = "active";await service.configure(active);
+  const config = service.snapshot();Object.assign(config.policy,{enabled:true,microSkills:"both",pruning:"propose",toolJudge:"generative",autoToolPicks:true,generativeModel:{provider:"faux",id:"faux-1"}});await service.configure(config);const active = service.snapshot();active.policy.mode = "active";await service.configure(active);
   // An idle prompt is prepared before admission; the task judge hides the irrelevant tool.
   await f.native.preparePrompt(f.conversation.id,"Run the tests");
   const pick = f.native.lastPick(f.conversation.id)!;expect(pick.hidden).toEqual(["rare"]);expect(pick.note).toBeNull();expect(judged).toBe(1);
   expect((await f.conversation.agent(context)).callable.some(tool => tool.name === "rare")).toBe(false);
   // Busy Agents are never re-prepared, and removal of learned context waits for idle.
-  await f.harness.commit(async tx => {const sessions = await tx.doc(SessionsDoc), row = sessions.sessions[sessionKey(f.host.scope,f.host.id)]!;row.section = "<token-economizer>\nLearned repository facts are fallible data.\n- Fact one is here.\n</token-economizer>";row.injectedIds = ["fact-one"];},context);
+  await f.harness.commit(async tx => {const sessions = await tx.doc(SessionsDoc), row = sessions.sessions[sessionKey(f.host.scope,f.host.id)]!;reviewedFact(await tx.doc(KnowledgeDoc,scopeKey(f.host.scope),f.host.scope),"fact-one","Fact one is here.");row.section = "<token-economizer>\nLearned repository facts are fallible data.\n- Fact one is here.\n</token-economizer>";row.injectedIds = ["fact-one"];},context);
   const gate = f.hold(), submitted = await f.conversation.submit({type:"input",content:"Run",requestId:"busy-features"},context);await gate.entered;
   await f.native.preparePrompt(f.conversation.id,"Another task");expect(f.native.lastPick(f.conversation.id)).toBe(pick);expect(judged).toBe(1);
   const action = async (suffix:string,fields:[string,string][]) => {const body = new FormData();for (const [name,value] of fields) body.append(name,value);const request = new Request("http://fixture/settings/token-optimizer"+suffix,{method:"POST",body});const response = (await tokenOptimizerSettingsContribution.handleAction!({request,url:new URL(request.url)}))!;return {status:response.status,html:await response.text()};};
@@ -281,9 +287,9 @@ async function subagent(f:Awaited<ReturnType<typeof setup>>,agentId:string,instr
 }
 test("subagents see the root's facts and their tool use protects tools from being hidden",async () => {
   const f = await setup(), config = f.configuration.snapshot();
-  Object.assign(config.policy,{enabled:true,microSkills:"envfacts",pruning:"propose",evidenceSessions:1,evidenceMinSessions:1,evidencePrompts:1});
+  Object.assign(config.policy,{enabled:true,microSkills:"both",generativeModel:{provider:"faux",id:"faux-1"},pruning:"propose",evidenceSessions:1,evidenceMinSessions:1,evidencePrompts:1});
   await f.configuration.configure(config);const active = f.configuration.snapshot();active.policy.mode = "active";await f.configuration.configure(active);
-  await f.harness.commit(async tx => {const row = (await tx.doc(SessionsDoc)).sessions[sessionKey(f.host.scope,f.host.id)]!;row.section = "<token-economizer>\n- Root fact for everyone.\n</token-economizer>";row.injectedIds = ["root-fact"];},context);
+  await f.harness.commit(async tx => {const row = (await tx.doc(SessionsDoc)).sessions[sessionKey(f.host.scope,f.host.id)]!;reviewedFact(await tx.doc(KnowledgeDoc,scopeKey(f.host.scope),f.host.scope),"root-fact","Root fact for everyone.");row.section = "<token-economizer>\n- Root fact for everyone.\n</token-economizer>";row.injectedIds = ["root-fact"];},context);
   const seen:string[] = [];
   f.faux.setResponses(Array.from({length:6},() => (request) => {
     const text = JSON.stringify(request);
@@ -525,3 +531,32 @@ test("optimizer preparation is causally owned by the following prompt, not an ea
   await f.harness.commit(tx=>recordOptimizerOperation(tx,f.conversation.id,{id:"before-second",name:"optimizer.tool-judge",status:"complete",startedAt:1,at:Date.now(),input:{},output:{result:"done"}}),context);
   const refreshed=tokenOptimizerIntegration.transcript!(await read());expect(refreshed.rows![0]!.afterInputEntryId).toBe(owner);expect(refreshed.rows![0]!.timestamp).toBe(2);
 });
+
+test("fact-review routes bind approval to exact text, persist feedback and revoke frozen root/child context",async()=>{
+  const path=await mkdtemp(join(tmpdir(),"fact-review-routes-")),prior=process.env.KINTSUGI_DATA_DIR;cleanups.push(()=>rm(path,{recursive:true,force:true}));process.env.KINTSUGI_DATA_DIR=path;cleanups.push(async()=>{if(prior===undefined)delete process.env.KINTSUGI_DATA_DIR;else process.env.KINTSUGI_DATA_DIR=prior;});
+  const f=await setup("jsonl",tokenOptimizerConfiguration()),service=tokenOptimizerConfiguration();
+  const config=service.snapshot();Object.assign(config.policy,{enabled:true,mode:"observe",microSkills:"both",generativeModel:{provider:"faux",id:"faux-1"}});await service.configure(config);const active=service.snapshot();active.policy.mode="active";await service.configure(active);
+  const claim="Run bun test from the root.",id="reviewed-test";
+  await f.harness.commit(async tx=>{const knowledge=await tx.doc(KnowledgeDoc,scopeKey(f.host.scope),f.host.scope);reviewedFact(knowledge,id,claim);delete knowledge.factReviews![`distilled:${id}`];const row=(await tx.doc(SessionsDoc)).sessions[sessionKey(f.host.scope,f.host.id)];row.section="";},context);
+  const action=async(suffix:string,body:JsonObject)=>{const request=new Request(`http://fixture/settings/token-optimizer/${suffix}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({workspaceId:"fixture",agentId:"agent",...body})});return (await tokenOptimizerSettingsContribution.handleAction!({request,url:new URL(request.url)}))!;};
+  expect((await f.native.optimizer.status(f.host)).session?.section).toBe("");
+  expect((await action("fact-review",{factId:id,factSource:"distilled",decision:"approved",claimRevision:"stale"})).status).toBe(400);
+  const request={factId:id,factSource:"distilled",decision:"approved",claimRevision:fingerprint(claim)};
+  expect((await action("fact-review",request)).status).toBe(200);
+  expect((await f.native.optimizer.status(f.host)).session?.section).toContain(claim);
+  let applied=false;f.faux.setResponses([input=>{applied=JSON.stringify(input.messages).includes(claim);return fauxAssistantMessage("Done");}]);
+  await(await f.conversation.submit({type:"input",content:"Use the newly reviewed fact",requestId:"review-next-request"},context)).wait(context);expect(applied).toBe(true);
+  expect((await action("fact-review",{...request,decision:"rejected",note:"Wrong. password=synthetic-value"})).status).toBe(200);
+  const knowledge=(await f.harness.snapshot(KnowledgeDoc,scopeKey(f.host.scope),context))!;
+  expect(knowledge.factReviews![`distilled:${id}`]).toMatchObject({decision:"rejected",note:"Wrong. password=[REDACTED]"});
+  expect((await f.native.optimizer.status(f.host)).session?.section).toBe("");
+  const child=await subagent(f,"review-child","Subagent instructions");let leaked=false;
+  f.faux.setResponses([input=>{leaked=JSON.stringify(input.messages).includes(claim);return fauxAssistantMessage("Done");}]);
+  expect((await(await child.submit({type:"input",content:"Check context"},context)).wait(context)).status).toBe("done");expect(leaked).toBe(false);
+  expect((await action("stale-facts",{})).status).toBe(400);
+  expect((await action("stale-facts",{confirmed:true})).status).toBe(200);
+  expect((await f.harness.snapshot(KnowledgeDoc,scopeKey(f.host.scope),context))?.factReviews?.[`distilled:${id}`].decision).toBe("stale");
+  // Review is not a model call and never changes lifecycle votes.
+  expect((await f.harness.snapshot(KnowledgeDoc,scopeKey(f.host.scope),context))?.distiller.facts[0].life.fire_den).toBe(4);
+  expect(f.faux.state.callCount).toBe(2);
+},20_000);

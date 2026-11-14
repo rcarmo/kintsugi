@@ -3,10 +3,11 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Harness } from "@earendil-works/pi-durable";
 import { fingerprint } from "../core/identity.ts";
 import { inferenceAllowed, modelFor } from "../core/config.ts";
-import { buildProposerPrompt, completeProposal, renderDistiller, updateDistiller } from "../core/microskills/distiller.ts";
+import { buildProposerPrompt, completeProposal, updateDistiller } from "../core/microskills/distiller.ts";
 import { detectorVerdict } from "../core/microskills/detectors.ts";
 import { creditLearning } from "../core/microskills/lifecycle.ts";
 import { genericDigest } from "../core/microskills/digest.ts";
+import { renderFacts } from "../core/microskills/render.ts";
 import { renderEnvironment, updateEnvironment } from "../core/microskills/envfacts.ts";
 import { observeEnvironment } from "../core/microskills/observe.ts";
 import { foldEvidence } from "../core/toolprune/evidence.ts";
@@ -36,7 +37,7 @@ export function createMechanismFolder(options: {harness:() => Harness;domain:Hos
     const envSelected = policy.microSkills === "envfacts" || policy.microSkills === "both", paidSelected = policy.microSkills === "distiller" || policy.microSkills === "both";
     if (envSelected && (!learning || hasEvidence)) environment = updateEnvironment(environment,complete ? observeEnvironment(observations,host.repositoryRoot) : null,session.injectedIds,learning?.credits);
     const renders:NonNullable<Knowledge["renders"]> = knowledge.renders ? structuredClone(knowledge.renders) : {environment:"",distilled:"",ids:[]};
-    const free = renderEnvironment(environment,policy.maxFacts,policy.maxFactTokens);
+    const free = renderEnvironment(environment,policy.maxFacts,policy.maxFactTokens,knowledge.factReviews);
     const distillObservations = learning ? observations.slice(-64).map(call => ({...call,command:call.command.slice(0,2048),output:call.output.slice(-1024)})) : observations;
     if (paidSelected && (!learning || hasEvidence || !incremental)) {
       const model = modelFor(policy,"proposer"), account = model ? JSON.stringify([host.scope.host,model.provider]) : "";
@@ -76,12 +77,9 @@ export function createMechanismFolder(options: {harness:() => Harness;domain:Hos
         }
       }
     }
-    if (envSelected && (!learning || hasEvidence)) {renders.environment = free.text;renders.ids = free.ids;}
-    if (paidSelected) renders.distilled = renderDistiller(distiller,host.scope.repository);
-    if (policy.microSkills !== "off" && (!learning || hasEvidence || distiller !== knowledge.distiller)) {
-      render = [envSelected ? free.text : "",paidSelected ? renderDistiller(distiller,host.scope.repository) : ""].filter(Boolean).join("\n");
-      injectedIds = envSelected ? free.ids : [];
-    }
+    const selected = renderFacts(environment,distiller,host.scope.repository,policy,knowledge.factReviews);
+    renders.environment = selected.environment;renders.distilled = selected.distilled;renders.ids = selected.ids;
+    render = selected.text;injectedIds = selected.ids;
     let tools = structuredClone(knowledge.tools);
     const catalogue = await options.domain.catalogue(host);
     // Final fold reconciles the complete session; checkpoints contribute only new prompts.

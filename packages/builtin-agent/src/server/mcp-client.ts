@@ -24,7 +24,7 @@ export async function connectMcpHttp(config:McpHttpConnection,fetcher:McpFetch =
   let closing:Promise<void>|undefined;
   const abort=()=>{closing??=client.close();};
   signal?.addEventListener("abort",abort,{once:true});
-  try {signal?.throwIfAborted();await client.connect(transport);return {client,tools:await client.listTools({signal})};}
+  try {signal?.throwIfAborted();await client.connect(transport);return {client,tools:client.serverCapabilities?.tools ? await client.listTools({signal}) : []};}
   catch (error) {await client.close();throw error;}
   finally {signal?.removeEventListener("abort",abort);await closing;}
 }

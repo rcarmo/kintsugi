@@ -9,6 +9,8 @@ export type LearningSession = {
   cutoff: string | null; claim: string | null; foldError: string | null;
   /** Optional for journals predating live learning. Cursor advances atomically with learned state. */
   learning?: { cutoff: string | null; credits: import("./microskills/lifecycle.ts").LearningCredits; ticks: number; lastProposalAt: number | null; lastProposalDigest?: string; requested: number; processed: number; lastRun: string | null; toolCounted?: boolean; toolPrompts?: number; finalRequested?: boolean; lastCheck?: {at:number;observations:number;factObservations:number;incomplete:number;proposer:string;notes:string[]} };
+  /** Explicit per-session removal survives later learning. */
+  factsSuppressed?: boolean;
   section: string; injectedIds: string[]; frozenMask: string[]; appendedAfterFold: boolean;
 };
 function copySession(prior: LearningSession): LearningSession {

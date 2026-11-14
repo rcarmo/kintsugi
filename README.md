@@ -12,7 +12,7 @@ Kintsugi accepts direct pull requests without a prior issue. See [Contributing](
 
 - **Agents:** editable per-Agent plans shared through the `plan` tool; native code mode with slash templates, one-shot agents and subagents; a Background view for delegated work; full-text search over Agent history.
 - **Token savings:** an opt-in [token optimizer](#token-optimizer); stable prompt prefixes, append-only plan context and Codex WebSocket delta reuse; cache-hit reporting; optional [Graphite telemetry](#token-telemetry).
-- **Workspaces:** live RAM, swap, CPU and task limits; out-of-memory protection; usage and restart diagnostics. Home and Settings stay usable when a workspace hangs.
+- **Workspaces:** live RAM, swap, CPU and task limits; out-of-memory protection; usage and restart diagnostics; sidebar CPU, memory and I/O meters for the selected workspace and System. Home and Settings stay usable when a workspace hangs.
 - **Networking:** trusted LAN access through Caddy TLS with 1,000 preview origins; opt-in private-network access with exact host and port grants; a scoped [management API](#management-api).
 - **Credentials and Git:** an instance credential catalogue with per-template grants and proxy-side substitution, so Agents only see placeholders; a [Gitea](#git-hosting) connection.
 - **Files:** Draw.io editing, CSV/TSV tables, and read-only DOCX, Excel/ODS and PPTX views.
@@ -22,7 +22,7 @@ Kintsugi accepts direct pull requests without a prior issue. See [Contributing](
 
 ## Install
 
-The current release is [v0.6.3](https://github.com/rcarmo/kintsugi/releases/tag/v0.6.3) ([release notes](release_notes/v0.6.3.md)). Use a dedicated Linux server with Docker:
+The current release is [v0.6.7](https://github.com/rcarmo/kintsugi/releases/tag/v0.6.7) ([release notes](release_notes/v0.6.7.md)). Use a dedicated Linux server with Docker:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/rcarmo/kintsugi/main/scripts/install.sh -o /tmp/install-kintsugi.sh
@@ -43,13 +43,21 @@ A few changes need a one-time manual step. Older installations with the ten-port
 
 The token optimizer provides context pruning, learned facts and loop detection for built-in Agents and their subagents. It is **off by default** and experimental. Turn it on in **Settings → Token optimizer**:
 
-- **Watch only** learns and shows what it would do without changing Agents. **On** applies what it learns to new and resumed sessions.
+- **Watch only** records observations and proposals without automatically changing Agent context. **On** applies eligible facts on the next request, including during an ongoing session.
 - **Basic** (recommended) remembers facts about each repository, nudges runs that keep repeating the same failures, and suggests hiding tools that never get used. It makes no extra model calls.
 - **Model-assisted** adds a model that writes facts, judges stuck runs and picks tools for each task, within per-session and daily call limits.
 
-Learning runs in the background between replies; you do not need to close the Agent. Its active fact prefix stays unchanged for caching. Optimizer operations appear as collapsed, blue-indicator timeline rows with plain-English details and a Readable/Raw toggle.
+Learning checks completed tool results between replies; you do not need to close the Agent. Model proposals have separate evidence and cooldown limits. Inferred advice needs approval of its exact wording; observed facts must pass evidence and lifecycle checks. Facts share count and estimated-token limits.
+
+Review full claims and evidence directly in the transcript with **Approve**, **Wrong** and **Stale**, plus optional notes. Learning rows containing proposals open automatically; other optimizer rows start collapsed. Approval can update the next request, and negative feedback prevents rejected advice returning from an older learning result. Reviews survive journal compaction and reopening. Settings also lists accumulated facts and lets you mark them all stale.
 
 Each Agent's composer footer shows a small status chip while the optimizer is on; click it for what was learned, hidden or nudged, and to restore hidden tools. The cost and quality effects of Model-assisted have not been measured yet. It is a TypeScript port of Microsoft [TokenEconomizer](https://github.com/microsoft/TokenEconomizer); see the [design checklist](docs/token-economizer.md).
+
+## MCP recall
+
+MCP connections support tool and resource discovery, including resource-only servers. Servers that advertise tool-list changes can refresh their tools without reconnecting or replaying calls.
+
+Per-server recall settings control retained tool results: **Off** blocks capture and access, **Watch** retains originals, and **On** also shortens large MCP output sent to the model. Scripts keep full values. Sensitive tools and detected secrets are excluded; recall makes no model calls. Turning it off preserves unexpired copies. Retention and storage limits apply to each conversation's recall index; reads do not extend retention, and forgetting or expiry does not erase the source journal.
 
 ## Git hosting
 

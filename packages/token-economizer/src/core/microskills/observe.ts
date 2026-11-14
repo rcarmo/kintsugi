@@ -141,7 +141,7 @@ export function observeEnvironment(calls: Observation[],root: string,top = root)
   for (const [index,call] of calls.entries()) {
     if (call.semantic !== "shell" || /\bcd: [^\n]*: (?:No such file or directory|Not a directory)/.test(call.output)) continue;
     const command = call.command, output = call.output, obs = classifyCommand(command,index,"",root,top), hint = /\bexit code[:=\s]+(\d+)/i.exec(output);
-    const success = hint ? Number(hint[1]) === 0 : call.outcome === "success";
+    const success = call.exitCode !== null ? call.exitCode === 0 : call.outcome === "unknown" ? hint !== null && Number(hint[1]) === 0 : call.outcome === "success";
     const need = [...new Set(Array.from(output.matchAll(/environment variable\s+['"`]?([A-Z][A-Z0-9_]{2,})/g),match => match[1]))].filter(safeEnvironmentName).sort(compareCodePoints);
     const sets: Record<string,string> = {};
     for (const match of command.matchAll(/(?:^|[\s;&(])(?:export\s+)?([A-Z][A-Z0-9_]{2,})=(['"]?)([\w.\-/:]+)\2/g)) if (safeEnvironmentValue(match[1],match[3])) sets[match[1]] = match[3];
@@ -153,7 +153,7 @@ export function observeEnvironment(calls: Observation[],root: string,top = root)
       o.tests_ran = loaded.test(output) || loadedGeneric.test(output);o.loaded = o.labels.length > 0 && !o.label_err && o.tests_ran;
     }
     const homogeneous = shellSegments(command).filter(segment => !passThrough.has(segment.split(/\s+/)[0].split("/").at(-1)!)).length === obs.length && new Set(obs.map(o => o.intent)).size === 1;
-    const error = errorClasses.find(([,pattern]) => pattern.test(output)), network = error && ["connection_refused","name_resolution","unreachable"].includes(error[0]);
+    const error = !success ? errorClasses.find(([,pattern]) => pattern.test(output)) : undefined, network = error && ["connection_refused","name_resolution","unreachable"].includes(error[0]);
     if (error) {
       const targets = obs.filter(o => ["run_interpreter","run_tests","run_build","package_tool","fetch_remote"].includes(o.intent)), line = output.split("\n").find(line => error[1].test(line)) ?? "";
       let named = targets.filter(o => o.head && (output.includes(o.head) || line.includes(o.head.split("/").at(-1)!)));

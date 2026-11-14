@@ -9,6 +9,7 @@ import { compilePattern, detectorVerdict, DetectorSchema, extract, ExtractorSche
 import { checkCommand } from "./digest.ts";
 import { createLifecycle, injectable, updateLifecycle, creditLearning, type LearningCredits, type Lifecycle } from "./lifecycle.ts";
 import { proposerSystem } from "./proposer-prompt.ts";
+import { factPermitted, type FactReviews } from "./feedback.ts";
 export const FactSchema = Type.Object({id:Type.String({minLength:1,maxLength:160}),claim:Type.Optional(Type.String({maxLength:2000})),injection:Type.Optional(Type.String({maxLength:2000})),high_stakes:Type.Optional(Type.Boolean()),detector:DetectorSchema,cite:Type.Optional(Type.Array(Type.String())),rev:Type.Optional(Type.Integer({minimum:1}))},{additionalProperties:false});
 export type FactSpec = Static<typeof FactSchema>;
 export type LearnedFact = {spec:FactSpec;life:Lifecycle};
@@ -65,7 +66,7 @@ function frozen(spec: FactSpec): string {
   return JSON.stringify([spec.claim ?? null,spec.injection ?? null,spec.high_stakes ?? false,detector]);
 }
 export function factTextSafe(text: string): boolean {
-  return !text.includes("[REDACTED]") && !/\b(?:API_KEY|ACCESS_TOKEN|PASSWORD|PRIVATE_KEY|AUTHORIZATION)\b/i.test(text) && redact(text) === text && !/\b(skip|no need|don'?t|do not|stop|done|completed?|finish(?:ed)?|verify|verification|instead of (?:running|testing))\b/i.test(text);
+  return !/[\r\n<>]/.test(text) && !text.includes("[REDACTED]") && !/\b(?:API_KEY|ACCESS_TOKEN|PASSWORD|PRIVATE_KEY|AUTHORIZATION)\b/i.test(text) && redact(text) === text && !/\b(skip|no need|don'?t|do not|stop|done|completed?|finish(?:ed)?|verify|verification|instead of (?:running|testing))\b/i.test(text);
 }
 export function admitFact(state: Distiller, spec: FactSpec): Admission {
   if (!factTextSafe(spec.claim ?? spec.id) || !factTextSafe(spec.injection ?? spec.claim ?? spec.id)) return {accepted:false,reason:"unsafe-fact-text"};
@@ -105,7 +106,16 @@ export function completeProposal(prior: Distiller, reply: string | null): Propos
   for (const spec of payload.facts.slice(0,4)) {const admitted = admitFact(state,spec);if (!admitted.accepted) diagnostics.push(admitted.reason);}
   return {state,diagnostics};
 }
-export function renderDistiller(state: Distiller, repository: string): string {
-  const lines = state.facts.filter(fact => injectable(fact.life)).map(fact => fact.spec.injection ?? fact.spec.claim ?? fact.spec.id);
-  return lines.length ? `# repo operating manual (${repository.split("/").at(-1)}) — learned from earlier sessions in this repository\n${lines.map(line => `- ${line}`).join("\n")}\n` : "";
+export function renderDistiller(state: Distiller, repository: string, maxFacts = 4, maxTokens = 150, reviews:FactReviews = {}): string {
+  const header = `# reviewed operating facts (${repository.split("/").at(-1)})\n`;
+  let text = "", count = 0;
+  for (const fact of state.facts) {
+    const line = fact.spec.injection ?? fact.spec.claim ?? fact.spec.id;
+    if (!injectable(fact.life) || !factTextSafe(line) || !factPermitted("distilled",fact.spec.id,line,reviews)) continue;
+    const trial = (text || header)+`- ${line}\n`;
+    if (count >= maxFacts) break;
+    if (Array.from(trial).length > maxTokens*4) continue;
+    text = trial;count++;
+  }
+  return text;
 }

@@ -3,6 +3,7 @@ import { makeObservation } from "../src/core/observations.ts";
 import { observeEnvironment } from "../src/core/microskills/observe.ts";
 import { emptyEnvironment, renderEnvironment, updateEnvironment } from "../src/core/microskills/envfacts.ts";
 import { completeProposal, emptyDistiller, renderDistiller, updateDistiller } from "../src/core/microskills/distiller.ts";
+import { fingerprint } from "../src/core/identity.ts";
 import { genericDigest } from "../src/core/microskills/digest.ts";
 import envstreams from "./fixtures/environment-streams.json";
 for (const fixture of envstreams.cases) test(`upstream complete environment stream: ${fixture.input.name}`, () => {
@@ -15,7 +16,12 @@ for (const fixture of envstreams.cases) test(`upstream complete environment stre
     const rendered = renderEnvironment(state,4,150);
     expect(state.now).toBe(step.expected.now);
     expect(state.facts).toEqual<unknown>(step.expected.facts);
-    expect(rendered.text).toBe(step.expected.text);
+    // Intentional safety divergence: empty probes describe only the kinds actually observed.
+    const expected = fixture.input.name === "probe" ? step.expected.text.replace("This checkout has no git remote and no branches, tags or unreachable objects beyond HEAD; its history ends at the checked-out commit.","Earlier VCS probes returned no remotes and version tags. Other history was not established by these probes.") : step.expected.text;
+    expect(rendered.text).toBe(expected
+      .replaceAll("fails here with command not found, and no other way to run it has worked.","reported command not found in earlier observed attempts. Other invocation methods were not established.")
+      .replaceAll("are refused here; nothing can be fetched from them.","failed in earlier observed requests. This does not establish a permanent network restriction.")
+      .replaceAll("Code that imports the project needs", "Earlier project commands requested"));
     expect(rendered.ids).toEqual(step.expected.ids);
   }
 });
@@ -39,7 +45,8 @@ test("proposer grounding, append-only extractors, retrospective learning, immuta
   const spec = {id:"test-form",claim:"The test command is bun test.",injection:"The test command is bun test.",high_stakes:false,detector:{scope:"custom",confirm:"passed",contradict:"impossible"},cite:["0","1"]};
   const completed = completeProposal(state,JSON.stringify({extractors:[{name:"custom",kind:"cmd_regex",pattern:"bun test"}],facts:[spec]}));state = completed.state;
   expect(completed.diagnostics).toEqual([]);expect(state.facts[0].life.state).toBe("ACTIVE");
-  expect(state.facts[0].life.fire_den).toBe(4);expect(renderDistiller(state,"repo")).toContain("The test command is bun test.");
+  expect(state.facts[0].life.fire_den).toBe(4);expect(renderDistiller(state,"repo")).toBe("");
+  expect(renderDistiller(state,"repo",4,150,{"distilled:test-form":{decision:"approved",at:1,note:"",claim:fingerprint(spec.injection)}})).toContain("The test command is bun test.");
   const changed = completeProposal(state,JSON.stringify({extractors:[],facts:[{...spec,claim:"A different command."}]}));
   expect(changed.diagnostics).toEqual(["revise-not-contradict-only"]);
   const revision = completeProposal(state,JSON.stringify({extractors:[{name:"custom",pattern:"something-else"}],facts:[{...spec,detector:{...spec.detector,contradict:"failure"}}]}));

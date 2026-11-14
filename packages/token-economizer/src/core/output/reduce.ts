@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { summarizeTestRun } from "./mcp-recall/tests.ts";
 import { compilerDiagnosticsHandler } from "./mcp-recall/compilers.ts";
-export const outputReducerRevision = "mcp-recall:f00e8c7:kintsugi-v1";
+export const outputReducerRevision = "mcp-recall:2db17d6:kintsugi-v2";
 export type OutputReduction = {text:string;reducer:string;originalBytes:number;reducedBytes:number};
 /** Only single, explicit runner/compiler invocations. Shell programs, pipes and structured formats are untouched. */
 export function outputFamily(command:string):"tests"|"compiler"|null {

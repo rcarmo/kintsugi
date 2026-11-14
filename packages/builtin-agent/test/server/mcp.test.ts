@@ -83,3 +83,21 @@ test("native MCP adapter exposes only code mode, preserves structured results an
   const blocked=await conversation.submit({type:"input",content:"Wait for remote result"},context);await started.promise;
   await conversation.abort(context);expect((await blocked.status(context)).status).toBe("unanswered");expect(rpcCalls).toBe(2);
 });
+
+test("resource-only servers connect without unsupported tool discovery and follow resource cursors",async()=>{
+  const methods:string[]=[];
+  const server=Bun.serve({port:0,async fetch(request){
+    if(request.method==="GET")return new Response(null,{status:405});
+    if(request.method==="DELETE")return new Response(null,{status:200});
+    // SAFETY: This private loopback fixture accepts only our SDK's JSON-RPC requests.
+    const rpc=await request.json() as {id?:number;method:string;params?:{cursor?:string}};
+    methods.push(rpc.method);if(rpc.id===undefined)return new Response(null,{status:202});
+    if(rpc.method==="tools/list")return Response.json({jsonrpc:"2.0",id:rpc.id,error:{code:-32601,message:"No tools"}});
+    const result=rpc.method==="initialize"?{protocolVersion:"2025-03-26",capabilities:{resources:{}},serverInfo:{name:"resources",version:"1"}}:rpc.method==="resources/list"?{resources:[{uri:rpc.params?.cursor?"memory://second":"memory://first",name:"resource"}],nextCursor:rpc.params?.cursor?undefined:"second"}:rpc.method==="resources/templates/list"?{resourceTemplates:[]}:{contents:[{uri:"memory://first",text:"original resource"}]};
+    return Response.json({jsonrpc:"2.0",id:rpc.id,result});
+  }});cleanup.push(async()=>{server.stop(true);});
+  const {client,tools}=await connectMcpHttp({...config,url:server.url.href,allowHttp:true});cleanup.push(()=>client.close());
+  expect(tools).toEqual([]);expect(methods).not.toContain("tools/list");
+  expect((await client.listResources()).map(row=>row.uri)).toEqual(["memory://first","memory://second"]);
+  expect((await client.readResource("memory://first")).contents[0]).toMatchObject({text:"original resource"});
+});

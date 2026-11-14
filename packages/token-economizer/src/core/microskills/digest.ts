@@ -38,7 +38,7 @@ export function errorSignature(output: string, roots: string[], home: string): s
 export function genericDigest(observations: Observation[], iid: string, roots: string[], home: string): FactDigest {
   const commands = observations.filter(call => call.semantic === "shell"), out = commands.map(call => redact(call.output)).join("\n");
   const failed: FactDigest["failed_commands"] = [], seen = new Set<string>();
-  for (const call of commands) if (commandFailed(call.output)) {
+  for (const call of commands) if (call.outcome === "failure" || call.outcome === "timedOut" || call.exitCode !== null && call.exitCode !== 0 || call.outcome === "unknown" && commandFailed(call.output)) {
     const row = {cmd:templates([relativeText(redact(call.command),roots,home)],1)[0] ?? "",error:errorSignature(redact(call.output),roots,home)}, key = JSON.stringify(row);
     if (!seen.has(key)) {seen.add(key);failed.push(row);}
   }

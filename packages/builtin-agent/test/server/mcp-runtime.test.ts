@@ -30,7 +30,7 @@ async function fixture(endpoints:Record<string,(rpc:Rpc,request:Request)=>Promis
   const harness=await Harness.open(new MemoryStorage(),{registry,models},context);const conversation=await harness.root(context);await conversation.configure({model:{provider:"faux",modelId:"faux-1"}},context);
   await harness.commit(async tx=>{(await tx.doc(WorkspaceAgents)).agents.push({agentId:"agent",durableId:conversation.id,label:"Agent",title:"Agent"});},context);
   const runtime=createWorkspaceMcpRuntime("workspace",registry,()=>harness,store);cleanup.push(async()=>{await runtime.close();await harness.close(context);});
-  return {runtime,store,conversation,faux,async call(){faux.setResponses([fauxAssistantMessage([fauxToolCall("codemode",{code:"return await tools.mcp__remote__identity({});"})],{stopReason:"toolUse"}),fauxAssistantMessage("Done")]);return(await(await conversation.submit({type:"input",content:"Call remote"},context)).wait(context)).status;}};
+  return {runtime,store,conversation,faux,registry,async call(){faux.setResponses([fauxAssistantMessage([fauxToolCall("codemode",{code:"return await tools.mcp__remote__identity({});"})],{stopReason:"toolUse"}),fauxAssistantMessage("Done")]);return(await(await conversation.submit({type:"input",content:"Call remote"},context)).wait(context)).status;}};
 }
 function success(rpc:Rpc){return Response.json({jsonrpc:"2.0",id:rpc.id,result:rpc.method==="initialize"?{protocolVersion:"2025-03-26",capabilities:{tools:{}},serverInfo:{name:"fixture",version:"1"}}:rpc.method==="tools/list"?{tools:[{name:"identity",inputSchema:{type:"object",properties:{}},outputSchema:{type:"object",properties:{value:{type:"string"}},required:["value"]}}]}:{content:[{type:"text",text:"ok"}],structuredContent:{value:"ok"}}},{headers:{"mcp-session-id":"fixture-session"}});}
 test("discovery does not block attach or healthy connections and close cancels a stalled initialize",async()=>{
@@ -76,4 +76,19 @@ test("retry classification accepts transient failures but not authentication, TL
 test("a briefly successful handshake does not reset a flapping connection's retry budget",async()=>{
   let initializations=0;const f=await fixture({remote:rpc=>{if(rpc.method==="initialize"&&++initializations===1)return new Response(null,{status:503});if(rpc.method==="tools/call")return new Response(null,{status:404});return success(rpc);}});
   await f.runtime.attach();await until(()=>initializations===2&&mcpConnectionStatus("remote")?.state==="connected");await f.call();expect(mcpConnectionStatus("remote")?.state).toBe("retrying");expect(mcpConnectionStatus("remote")?.nextRetryAt).toBeGreaterThan(Date.now()+3500);
+});
+
+test("advertised tool-list changes replace schemas without reconnecting or replaying effects",async()=>{
+  let lists=0,calls=0,initializations=0;
+  const f=await fixture({remote:rpc=>{
+    if(rpc.method==="initialize"){initializations++;return Response.json({jsonrpc:"2.0",id:rpc.id,result:{protocolVersion:"2025-03-26",capabilities:{tools:{listChanged:true}},serverInfo:{name:"dynamic",version:"1"}}});}
+    if(rpc.method==="tools/list"){lists++;return Response.json({jsonrpc:"2.0",id:rpc.id,result:{tools:[{name:lists===1?"identity":"replacement",inputSchema:{type:"object",properties:{}}}]}});}
+    calls++;
+    return new Response(`event: message\ndata: ${JSON.stringify({jsonrpc:"2.0",method:"notifications/tools/list_changed"})}\n\nevent: message\ndata: ${JSON.stringify({jsonrpc:"2.0",id:rpc.id,result:{content:[{type:"text",text:"ok"}]}})}\n\n`,{headers:{"content-type":"text/event-stream"}});
+  }});
+  await f.runtime.attach();await f.runtime.ready();expect(await f.call()).toBe("done");
+  await until(()=>mcpConnectionStatus("remote")?.tools.includes("replacement")===true);
+  expect(f.registry.snapshot().tools().some(row=>row.tool.name==="mcp__remote__replacement")).toBe(true);
+  expect(f.registry.snapshot().tools().some(row=>row.tool.name==="mcp__remote__identity")).toBe(false);
+  expect(calls).toBe(1);expect(initializations).toBe(1);expect(lists).toBe(2);
 });

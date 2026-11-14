@@ -1,3 +1,4 @@
+import {factReviewTarget,inlineFactReview} from "./token-optimizer-facts.ts";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { actionLinkHtml } from "@kintsugi/design-system/action-link";
@@ -113,9 +114,9 @@ function advancedHtml(policy: Policy, catalogue: Catalogue) {
     ${numberRow("budget.maxCostPerSession", "Spending cap per session (USD)", budget.maxCostPerSession, { min: 0, step: 0.01, placeholder: "No cap", hint: "Calls to models without a price are blocked when a cap is set." })}
     ${numberRow("budget.deadlineSeconds", "Time limit per call (seconds)", budget.deadlineMs / 1000, { max: 180 })}
     ${numberRow("budget.maxOutputTokens", "Output limit per call (tokens)", budget.maxOutputTokens)}`);
-  const tuning = disclosure("Fine-tuning", `    ${numberRow("maxFacts", "Facts per session", policy.maxFacts)}
-    ${numberRow("maxFactTokens", "Fact text limit (tokens)", policy.maxFactTokens)}
-    ${numberRow("proposeEvery", "Write new facts every … sessions", policy.proposeEvery)}
+  const tuning = disclosure("Fine-tuning", `    ${numberRow("maxFacts", "Facts per request", policy.maxFacts)}
+    ${numberRow("maxFactTokens", "Fact text limit (estimated tokens)", policy.maxFactTokens)}
+    ${numberRow("proposeEvery", "Evidence checks between model proposals", policy.proposeEvery, { hint: "During a session: at least 3 checks with new evidence and 10 minutes between calls. Session-end checks may also propose." })}
     ${numberRow("evidenceMinSessions", "Sessions before suggesting a tool", policy.evidenceMinSessions)}
     ${numberRow("evidencePrompts", "…and prompts", policy.evidencePrompts)}
     ${numberRow("evidenceSessions", "Or after this many sessions", policy.evidenceSessions)}
@@ -137,7 +138,7 @@ function settingsForm(config: OptimizerConfig, catalogue: Catalogue, view: View)
     <p class="settings-help">Up to ${plural(budget.callsPerSession, "call")} per Agent session and ${budget.callsPerDay} per day. Change this in Advanced settings › Limits.</p>
   </div>`;
   return `<form method="post" action="/settings/token-optimizer" class="token-optimizer__form form-stack" data-turbo="true">
-    ${choices("Status", ([["off", "Nothing new is learned or applied."], ["observe", "Learns and shows what it would do. Agents are unchanged."], ["active", "Applies what it learns to new and resumed Agent sessions."]] as const).map(([value, hint]) => choice("mode", value, mode === value, modeLabels[value], hint)).join(""))}
+    ${choices("Status", ([["off", "Nothing new is learned or applied."], ["observe", "Learns and shows what it would do. Agents are unchanged."], ["active", "Applies eligible facts on the next request, including during an ongoing session."]] as const).map(([value, hint]) => choice("mode", value, mode === value, modeLabels[value], hint)).join(""))}
     <div class="token-optimizer__when-on form-stack">
       ${choices("What it does", [
         choice("preset", "basic", preset === "basic", "Basic", "Remembers facts, compacts test output, checks task progress and suggests unused tools to hide. No extra model calls."),
@@ -164,26 +165,29 @@ function overrideForm(workspaceId: string, agentId: string, value: string, label
 
 type Status = Awaited<ReturnType<Native["optimizer"]["status"]>>;
 const time = (at: number) => new Date(at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
-const factStatus = { "in-use": "In use", quiet: "Rarely relevant, so not shown", checking: "Still checking" } satisfies Record<FactSummary["status"], string>;
+const factStatus = { "in-use": "Eligible for the next request when On", quiet: "Rarely relevant, so not shown", checking: "Still checking", "needs-review":"Needs your approval", rejected:"Rejected", stale:"Marked stale", retired:"Retired after contradictory evidence" } satisfies Record<FactSummary["status"], string>;
 const nudgeReasons = new Map([["judge-stuck", "The judge said the run was stuck."], ["envelope", "It kept repeating the same failures for longer than usual."], ["backstop", "It ran far longer than usual without making progress."], ["ambiguous-past-envelope", "Progress was unclear and it ran longer than usual."]]);
 const nudgeStatus = { proposed: "Waiting for a safe moment", queued: "Sent", consumed: "Sent", simulated: "Would have sent (Watch only)", undelivered: "Not sent: the run ended first" } satisfies Record<GuardDecisionRecord["status"], string>;
 const list = (items: string[]) => items.length ? `<ul class="token-optimizer__list">${items.join("")}</ul>` : "";
 const item = (text: string, detail = "") => `<li>${h(text)}${detail ? `<small>${h(detail)}</small>` : ""}</li>`;
 
-/** The facts actually in this session's context, as listed in its frozen section. */
+/** The facts actually in this session's context, as listed in its current published section. */
 function sessionFacts(section: string) {
   return section.split("\n").filter(line => line.startsWith("- ")).map(line => line.slice(2));
 }
 
 function factsHtml(workspaceId: string, agentId: string, data: Status, mode: Mode) {
-  const shown = sessionFacts(data.session?.section ?? ""), knowledge = data.knowledge ? describeKnowledge(data.knowledge.environment, data.knowledge.distiller) : { facts: [], retired: 0 };
-  // The session list already shows facts in use here; the repository list adds the rest.
-  const others = knowledge.facts.filter(fact => !shown.includes(fact.claim));
-  const repository = others.slice(0, 12).map(fact => item(fact.claim, `${factStatus[fact.status]}${fact.status === "checking" ? ` · seen ${plural(fact.confirmations, "time")}` : ""}${fact.source === "distilled" ? " · written by a model" : ""}`));
-  const more = others.length - repository.length;
-  const body = `${shown.length ? `<p>In this session:</p>${list(shown.map(line => item(line)))}` : `<p class="settings-help">${mode === "off" ? "No learned facts are being added while the optimizer is off." : "This session has no learned facts. Fresh sessions get facts once they’re confirmed."}</p>`}
-    ${others.length ? `<p>${shown.length ? "Also learned" : "Learned"} for this repository:</p>${list(repository)}${more > 0 ? `<p class="settings-help">And ${more} more.</p>` : ""}` : knowledge.facts.length ? "" : `<p class="settings-help">Nothing learned for this repository yet. It learns when a session ends.</p>`}
-    ${knowledge.retired ? `<p class="settings-help">${plural(knowledge.retired, "fact")} retired after being contradicted.</p>` : ""}
+  const shown = sessionFacts(data.session?.section ?? ""), knowledge = data.knowledge ? describeKnowledge(data.knowledge.environment, data.knowledge.distiller, data.knowledge.factReviews) : { facts: [], retired: 0 };
+  const rows = knowledge.facts.map(fact => {
+    const identity = `<input type="hidden" name="factId" value="${h(fact.id)}"><input type="hidden" name="factSource" value="${fact.source}"><input type="hidden" name="claimRevision" value="${h(fact.claimRevision)}">`;
+    const feedback = `<form method="post" action="/settings/token-optimizer/fact-review" data-turbo="true" class="form-stack">${hidden(workspaceId,agentId)}${identity}${select("decision","Your review",fact.review?.decision ?? "rejected",[["approved","Approve"],["rejected","Wrong or unsupported"],["stale","No longer current"]])}<label>Optional feedback<input class="text-field" name="note" maxlength="500" value="${h(fact.review?.note ?? "")}"></label>${buttonHtml({type:"submit",variant:"secondary",content:{kind:"caption",caption:"Save review"}})}</form>`;
+    return disclosure(fact.claim,`<p>${h(fact.claim)}</p><p>${h(factStatus[fact.status])} · ${fact.source === "distilled" ? "Model proposal" : "Observed pattern"} · ${plural(fact.confirmations,"confirmation")} · ${plural(fact.contradictions,"contradiction")}</p>${list(fact.evidence.map(line => item(line)))}${fact.review ? `<p class="settings-help">Last reviewed ${time(fact.review.at)}.</p>` : ""}${feedback}`);
+  });
+  const body = `<p class="settings-help">Facts are shared within this workspace, not across workspaces. Model proposals need your approval as well as repeated evidence. Approval does not override safety rules or promote an unconfirmed fact.</p>
+    <p class="settings-help">Rejection or stale feedback removes a fact from subsequent model requests, including existing sessions. Eligible approved facts are available on the next request in existing sessions when the optimizer is On. Changing facts can rebuild the prompt cache; running tools are not stopped.</p>
+    ${shown.length ? `<p>In this session:</p>${list(shown.map(line => item(line)))}` : `<p class="settings-help">${mode === "off" ? "Learning is off." : "This session has no permitted learned facts."}</p>`}
+    ${rows.length ? rows.join("") : `<p class="settings-help">No facts yet. Learning checks completed tool results between replies.</p>`}
+    ${rows.length ? actionForm(workspaceId,agentId,"stale-facts","Mark all facts stale",`<p class="settings-help">Use after changing the checkout, dependencies or environment. Facts are kept for review, but excluded until you approve them again. History is unchanged.</p><label><input type="checkbox" name="confirmed" value="true" required> Apply to all learned facts in this workspace</label>`) : ""}
     ${shown.length ? actionForm(workspaceId, agentId, "remove-context", "Remove facts from this Agent", `<p class="settings-help">Only affects this Agent. Its next request won’t include them, which rebuilds the prompt cache once.</p>`) : ""}`;
   return disclosure(`Facts${shown.length ? ` (${shown.length} in this session)` : ""}`, body);
 }
@@ -248,7 +252,7 @@ async function agentHtml(workspaceId: string, native: Native, host: HostSession,
   const priced = data.ledger.filter(row => row.cost !== null), cost = priced.reduce((sum, row) => sum + row.cost!, 0), unpriced = data.ledger.length - priced.length;
   const summary = [modeLabels[mode], facts ? plural(facts, "fact") : "", applied.length ? `${plural(applied.length, "tool")} hidden` : "", suggested.length ? plural(suggested.length, "suggestion") : ""].filter(Boolean).join(" · ");
   const status = [
-    mode === "off" ? "Not learning while the optimizer is off." : data.session?.folded ? "Already learned from this session." : "Learns from this session when it ends, or after 10 quiet minutes.",
+    mode === "off" ? "Not learning while the optimizer is off." : "Checks completed tool results between replies. Session end reconciles any remaining evidence.",
     sent ? `${plural(sent, "nudge")} sent.` : simulated ? `Would have sent ${plural(simulated, "nudge")}.` : "",
     data.ledger.length ? `${plural(data.ledger.length, "model call")}${priced.length ? `, about $${cost.toFixed(4)}` : ""}${unpriced ? ` (${unpriced} without a price)` : ""}.` : "",
   ].filter(Boolean).map(line => `<li>${h(line)}</li>`).join("");
@@ -298,6 +302,7 @@ export async function renderTokenOptimizerSettings(view: View = {}) {
   const config = view.draft ?? await tokenOptimizerConfiguration().load(), catalogue = await readPiModelCatalogue();
   return `<section class="settings-sec token-optimizer" id="${panel}">
     <p>Saves tokens for built-in Agents. It remembers facts about each repository, nudges runs that go in circles and hides tools that never get used. CLI Agents are unaffected.</p>
+    <p class="settings-help">Learning checks completed tool results between replies; it does not wait for the session to end. Review proposed facts directly in the transcript.</p>
     ${view.focus || view.form ? "" : feedback(view)}
     ${settingsForm(config, catalogue, view)}
     ${await agentsHtml(config, view)}
@@ -333,9 +338,9 @@ function policyFromForm(form: FormData, current: Policy) {
   if (form.has("budget.maxCostPerSession")) budget.maxCostPerSession = text("budget.maxCostPerSession") ? number("budget.maxCostPerSession", "Spending cap per session", 0, { min: 0, integer: false }) : null;
   budget.deadlineMs = Math.round(number("budget.deadlineSeconds", "Time limit per call", budget.deadlineMs / 1000, { max: 180, integer: false }) * 1000);
   budget.maxOutputTokens = number("budget.maxOutputTokens", "Output limit per call", budget.maxOutputTokens);
-  policy.maxFacts = number("maxFacts", "Facts per session", policy.maxFacts);
+  policy.maxFacts = number("maxFacts", "Facts per request", policy.maxFacts);
   policy.maxFactTokens = number("maxFactTokens", "Fact text limit", policy.maxFactTokens);
-  policy.proposeEvery = number("proposeEvery", "Sessions between new facts", policy.proposeEvery);
+  policy.proposeEvery = number("proposeEvery", "Evidence checks between model proposals", policy.proposeEvery);
   policy.evidenceMinSessions = number("evidenceMinSessions", "Sessions before suggesting a tool", policy.evidenceMinSessions);
   policy.evidencePrompts = number("evidencePrompts", "Prompts before suggesting a tool", policy.evidencePrompts);
   policy.evidenceSessions = number("evidenceSessions", "Sessions before a tool counts as unused", policy.evidenceSessions);
@@ -357,15 +362,16 @@ function policyFromForm(form: FormData, current: Policy) {
   return { policy: parsePolicy(policy), mode, preset };
 }
 
-const actionSchema = Type.Object({workspaceId:Type.String({minLength:1,maxLength:256}),agentId:Type.String({minLength:1,maxLength:256}),names:Type.Optional(Type.Array(Type.String({minLength:1,maxLength:256}),{maxItems:1000})),confirmed:Type.Optional(Type.Boolean()),sampleId:Type.Optional(Type.String({maxLength:256})),label:Type.Optional(Type.Union([Type.Literal(0),Type.Literal(1)])),unsafeArtifactId:Type.Optional(Type.String({maxLength:256})),task:Type.Optional(Type.String({maxLength:16000})),requestId:Type.Optional(Type.String({maxLength:256}))},{additionalProperties:false});
+const actionSchema = Type.Object({reviewKey:Type.Optional(Type.String({pattern:"^[a-f0-9]{64}$"})),workspaceId:Type.String({minLength:1,maxLength:256}),agentId:Type.String({minLength:1,maxLength:256}),names:Type.Optional(Type.Array(Type.String({minLength:1,maxLength:256}),{maxItems:1000})),confirmed:Type.Optional(Type.Boolean()),sampleId:Type.Optional(Type.String({maxLength:256})),label:Type.Optional(Type.Union([Type.Literal(0),Type.Literal(1)])),unsafeArtifactId:Type.Optional(Type.String({maxLength:256})),task:Type.Optional(Type.String({maxLength:16000})),requestId:Type.Optional(Type.String({maxLength:256})),factId:Type.Optional(Type.String({minLength:1,maxLength:512})),factSource:Type.Optional(Type.Enum(["environment","distilled"])),decision:Type.Optional(Type.Enum(["approved","rejected","stale"])),claimRevision:Type.Optional(Type.String({minLength:1,maxLength:128})),note:Type.Optional(Type.String({maxLength:500}))},{additionalProperties:false});
 const overrideSchema = Type.Object({workspaceId:Type.String({minLength:1,maxLength:256}),agentId:Type.Optional(Type.String({maxLength:256})),mode:Type.Enum(["inherit","off","observe","active"])},{additionalProperties:false});
 export const tokenOptimizerSettingsContribution:SettingsContribution = {id:"token-optimizer",label:"Token optimizer",order:29,render:() => renderTokenOptimizerSettings(),renderFocused:focus => renderTokenOptimizerSettings({focus}),async handleAction({request,url}) {
-  if (!/^\/settings\/token-optimizer(?:\/(?:override|apply|restore|retry|refit|clear|review|prepare|remove-context))?$/.test(url.pathname)) return;
+  if (!/^\/settings\/token-optimizer(?:\/(?:override|apply|restore|retry|refit|clear|review|prepare|remove-context|fact-review|stale-facts))?$/.test(url.pathname)) return;
   const service = tokenOptimizerConfiguration();await service.load();
   if (request.method === "GET" && url.pathname === "/settings/token-optimizer") return Response.json({config:service.snapshot(),workspaces:nativeTokenOptimizers().map(([id]) => id)},{headers:{"cache-control":"no-store"}});
   if (request.method !== "POST") return;
   const json = request.headers.get("content-type")?.includes("application/json");
   const view:View = {};
+  let inline: {key:string;workspaceId:string;agentId:string;fact:FactSummary}|undefined;
   try {
     const config = service.snapshot(), form = json ? null : await request.formData();view.message = "Saved.";
     if (url.pathname === "/settings/token-optimizer") {
@@ -387,7 +393,7 @@ export const tokenOptimizerSettingsContribution:SettingsContribution = {id:"toke
       const raw:unknown = json ? await request.json() : {workspaceId:String(form!.get("workspaceId")),agentId:String(form!.get("agentId"))};
       if (form) {
         Value.Assert(Type.Record(Type.String(),Type.Unknown()),raw);
-        for (const name of ["sampleId","unsafeArtifactId","task","requestId"]) if (form.has(name)) raw[name] = String(form.get(name));
+        for (const name of ["sampleId","unsafeArtifactId","task","requestId","factId","factSource","decision","claimRevision","note","reviewKey"]) if (form.has(name)) raw[name] = String(form.get(name));
         if (form.has("names")) raw.names = form.getAll("names").flatMap(value => String(value).split(",")).map(name => name.trim()).filter(Boolean);
         if (form.has("confirmed")) raw.confirmed = form.get("confirmed") === "true";
         if (form.has("label")) raw.label = Number(form.get("label"));
@@ -395,8 +401,17 @@ export const tokenOptimizerSettingsContribution:SettingsContribution = {id:"toke
       Value.Assert(actionSchema,raw);view.focus = JSON.stringify([raw.workspaceId,raw.agentId]);
       const native = nativeTokenOptimizers().find(([id]) => id === raw.workspaceId)?.[1];if (!native) throw new Error("This workspace isn’t running. Open one of its Agents first.");
       const host = (await native.optimizerSessions()).find(host => native.agentId(host) === raw.agentId);if (!host) throw new Error("This Agent isn’t open any more.");
+      if (raw.reviewKey && url.pathname.endsWith("/fact-review")) {
+        const state = await native.optimizer.status(host), fact = state.knowledge && describeKnowledge(state.knowledge.environment,state.knowledge.distiller,state.knowledge.factReviews).facts.find(row=>row.id === raw.factId && row.source === raw.factSource);
+        if (!fact) throw new Error("This fact is no longer available.");
+        inline = {key:raw.reviewKey,workspaceId:raw.workspaceId,agentId:raw.agentId,fact};
+      }
       if (url.pathname.endsWith("/apply")) {if (!raw.names?.length) throw new Error("Name at least one tool to hide.");const result = await native.optimizer.apply(host,raw.names);if (result.reason) throw new Error(result.reason);view.message = result.added.length ? "Done. Those tools are hidden from the Agent’s next session or resume." : "Nothing changed: those tools are already hidden.";}
       else if (url.pathname.endsWith("/restore")) {await native.optimizer.restore(host,raw.names);view.message = "Restored. They come back on the next session or resume and won’t be suggested again.";}
+      else if (url.pathname.endsWith("/fact-review")) {if (!raw.factId || !raw.factSource || !raw.decision || !raw.claimRevision) throw new Error("Choose a fact and a review decision.");await native.optimizer.reviewFact(host,raw.factSource,raw.factId,raw.decision,raw.claimRevision,raw.note);
+        if (inline) {const state=await native.optimizer.status(host);inline.fact=describeKnowledge(state.knowledge!.environment,state.knowledge!.distiller,state.knowledge!.factReviews).facts.find(row=>row.id===raw.factId && row.source===raw.factSource)!;}
+        view.message = raw.decision === "approved" ? "Approved. Eligible facts are available on the next request when the optimizer is On." : "Saved. This fact is excluded from subsequent model requests across this workspace.";}
+      else if (url.pathname.endsWith("/stale-facts")) {if (!raw.confirmed) throw new Error("Confirm before marking all facts stale.");await native.optimizer.staleFacts(host);view.message = "Marked stale. Review facts before using them in this environment again.";}
       else if (url.pathname.endsWith("/remove-context")) {const removed = await native.optimizer.removeContext(host);view.message = removed ? "Removed. This Agent’s next request won’t include learned facts." : "This Agent had no learned facts to remove.";}
       else if (url.pathname.endsWith("/retry")) {await native.optimizer.retryModelCalls();view.message = "Model calls will be tried again.";}
       else if (url.pathname.endsWith("/refit")) {if (!await native.optimizer.rebuildClassifiers(host,true)) throw new Error("Turn on a local classifier first, or wait for the current retraining to finish.");view.message = "Retraining in the background.";}
@@ -404,9 +419,11 @@ export const tokenOptimizerSettingsContribution:SettingsContribution = {id:"toke
       else if (url.pathname.endsWith("/review")) {if (!raw.sampleId || raw.label === undefined) throw new Error("Choose what actually happened.");await native.optimizer.reviewSample(host,raw.sampleId,raw.label,raw.unsafeArtifactId || null);view.message = "Thanks, review saved.";}
       else {if (!raw.task?.trim()) throw new Error("Describe the task first.");await native.prepare(host,raw.task,raw.requestId ?? "");view.message = (await native.optimizer.status(host)).policy.mode === "active" ? "Tools picked. The Agent uses them from its next request." : "Picks recorded. Watch only leaves the toolset unchanged.";}
     }
+    if (inline && !json) return turboStreamResponse(turboStream("replace",factReviewTarget(inline.key),inlineFactReview(inline,inline.key,inline.fact,view.message)));
     return json ? Response.json({config:service.snapshot(),message:view.message}) : turboStreamResponse(turboStream("replace",panel,await renderTokenOptimizerSettings(view)));
   } catch (error) {
     const message = errorMessage(error);
+    if (inline && !json) return turboStreamResponse(turboStream("replace",factReviewTarget(inline.key),inlineFactReview(inline,inline.key,inline.fact,message)),{status:422});
     return json ? Response.json({error:{code:"invalid_arguments",message}},{status:400}) : turboStreamResponse(turboStream("replace",panel,await renderTokenOptimizerSettings({...view,message,error:true})),{status:422});
   }
 }};
@@ -416,5 +433,5 @@ const configJsonSchema = JSON.parse(JSON.stringify(optimizerConfigSchema)) as Js
 const requestBody = {required:true,content:{"application/json":{schema:configJsonSchema}}};
 export const tokenOptimizerOpenApiPaths = {
   "/settings/token-optimizer":{get:{summary:"Inspect token optimizer configuration and attached workspaces",responses:{"200":{description:"Configuration and attached native runtimes"}}},post:{summary:"Configure the token optimizer; first enable uses Observe",requestBody,responses:{"200":{description:"Saved"},"400":{description:"Invalid configuration"}}}},
-  ...Object.fromEntries(["override","apply","restore","retry","refit","clear","review","prepare","remove-context"].map(action => ["/settings/token-optimizer/"+action,{post:{summary:"Token optimizer: "+action,requestBody:{required:true,content:{"application/json":{schema:JSON.parse(JSON.stringify(action === "override" ? Type.Object({workspaceId:Type.String(),agentId:Type.Optional(Type.String()),mode:Type.Enum(["inherit","off","observe","active"])}) : actionSchema))}}},responses:{"200":{description:"Action accepted; no Agent run is started"},"400":{description:"Invalid action, unavailable scope or current policy refusal"}}}}])),
+  ...Object.fromEntries(["override","apply","restore","retry","refit","clear","review","prepare","remove-context","fact-review","stale-facts"].map(action => ["/settings/token-optimizer/"+action,{post:{summary:"Token optimizer: "+action,requestBody:{required:true,content:{"application/json":{schema:JSON.parse(JSON.stringify(action === "override" ? Type.Object({workspaceId:Type.String(),agentId:Type.Optional(Type.String()),mode:Type.Enum(["inherit","off","observe","active"])}) : actionSchema))}}},responses:{"200":{description:"Action accepted; no Agent run is started"},"400":{description:"Invalid action, unavailable scope or current policy refusal"}}}}])),
 } satisfies Record<string,JsonObject>;

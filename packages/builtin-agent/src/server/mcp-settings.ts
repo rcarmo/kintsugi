@@ -27,12 +27,12 @@ function recallEditor(server?:PublicMcpConnection){
   const settings=server?.recall??defaultMcpRecallSettings();
   return disclosureHtml({summary:{kind:"compact",label:{kind:"text",text:"Output recall"}},bodyHtml:
     field("Model output",`<select class="popup-select" data-controller="popup-select" name="recallMode">${[["off","Off"],["observe","Watch"],["active","On"]].map(([value,label])=>`<option value="${value}"${settings.mode===value?" selected":""}>${label}</option>`).join("")}</select>`)+
-    `<p class="settings-help">Watch keeps originals. On also shortens large MCP-only output for the model. Scripts keep full values. No model calls.</p>`+
-    field("Retention (days)",`<input class="text-field" type="number" name="recallDays" min="1" max="90" required value="${settings.maxAgeDays}">`)+
-    field("Retained items",`<input class="text-field" type="number" name="recallItems" min="1" max="256" required value="${settings.maxItems}">`)+
-    field("Retained payload bytes",`<input class="text-field" type="number" name="recallBytes" min="4096" max="16777216" required value="${settings.maxBytes}">`)+
+    `<p class="settings-help">Off blocks capture and access to retained copies. Watch keeps originals. On also shortens large MCP-only output for the model. Scripts keep full values. Sensitive tools and detected secrets are excluded from recall. No model calls.</p>`+
+    field("Days since last capture",`<input class="text-field" type="number" name="recallDays" min="1" max="90" required value="${settings.maxAgeDays}">`)+
+    field("Retained items per conversation",`<input class="text-field" type="number" name="recallItems" min="1" max="256" required value="${settings.maxItems}">`)+
+    field("Retained payload bytes per conversation",`<input class="text-field" type="number" name="recallBytes" min="4096" max="16777216" required value="${settings.maxBytes}">`)+
     disclosureHtml({summary:{kind:"compact",label:{kind:"text",text:"Declarative profiles (JSON)"}},bodyHtml:field("Profiles",`<textarea class="text-field" name="recallProfiles" rows="5" spellcheck="false">${h(JSON.stringify(settings.profiles,null,2))}</textarea>`)+`<p class="settings-help">Up to 32 profiles. Tool names support *. Kinds: json-list, browser-snapshot, text. Optional path, fields and maxItems (1–20). First matching profile wins.</p><pre><code>${h(JSON.stringify([{name:"issues",tool:"mcp__*__issues",kind:"json-list",path:"items",fields:["id","title","status"],maxItems:8}],null,2))}</code></pre>`})+
-    `<p class="settings-help">Recall tools search and retrieve this Agent’s retained data. Pins obey storage caps. Forget and expiry leave journal evidence intact. Maximum result: 1 MiB.</p>`});
+    `<p class="settings-help">Limits apply to each conversation’s recall index, not total disk use. Reading does not extend retention. Pins obey storage caps. Off does not erase copies; enabling recall restores access to unexpired copies. Forget and expiry leave journal evidence intact. Maximum result: 1 MiB.</p>`});
 }
 async function editor(server?:PublicMcpConnection){const id=server?.id??crypto.randomUUID();return `<form method="post" action="/settings/mcp/save" data-turbo="true" class="form-stack"><input type="hidden" name="id" value="${h(id)}">
   ${field("Name",`<input class="text-field" name="name" required pattern="[a-z][a-z0-9_]{0,31}" value="${h(server?.name??"")}" placeholder="my_server">`)}

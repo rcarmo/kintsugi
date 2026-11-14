@@ -78,3 +78,8 @@
   .token-optimizer__number { width: 100%; }
   .token-optimizer__row:has(> input[type="checkbox"]) { flex-direction: row; align-items: center; }
 }
+
+.token-optimizer-fact { display: grid; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+.token-optimizer-fact + .token-optimizer-fact { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.token-optimizer-fact__actions { display: flex; gap: 6px; flex-wrap: wrap; }
+@media (max-width: 700px) { .token-optimizer-op th { width: auto; white-space: normal; } }

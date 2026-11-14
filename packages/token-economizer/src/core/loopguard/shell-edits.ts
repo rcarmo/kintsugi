@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Selected fixes backported from microsoft/TokenEconomizer@7042ea89dd5e5ecbc67ad865ad6e256e61be8bf0 (#212, #213, #209).
 // Modified TypeScript port of Microsoft TokenEconomizer, revision 81e32e56bb3c4c1b4c9756b429be91e3960116ca; see ../../../LICENSE.
 // Ported from TokenEconomizer loopguard/shell_edits.py.
 import { basename } from "./state.ts";
@@ -48,9 +49,15 @@ function commands(shell: string) {
 }
 const sourceFile = /\.(?:py|pyi|pyx|pxd|js|jsx|mjs|cjs|ts|tsx|rs|go|java|kt|kts|scala|c|cc|cpp|cxx|h|hh|hpp|rb|php|cs|swift|m|mm|sh|bash|zsh|lua|jl|ex|exs|erl|hs|ml|clj|sql|toml|ya?ml|json|cfg|ini|conf|md|rst|html?|css|scss|vue|svelte|xml|gradle|properties|in)$/i;
 function notScratch(path: string): boolean {return Boolean(path) && !/^\/(?:dev|proc|tmp)\//.test(path);}
+const gitValueOptions = new Set(["-C","-c","--git-dir","--work-tree","--namespace","--config-env","--attr-source"]);
+function gitArgs(tokens:string[]):string[] {
+  if (basename(tokens[0]) !== "git") return [];
+  let index=1;while(index<tokens.length && tokens[index].startsWith("-")) index+=gitValueOptions.has(tokens[index]) ? 2 : 1;
+  return tokens.slice(index);
+}
 function restored(tokens: string[]): string[] {
-  if (basename(tokens[0]) !== "git" || tokens.length < 3 || !["checkout","restore"].includes(tokens[1])) return [];
-  const rest = tokens.includes("--") ? tokens.slice(tokens.indexOf("--")+1) : tokens[1] === "restore" ? tokens.slice(2) : [];
+  const args=gitArgs(tokens);if(args.length<2 || !["checkout","restore"].includes(args[0])) return [];
+  const rest = args.includes("--") ? args.slice(args.indexOf("--")+1) : args[0] === "restore" ? args.slice(1) : [];
   return rest.filter(token => !token.startsWith("-"));
 }
 function scriptFlag(token: string,perl: boolean): "next" | "inline" | null {
@@ -94,7 +101,7 @@ export function shellEditTargets(command: string): string[] {
     if (head === "sed" || head === "perl") found.push(...inplaceFiles(tokens,head === "perl"));
     else if (head === "tee") found.push(...tokens.slice(1).filter(token => !token.startsWith("-") && sourceFile.test(token)));
     else if (head === "apply_patch") {const paths = Array.from([...bodies,tokens.slice(1).join(" ")].join("\n").matchAll(/^\*\*\* (?:Update|Add|Delete) File:\s*(.+?)\s*$/gm),match => match[1]);found.push(...paths.length ? paths : ["(patch)"]);}
-    else if (head === "patch" || head === "git" && tokens[1] === "apply") found.push("(patch)");
+    else if (head === "patch" || gitArgs(tokens)[0] === "apply") found.push("(patch)");
     else found.push(...restored(tokens));
   }
   if (/(?:^|[\s/;&|(])python\d?(?:\.\d+)?\b/.test(shell)) found.push(...pythonWrites([shell,...bodies].join("\n")));

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Adapted from sakebomb/mcp-recall f00e8c766697b07a8abaf50448feeca918b2a1d6.
+// Adapted from sakebomb/mcp-recall 2db17d6d01d965e4181a8f18c674561baa588a24.
 // Changes: typed input and local adapters; execution/storage remain owned by Kintsugi.
 /**
  * Compiler & linter diagnostics handler — compresses verbose build / typecheck /

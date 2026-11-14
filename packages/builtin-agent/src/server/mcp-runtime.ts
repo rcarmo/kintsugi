@@ -50,15 +50,30 @@ export function createWorkspaceMcpRuntime(workspaceId:string,registry:Registry,h
       slot.connection=connection;
       // A flapping server must not get a fresh retry budget after every handshake.
       slot.healthyTimer=setTimeout(()=>{slot.healthyTimer=undefined;if(current(slot)&&slot.connection===connection)slot.failures=0;},30_000);slot.healthyTimer.unref();
-      slot.unlisten=connection.client.onClose(()=>failed(slot,new McpConnectionClosedError()));
+      const stopClose=connection.client.onClose(()=>failed(slot,new McpConnectionClosedError()));
       const config=slot.config;
-      registry.install(mcpToolsExtension(config,connection.tools,async conversationId=>{
+      const publish = () => registry.install(mcpToolsExtension(config,connection.tools,async conversationId=>{
         if(!current(slot))throw new Error("MCP connection changed or was disabled. Reconnect before using it.");
         const agents=(await harness().snapshot(WorkspaceAgents,context))?.agents??[],agent=agents.find(agent=>agent.durableId===conversationId||agent.branches?.includes(conversationId));
         if(!agent||agent.readOnly||config.agentIds.length&&!config.agentIds.includes(agent.agentId))throw new Error("This Agent has no access to the MCP connection.");
         const client=slot.connection?.client;if(!client||client.connectionState!=="connected")throw new Error("MCP connection is recovering. Try again after it reconnects.");
         return client;
       },error=>{if(lostMcpSession(error))failed(slot,error);}));
+      publish();
+      let refreshing=false,again=false;
+      const changed=()=>{
+        if(!current(slot)||slot.connection!==connection)return;
+        if(refreshing){again=true;return;}
+        refreshing=true;
+        const job=(async()=>{do{
+          again=false;const tools=await connection.client.listTools({signal:slot.abort!.signal});
+          if(!current(slot)||slot.connection!==connection)return;
+          connection.tools=tools;publish();statuses.set(config.id,{state:"connected",tools:tools.map(tool=>tool.name),message:"Connected"});
+        }while(again);})().catch(error=>{if(current(slot)&&slot.connection===connection)failed(slot,error);}).finally(()=>{refreshing=false;pending.delete(job);drained();});
+        pending.add(job);
+      };
+      const stopChanges=connection.client.onNotification("notifications/tools/list_changed",()=>{if(connection.client.serverCapabilities?.tools?.listChanged)changed();});
+      slot.unlisten=()=>{stopClose();stopChanges();};
       statuses.set(config.id,{state:"connected",tools:connection.tools.map(tool=>tool.name),message:"Connected"});
     }catch(error){failed(slot,error);}
   }

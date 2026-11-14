@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
+// Selected fixes backported from microsoft/TokenEconomizer@7042ea89dd5e5ecbc67ad865ad6e256e61be8bf0 (#212, #213, #209).
 // Modified TypeScript port of Microsoft TokenEconomizer, revision 81e32e56bb3c4c1b4c9756b429be91e3960116ca; see ../../../LICENSE.
 import { unwrapShell } from "../microskills/observe.ts";
 import { splitHeredocs } from "./shell-edits.ts";
-import { notRunPattern, prefixPattern, reportPattern, runFailedPattern, runPassedPattern, verifyPattern } from "./verification-patterns.ts";
+import { rubyVerifyPattern, notRunPattern, prefixPattern, reportPattern, runFailedPattern, runPassedPattern, verifyPattern } from "./verification-patterns.ts";
 function pieces(command: string) {
   command = splitHeredocs(unwrapShell(command)).shell;
   const parts = command.replace(/'[^']*'|"(?:\\.|[^"\\])*"/g,"Q").replace(/[(){}]/g," ").split(/(&&|\|\||\|&|(?<!>)\||;|\n)/);
@@ -29,7 +30,7 @@ export type TestStatus = "own" | "hidden" | "mixed";
 export function statusOfTests(command: string): TestStatus | null {
   const {parts,pipefail} = pieces(command), rank = {own:0,hidden:1,mixed:2};let found: TestStatus | null = null;
   for (let i = 0; i < parts.length; i += 2) {
-    const stage = parts[i], match = verifyPattern.exec(stage.replace(prefixPattern,""));
+    const stage = parts[i], stripped = stage.replace(prefixPattern,""), match = verifyPattern.exec(stripped) ?? rubyVerifyPattern.exec(stripped);
     if (!match || match.index !== 0 || notRunPattern.test(stage)) continue;
     let status: TestStatus = "own";
     for (let j = i+1; j+1 < parts.length; j += 2) {
