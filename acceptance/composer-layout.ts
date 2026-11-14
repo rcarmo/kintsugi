@@ -12,7 +12,7 @@
  *     [--layout-only] # explicitly partial: no sends, busy states or long-transcript checks
  *
  * Layout-only uses Set up later on the acceptance instance and stages no Pi agent
- * or inference. Its six scenarios are explicitly partial, never full acceptance.
+ * or inference. These layout/pointer scenarios are partial, never full acceptance.
  *
  * Every transition is checked on a per-frame trace: each tracked element changes
  * at most once, all changes land in the same frame, and the settled arrangement
@@ -84,7 +84,7 @@ const bottom = (box: Box): number => box ? box[1] + box[3] : Number.NaN;
 let floatingInset = 4;
 const floatingLabel = { opener: "Open composer", followLatest: "Follow latest", pendingTranscript: "Will autoswitch to transcript when agent is done" };
 
-const layoutOnlyScenarios = new Set(["mobile-D1-selection", "mobile-H1-H7-height", "mobile-terminal-tab", "desktop-D1-selection", "mobile-launch-editor", "desktop-launch-editor"]);
+const layoutOnlyScenarios = new Set(["mobile-D1-selection", "mobile-H1-H7-height", "mobile-terminal-tab", "desktop-D1-selection", "mobile-launch-editor", "desktop-launch-editor", "tablet-H6-divider", "desktop-H6-divider"]);
 
 async function scenario(name: string, description: string, body: (recorder: ScenarioRecorder) => Promise<void>): Promise<void> {
   if (args["layout-only"] && !layoutOnlyScenarios.has(name)) return;
@@ -150,14 +150,21 @@ async function closeComposer(): Promise<void> {
   }
 }
 
-async function resizeComposerDivider(deltaHeight: number): Promise<void> {
+async function resizeComposerDivider(deltaHeight: number, pointer: "mouse" | "touch" | "pen" = "mouse"): Promise<void> {
   const { x, y: startY } = await page.center('.agent-composer-pane .composer-divider');
-  await page.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y: startY });
-  await page.cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y: startY, button: "left", buttons: 1, clickCount: 1 });
-  for (let step = 1; step <= 4; step++) {
-    await page.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y: startY - deltaHeight * step / 4, button: "left", buttons: 1 });
+  if (pointer === "touch") {
+    await page.cdp.send("Input.dispatchTouchEvent", { type:"touchStart",touchPoints:[{x,y:startY}] });
+    for (let step=1;step<=4;step++) await page.cdp.send("Input.dispatchTouchEvent", {type:"touchMove",touchPoints:[{x,y:startY-deltaHeight*step/4}]});
+    await page.cdp.send("Input.dispatchTouchEvent", {type:"touchEnd",touchPoints:[]});
+    await Bun.sleep(300);
+    return;
   }
-  await page.cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y: startY - deltaHeight, button: "left", clickCount: 1 });
+  await page.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y: startY, pointerType:pointer });
+  await page.cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y: startY, button: "left", buttons: 1, clickCount: 1, pointerType:pointer });
+  for (let step = 1; step <= 4; step++) {
+    await page.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y: startY - deltaHeight * step / 4, button: "left", buttons: 1, pointerType:pointer });
+  }
+  await page.cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y: startY - deltaHeight, button: "left", clickCount: 1, pointerType:pointer });
   await Bun.sleep(300);
 }
 
@@ -502,6 +509,30 @@ await scenario("mobile-D21-D22-floating", "D21/D22: floating buttons stack botto
   await closeComposer();
 });
 
+// Tablet pointer review uses Chromium touch/pen input, not an iPad/WebKit keyboard.
+await page.layout("desktop");
+await page.cdp.send("Emulation.setDeviceMetricsOverride", {width:1024,height:900,deviceScaleFactor:2,mobile:false});
+await page.cdp.send("Emulation.setTouchEmulationEnabled", {enabled:true,maxTouchPoints:5});
+await page.navigate(builtinUrl,sel.transcript);
+await Bun.sleep(3000);
+await scenario("tablet-H6-divider", "Touch and pen dragging resize a wide tablet composer without taking focus from its text; the divider has a larger touch target.", async recorder=>{
+  await openComposer();
+  const state=()=>page.evaluate<{height:number;focused:boolean;target:number}>(`(() => {const input=[...document.querySelectorAll(${JSON.stringify(sel.input)})].find(e=>e.checkVisibility());const composer=input.closest(".composer");return {height:composer.getBoundingClientRect().height,focused:document.activeElement===input,target:composer.querySelector(".composer-divider").getBoundingClientRect().height};})()`);
+  await page.tap(sel.input);
+  const before=await state();
+  await resizeComposerDivider(110,"touch");
+  const touch=await state();
+  recorder.add(check("finger drag expands the composer",touch.height>before.height+50,`${before.height} → ${touch.height}`),check("finger drag preserves text focus",before.focused&&touch.focused,`${before.focused} → ${touch.focused}`),check("touch divider is at least 24px tall",touch.target>=24,`${touch.target}px`));
+  await page.tap(sel.input);
+  await resizeComposerDivider(80,"pen");
+  const pen=await state();
+  recorder.add(check("pen drag expands the composer",pen.height>touch.height+30,`${touch.height} → ${pen.height}`),check("pen drag preserves text focus",pen.focused,String(pen.focused)));
+  await resizeComposerDivider(-160,"touch");
+  const shrunk=await state();
+  recorder.add(check("finger drag can shrink again",shrunk.height<pen.height-80,`${pen.height} → ${shrunk.height}`),check("shrinking preserves text focus",shrunk.focused,String(shrunk.focused)));
+  await recorder.file("tablet-resized.png",await page.screenshot());
+});
+
 // ─── Desktop layout ─────────────────────────────────────────────────────────
 await page.layout("desktop");
 floatingInset = 10;
@@ -519,6 +550,15 @@ await scenario("desktop-D1-selection", "D1: on desktop the composer is open and 
     check("D1: text field focused", after.focus.includes("composer-input"), `focus: ${after.focus || "body"}`),
     check("D4: four buttons in one vertical column (close, attach, dictation, send)", buttonColumn.length === 4 && buttonColumn.every((box, index) => close(box[0] + box[2] / 2, buttonColumn[0]![0] + buttonColumn[0]![2] / 2) && (index === 0 || box[1] >= bottom(buttonColumn[index - 1]!))), JSON.stringify(buttonColumn)),
   );
+});
+
+await scenario("desktop-H6-divider", "Mouse and keyboard resizing still work without sending a prompt.", async recorder=>{
+  const height=()=>page.evaluate<number>(`[...document.querySelectorAll(".agent-pane-composer")].find(e=>e.checkVisibility()).getBoundingClientRect().height`);
+  const before=await height();await resizeComposerDivider(100);const dragged=await height();
+  recorder.add(check("mouse drag expands the composer",dragged>before+50,`${before} → ${dragged}`));
+  await page.cdp.send("Input.dispatchKeyEvent",{type:"rawKeyDown",key:"ArrowUp",code:"ArrowUp",windowsVirtualKeyCode:38});
+  await page.cdp.send("Input.dispatchKeyEvent",{type:"keyUp",key:"ArrowUp",code:"ArrowUp",windowsVirtualKeyCode:38});
+  await Bun.sleep(300);const keyed=await height();recorder.add(check("focused divider accepts ArrowUp",close(keyed,dragged+20,1),`${dragged} → ${keyed}`));
 });
 
 await scenario("desktop-D8-D2-send", "D8/D2/H4: Enter inserts a newline; Cmd+Enter sends; the composer stays open and returns to its min height in one step.", async (recorder) => {

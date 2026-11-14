@@ -44,10 +44,11 @@ const out = args.out ?? `/persistent/acceptance-reports/soft-keyboard-${stamp}`;
 await mkdir(out, { recursive: true });
 const log = (message: string): void => console.log(`[soft-keyboard] ${message}`);
 
-const setup: Stage = await stage({ kintsugi: args.kintsugi, workspaceId: args.workspace, model: args.model, log });
-if (!setup.piId) throw new Error("Soft-keyboard acceptance requires a staged Pi agent");
+// Check the hardware prerequisite before staging Agents or generating a transcript.
 const sim = await Simulator.connect();
 const inspector = await sim.inspector();
+const setup: Stage = await stage({ kintsugi: args.kintsugi, workspaceId: args.workspace, model: args.model, log });
+if (!setup.piId) throw new Error("Soft-keyboard acceptance requires a staged Pi agent");
 log(`simulator ${sim.udid}; inspector ${inspector.url}`);
 
 async function openPwa(): Promise<WebKitPage> {

@@ -1,5 +1,5 @@
 import { appendComposerQuote, composerViewportHeight, focusComposerText, sizeComposer } from "./composer-editor.ts";
-import { changeLayout, focusLikelyOpensSoftwareKeyboard, isWorkspacePaneVisible, mobileComposerMediaQuery, type AgentComposerQuoteDetail, type WorkspaceClientControllerConstructor } from "@kintsugi/shared";
+import { changeLayout, focusLikelyOpensSoftwareKeyboard, softwareKeyboardArranged, isWorkspacePaneVisible, mobileComposerMediaQuery, type AgentComposerQuoteDetail, type WorkspaceClientControllerConstructor } from "@kintsugi/shared";
 
 /** The composer may grow to this share of the space above the keyboard (or of the window). */
 const composerMaxShare = 0.4;
@@ -171,7 +171,10 @@ export function createAgentComposerController(Controller: WorkspaceClientControl
       if (event.button !== 0) return;
       event.preventDefault();
       const divider = this.composer!.querySelector<HTMLElement>(".composer-divider")!;
-      divider.focus({ preventScroll: true });
+      // Touch/Pencil must keep the editor focused: blurring it dismisses iPad's
+      // keyboard and moves the divider during the drag. Mouse users can focus
+      // the separator for subsequent arrow-key resizing; Tab works independently.
+      if (event.pointerType === "mouse" && !softwareKeyboardArranged()) divider.focus({ preventScroll: true });
       divider.setPointerCapture(event.pointerId);
       this.resizing = { pointerId: event.pointerId, y: event.clientY, height: this.composer!.getBoundingClientRect().height };
     }
