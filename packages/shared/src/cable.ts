@@ -15,11 +15,14 @@ export interface CableSubscriptionOptions {
 
 const cableIdentifierSchema = Type.Union([
   Type.Object({ channel: Type.Literal("shell") }),
+  Type.Object({ channel: Type.Literal("resources"), workspaceId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
   Type.Object({ channel: Type.Literal("module"), name: Type.String({ minLength: 1 }), workspaceId: Type.String({ minLength: 1 }), params: Type.Record(Type.String(), Type.String()) }),
   Type.Object({ channel: Type.Literal("agent"), workspaceId: Type.String({ minLength: 1 }), agentId: Type.String({ minLength: 1 }) }),
   Type.Object({ channel: Type.Literal("agent-turn"), workspaceId: Type.String({ minLength: 1 }), agentId: Type.String({ minLength: 1 }), turnId: Type.String({ minLength: 1 }), branchId: Type.String({ minLength: 1 }) }),
 ]);
 
+/** Foreground heartbeat cadence shared by the server and the browser watchdog. */
+export const cableHeartbeatIntervalMs = 10_000;
 export const cableCommandBodyLimit = 64 * 1024;
 export const cableCommandBatchLimit = 256;
 
@@ -38,7 +41,7 @@ const cableClientMessageSchema = Type.Union([
 const cableClientBatchSchema = Type.Array(cableClientMessageSchema, { minItems: 1, maxItems: cableCommandBatchLimit });
 
 const cableServerMessageSchema = Type.Union([
-  Type.Object({ type: Type.Literal("welcome"), connectionId: Type.String() }),
+  Type.Object({ type: Type.Literal("welcome"), connectionId: Type.String(), heartbeatIntervalMs: Type.Optional(Type.Integer({minimum:1000,maximum:60000})) }),
   Type.Object({ type: Type.Literal("confirm_subscription"), identifier: cableIdentifierSchema, subscriptionId: subscriptionIdSchema, html: Type.Optional(Type.String()) }),
   Type.Object({ type: Type.Literal("reject_subscription"), identifier: cableIdentifierSchema, subscriptionId: subscriptionIdSchema, reason: Type.String() }),
   Type.Object({ type: Type.Literal("turbo_stream"), identifier: cableIdentifierSchema, subscriptionId: subscriptionIdSchema, html: Type.String() }),
@@ -132,6 +135,7 @@ function requireNonEmpty(value: string, message: string): string {
 
 export const CableTopics = {
   shell(): CableIdentifier { return { channel: "shell" }; },
+  resources(workspaceId?: string): CableIdentifier { return { channel: "resources", workspaceId }; },
   module(name: string, workspaceId: string, params: Record<string, string> = {}): CableIdentifier {
     return { channel: "module", name: requireNonEmpty(name, "channel name must not be empty"), workspaceId: requireNonEmpty(workspaceId, "workspace identifier must not be empty"), params };
   },
@@ -156,6 +160,7 @@ export const CableTopics = {
 export function serializeCableIdentifier(identifier: CableIdentifier): string {
   switch (identifier.channel) {
     case "shell": return JSON.stringify(["shell"]);
+    case "resources": return JSON.stringify(["resources", identifier.workspaceId ?? ""]);
     case "module": return JSON.stringify(["module", identifier.name, identifier.workspaceId, Object.entries(identifier.params).sort(([a], [b]) => a.localeCompare(b))]);
     case "agent-turn": return JSON.stringify([
       identifier.channel,

@@ -190,3 +190,22 @@ test("a batch stops dispatching when snapshot backpressure closes its connection
   expect(subscriptions).toBe(1);
   expect(cable.stats().sockets).toBe(0);
 });
+
+test("resource meter scope allows global totals but rejects unknown workspaces before collecting", async () => {
+  const registry = createWorkspaceRegistry(); registry.add("known");
+  const scopes: Array<string | undefined> = [];
+  let releases = 0;
+  const cable = createCableServer({ registry, events: createKintsugiEventBus(), logError: () => {}, channels: [{ name: "resources", subscribe(identifier, listener) {
+    if (identifier.channel !== "resources") throw Error("Wrong resource channel");
+    scopes.push(identifier.workspaceId); listener("");
+    return { unsubscribe() { releases++; } };
+  } }] });
+  const ws = socket(); cable.open(ws, { kind: "cable", connectionId: "meter-viewer" });
+  for (const workspaceId of [undefined, "known", "missing"]) cable.message(ws, JSON.stringify({ command: "subscribe", identifier: CableTopics.resources(workspaceId), subscriptionId: workspaceId ?? "global" }));
+  await Bun.sleep(0);
+  expect(scopes).toEqual([undefined, "known"]);
+  expect(ws.sent.filter(message => message.type === "confirm_subscription")).toHaveLength(2);
+  expect(ws.sent.at(-1)?.type).toBe("reject_subscription");
+  expect(serializeCableIdentifier(CableTopics.resources())).not.toBe(serializeCableIdentifier(CableTopics.resources("known")));
+  cable.close(ws); expect(releases).toBe(2);
+});

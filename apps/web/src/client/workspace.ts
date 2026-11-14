@@ -17,6 +17,7 @@ import { NavigationOriginController } from "./navigation-origin-controller.ts";
 import { BrowserTitleController } from "./browser-title-controller.ts";
 import { ConnectionModeSettingsController } from "./connection-mode-settings.ts";
 import { LayoutPickerController } from "./layout-picker.ts";
+import { ResourceMetersController } from "./resource-meters-controller.ts";
 import { registerWorkspaceAppFrameController } from "./workspace-app-frame.ts";
 import { installWorkspaceCable } from "./workspace-cable.ts";
 import { clientHooks } from "./workspace-client-hooks.ts";
@@ -61,6 +62,7 @@ for (const module of workspaceClientModules) await module.install({ application,
 registerWorkspaceControllers({
   "connection-mode-settings": ConnectionModeSettingsController,
   "layout-picker": LayoutPickerController,
+  "resource-meters": ResourceMetersController,
   "workspace-presentation": createWorkspacePresentationController(Controller, application, clientHooks),
 });
 registerWorkspaceNavigationControllers();

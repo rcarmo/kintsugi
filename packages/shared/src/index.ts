@@ -510,6 +510,7 @@ export {
   decodeCableClientMessages,
   encodeCableClientMessages,
   cableCommandBodyLimit,
+  cableHeartbeatIntervalMs,
   cableCommandBatchLimit,
   decodeCableServerMessage,
   serializeCableIdentifier,

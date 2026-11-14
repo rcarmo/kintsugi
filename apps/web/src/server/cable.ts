@@ -1,6 +1,7 @@
 import { KintsugiCoreError, type KintsugiEventBus } from "@kintsugi/core";
 import {
   cableCommandBodyLimit,
+  cableHeartbeatIntervalMs,
   decodeCableClientMessages,
   errorMessage,
   serializeCableIdentifier,
@@ -77,13 +78,14 @@ export function createCableServer(options: CableServerOptions): CableServer {
   const heartbeat = setInterval(() => {
     const time = Date.now();
     for (const ws of connections.keys()) send(ws, { type: "ping", time });
-  }, 30_000);
+  }, cableHeartbeatIntervalMs);
   heartbeat.unref?.();
 
   function authorize(identifier: CableIdentifier): void {
     if (identifier.channel === "shell") return;
-    if (identifier.channel === "module") {
-      if (!options.registry.get(identifier.workspaceId)) throw new KintsugiCoreError("workspace_not_found", `workspace not found: ${identifier.workspaceId}`);
+    if (identifier.channel === "module" || identifier.channel === "resources") {
+      const workspaceId = identifier.workspaceId;
+      if (workspaceId !== undefined && !options.registry.get(workspaceId)) throw new KintsugiCoreError("workspace_not_found", `workspace not found: ${workspaceId}`);
     }
   }
 
@@ -197,7 +199,7 @@ export function createCableServer(options: CableServerOptions): CableServer {
   return {
     open(ws, data) {
       connections.set(ws, { id: data.connectionId, attempts: new Map() });
-      send(ws, { type: "welcome", connectionId: data.connectionId });
+      send(ws, { type: "welcome", connectionId: data.connectionId, heartbeatIntervalMs: cableHeartbeatIntervalMs });
     },
     message(ws, raw) {
       handleInboundCommand(ws, raw);

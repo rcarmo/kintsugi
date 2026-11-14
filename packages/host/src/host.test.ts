@@ -8,6 +8,7 @@ import { command } from "./system/command.ts";
 import { HostService, startHostService } from "./system/service.ts";
 import { hostRequest } from "./server/connection.ts";
 import { parseHostRequest, parseHostInput, type HostCommand, type HostSample, type HostReply } from "./protocol.ts";
+import { unavailableResourceCounter } from "@kintsugi/core/resource-metrics";
 import { cpuPercent, counters, effectiveCpu, filesystemUsage } from "./system/sampler.ts";
 
 const sample: HostSample = { sampledAt: "2026-01-01T00:00:00.000Z", durationMs: 1000, metrics: [], sections: [] };
@@ -102,4 +103,14 @@ test("global RAM policy uses a private typed operation without workspace or comm
     return { maximumMemory: 1024 ** 3, capacity: 2 * 1024 ** 3, defaultMemory: 1024 ** 3 };
   };
   expect(await service.handle({ operation: "resource-policy", action: "inspect" })).toMatchObject({ maximumMemory: 1024 ** 3 });
+});
+
+test("resource counter commands are bounded, read-only and dispatched separately from expensive diagnostics", async () => {
+  expect(parseHostRequest('{"operation":"meters","workspaceIds":["a","b"]}')).toEqual({ operation: "meters", workspaceIds: ["a", "b"] });
+  expect(() => parseHostRequest(JSON.stringify({ operation: "meters", workspaceIds: Array(33).fill("a") }))).toThrow();
+  expect(() => parseHostRequest('{"operation":"meters","workspaceIds":["../escape"]}')).toThrow();
+  const service = new HostService(async () => { throw Error("Full diagnostics must not run for meters"); });
+  await expect(service.handle({ operation: "meters", workspaceIds: [] })).rejects.toThrow("unavailable");
+  service.meters = async ids => { expect(ids).toEqual(["a"]); return { scope: "system", system: unavailableResourceCounter(), workspaces: {} }; };
+  expect(await service.handle({ operation: "meters", workspaceIds: ["a"] })).toMatchObject({ scope: "system", workspaces: {} });
 });

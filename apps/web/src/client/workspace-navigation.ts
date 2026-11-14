@@ -246,6 +246,7 @@ class WorkspaceNavigationController extends Controller<HTMLElement> {
   private setWorkspacePaneCollapsed(collapsed: boolean): void {
     this.element.classList.toggle("is-workspace-pane-collapsed", collapsed);
     sessionStorage.setItem("kintsugi:workspace-pane-collapsed", String(collapsed));
+    document.dispatchEvent(new CustomEvent("kintsugi:workspace-pane-visibility-changed"));
   }
 
   private visibleWorkspacePaneToggle(): HTMLButtonElement | null {
@@ -306,6 +307,7 @@ class WorkspaceNavigationController extends Controller<HTMLElement> {
   }
 
   setActiveWorkspace(workspaceId?: string): void {
+    document.dispatchEvent(new CustomEvent("kintsugi:active-workspace-changed", { detail: { workspaceId } }));
     if (this.pinnedWorkspace?.id !== workspaceId) {
       this.pinnedWorkspace = undefined;
       const rows = this.arrangeWorkspaceRows();

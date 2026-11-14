@@ -87,7 +87,7 @@ const workspaceStartupOperations = {
   imageOutdated: (id: string) => workspaceImageOutdated(id, undefined, kintsugiEvents),
   get provisioning() { return app.provisioning; },
 };
-const cableServer = createCableServer({ registry, channels: [...workspaceModules.flatMap((module) => module.cableChannels ?? []), { name: "surface", subscribe: (identifier, listener, _events, shown) => app.subscribeSurface(identifier, listener, shown) }, { name: "shell", subscribe: (_identifier, listener) => app.subscribeShell(listener) }], events: kintsugiEvents });
+const cableServer = createCableServer({ registry, channels: [...workspaceModules.flatMap((module) => module.cableChannels ?? []), { name: "surface", subscribe: (identifier, listener, _events, shown) => app.subscribeSurface(identifier, listener, shown) }, { name: "shell", subscribe: (_identifier, listener) => app.subscribeShell(listener) }, { name: "resources", subscribe: (identifier, listener) => app.subscribeResources(identifier, listener) }], events: kintsugiEvents });
 
 app = createWebApp({
   registry,

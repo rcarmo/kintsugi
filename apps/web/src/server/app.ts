@@ -65,6 +65,7 @@ import { httpErrorStatus, problemJsonResponse } from "./http-responses.ts";
 import { jsonResponse, matchRoute, replace, response, textResponse, update, wantsStream } from "@kintsugi/shared/http";
 import { launchComposerContent, renderLaunchComposer, renderLaunchAgentType, renderLaunchWorkspaceTemplate, launchWorkspaceAction } from "./launch-composer.ts";
 import { createLiveResource } from "./live-resource.ts";
+import { createResourceMeters } from "./resource-meters.ts";
 import { handleOnboardingRequest, renderOnboardingDialog } from "./onboarding/routes.ts";
 import { kintsugiOpenApi } from "./openapi.ts";
 import { createPageLayout } from "./page-layout.ts";
@@ -83,6 +84,7 @@ const jsonStringSchema = Type.String();
 const connectionSettingsLink = actionLinkHtml({ href: "/settings?section=browser-transport", variant: "secondary", content: { kind: "caption", caption: "Connection settings", iconHtml: Icons.Settings }, attributesHtml: 'data-turbo="false"' });
 export interface WebAppDeps {
   workspaceResourceBackend?: WorkspaceResourceBackend;
+  resourceCounters?: typeof import("@kintsugi/workspace").inspectResourceCounters;
   registry: WorkspaceRegistry;
   workspaceModules?: WorkspaceModule[];
   /** Event bus passed through to the agent module routes. */
@@ -105,6 +107,7 @@ export interface WebApp {
   fetch(request: Request): Promise<Response>;
   invalidateWorkspace(workspaceId: string): void;
   subscribeShell(listener: (html: string) => void): Promise<import("@kintsugi/shared").CableChannelSubscription>;
+  subscribeResources(identifier: CableIdentifier, listener: (html: string) => void): import("@kintsugi/shared").CableChannelSubscription;
   subscribeSurface(identifier: CableIdentifier, listener: (html: string) => void, shown?: LiveRegionDigests): Promise<import("@kintsugi/shared").CableChannelSubscription>;
   deleteCurrentWorkspaceFromAgent(workspaceId: string, force: boolean): Promise<DeleteCurrentWorkspaceResult>;
   resumeWorkspaceDeletions(): void;
@@ -152,6 +155,14 @@ export function createWebApp(deps: WebAppDeps): WebApp {
   const reportPresentationError = (error: Error) => logError(
     `Could not refresh live state: ${errorMessage(error)}`,
   );
+  const resourceMeters = createResourceMeters({
+    load: deps.resourceCounters,
+    workspace(id) {
+      const entry = deps.registry.get(id);
+      return entry ? { id, title: workspaceTitle(entry), parked: entry.parked } : undefined;
+    },
+    onError: error => logError(`Resource meters unavailable: ${errorMessage(error)}`),
+  });
   const shell = createLiveResource(async () => {
     const pane = await workspacePaneCollections("");
     return [...workspacePaneCollectionsRegions(pane), ...[...globalRegions.values()].flat(),
@@ -1336,6 +1347,11 @@ export function createWebApp(deps: WebAppDeps): WebApp {
 
   return {
     subscribeShell: listener => shell.subscribe(listener),
+    subscribeResources(identifier, listener) {
+      if (identifier.channel !== "resources") throw new Error("Expected resource meters channel");
+      if (identifier.workspaceId && !deps.registry.get(identifier.workspaceId)) throw new Error("Workspace not found");
+      return resourceMeters.subscribe(identifier.workspaceId, listener);
+    },
     subscribeSurface,
     invalidateWorkspace,
     deleteCurrentWorkspaceFromAgent,

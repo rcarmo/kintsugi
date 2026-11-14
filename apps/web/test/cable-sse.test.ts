@@ -224,3 +224,7 @@ test("one HTTP batch restores ordered subscriptions, with fresh snapshots after 
     expect(released).toBe(4);
   } finally { f.server.stop(true); }
 });
+
+test("idle SSE streams receive a foreground heartbeat within twelve seconds",async()=>{
+  const f=fixture();try{const stream=await open(f),began=Date.now();const heartbeat=await stream.next();expect(heartbeat.type).toBe("ping");expect(Date.now()-began).toBeLessThan(12000);stream.abort.abort();await waitClosed(f);}finally{f.server.stop(true);}
+},15000);

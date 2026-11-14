@@ -279,3 +279,15 @@ test("explicit task settings retain their version-3 downgrade fence after later 
   expect(JSON.parse(await readFile(marker,"utf8"))).toEqual({version:3});
   expect((await f.create().inspect("a")).desired.pids).toBe(2048);
 }));
+
+test("meter counters do not admit, start, reconfigure or persist parked/missing workspaces", () => fixture(async f => {
+  const control = f.create();
+  expect(await control.counters([])).toEqual({}); expect(f.calls).toEqual([]);
+  const result = await control.counters(["a", "missing"]);
+  expect(Object.keys(result).sort()).toEqual(["a", "missing"]);
+  expect(result.a!.state).toBe("stopped"); expect(result.a!.cpuUsec).toBeNull();
+  expect(result.missing!.state).toBe("unavailable");
+  expect(f.calls.every(call => ["ps", "inspect"].includes(call[0]!))).toBe(true);
+  expect(f.calls[0]).toContain("name=^/kintsugi-(a|missing)$");
+  expect(await Bun.file(f.file).exists()).toBe(false);
+}));

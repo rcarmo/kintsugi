@@ -703,3 +703,4 @@ export async function prepareWorkspaceRuntime(id: string, report: (detail: strin
 }
 
 export { inspectWorkspaceResources, configureWorkspaceResources, workspaceMemoryPolicyAvailable, inspectWorkspaceMemoryPolicy, configureWorkspaceMemoryPolicy } from "./resources.ts";
+export { inspectResourceCounters } from "./resource-metrics.ts";

@@ -53,3 +53,10 @@ test("malformed, empty, nested and oversized batches fail validation", () => {
   }
   expect(() => decodeCableClientMessages("not JSON")).toThrow("valid JSON");
 });
+
+test("welcome cadence metadata is optional for older app servers and bounded when supplied",async()=>{
+  const {decodeCableServerMessage}=await import("../src/cable.ts");
+  expect(decodeCableServerMessage('{"type":"welcome","connectionId":"legacy"}')).toEqual({type:"welcome",connectionId:"legacy"});
+  expect(decodeCableServerMessage('{"type":"welcome","connectionId":"new","heartbeatIntervalMs":10000}')).toMatchObject({heartbeatIntervalMs:10000});
+  for(const heartbeatIntervalMs of [0,-1,100000,"10000"])expect(()=>decodeCableServerMessage(JSON.stringify({type:"welcome",connectionId:"invalid",heartbeatIntervalMs}))).toThrow();
+});

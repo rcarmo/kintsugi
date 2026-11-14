@@ -1,5 +1,6 @@
 import { chown, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { readCgroupResourceCounter, unavailableResourceCounter, type ResourceCounter } from "../../../packages/core/src/resource-metrics.ts";
 import { workspaceOomGroupKills } from "./workspace-oom-events.ts";
 import { createKeyedOperationQueue, readTextIfExists, writeJsonAtomic } from "../../../packages/core/src/index.ts";
 import { Type, type Static } from "typebox";
@@ -45,8 +46,9 @@ export function createWorkspaceResourceControl(options: { memory: number; cpus: 
   const memoryPolicy = (): WorkspaceMemoryPolicySnapshot => ({ maximumMemory: budget, configuredMaximumMemory, capacity, defaultMemory: defaults.memory, defaultPids: defaults.pids, configuredDefaultPids, pidsCapacity });
   const save = () => writeJsonAtomic(file, state, { mode: 0o600 });
   const idOf = (c: Container) => { const id = c.Config.Labels?.["com.kintsugi.workspace-id"]; return id && /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(id) && c.Config.Labels?.["com.kintsugi.type"] === "workspace" && c.Name === `/kintsugi-${id}` ? id : undefined; };
-  async function containers() {
-    const ids = (await options.docker("ps", "-aq", "--filter", "label=com.kintsugi.type=workspace")).split(/\s+/).filter(Boolean);
+  async function containers(selected?: readonly string[]) {
+    const filter = selected ? ["--filter", `name=^/kintsugi-(${selected.map(id => id.replaceAll(".", "\\.")).join("|")})$`] : [];
+    const ids = (await options.docker("ps", "-aq", "--filter", "label=com.kintsugi.type=workspace", ...filter)).split(/\s+/).filter(Boolean);
     return ids.length ? Value.Parse(inspectSchema, JSON.parse(await options.docker("inspect", ...ids))).filter(c => idOf(c)) : [];
   }
   function entry(c: Container): RecordState {
@@ -177,6 +179,20 @@ export function createWorkspaceResourceControl(options: { memory: number; cpus: 
   }
   const summary = () => ({ budget, aggregateMemory: options.memory, aggregateSwap: options.swap ?? 0, defaults, totalWorkspaces: Object.keys(state ?? {}).length, workspaces: Object.fromEntries(Object.entries(state ?? {}).sort(([,a],[,b]) => (b.blockedAt ?? 0) - (a.blockedAt ?? 0)).slice(0,128)) });
   return {
+    async counters(ids: readonly string[]): Promise<Record<string, ResourceCounter>> {
+      const readings: Record<string, ResourceCounter> = Object.fromEntries(ids.map(id => [id, unavailableResourceCounter()]));
+      if (!ids.length) return readings;
+      for (const container of await containers(ids)) {
+        const id = idOf(container)!;
+        if (!ids.includes(id)) continue;
+        if (!container.State.Running) { readings[id] = unavailableResourceCounter("stopped"); continue; }
+        try {
+          const root = await cgroup(container);
+          if (root) readings[id] = await readCgroupResourceCounter(root, `${container.Id}:${container.State.StartedAt ?? ""}`);
+        } catch (error) { console.error("Workspace resource counters unavailable", id, error); }
+      }
+      return readings;
+    },
     status() { return summary(); },
     policy() { return serialize("resources", async () => { await load(); return memoryPolicy(); }); },
     configurePolicy(input: WorkspaceMemoryPolicyChange) { return serialize("resources", async () => {

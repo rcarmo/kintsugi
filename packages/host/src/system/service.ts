@@ -9,6 +9,7 @@ import { parseObservableTerminalMessage } from "@kintsugi/observable-terminal/sh
 import { hostSocketPath, parseHostRequest, parseHostInput, terminalSize, validTerminalId, type HostReply, type HostResult, type HostCommand, type HostSample, type HostTerminal } from "../protocol.ts";
 import { command } from "./command.ts";
 import { sampleHost } from "./sampler.ts";
+import { readCgroupResourceCounter, unavailableResourceCounter, type ResourceCounter, type ResourceSnapshot } from "@kintsugi/core/resource-metrics";
 
 const tmux = (socketName: string, ...args: string[]) => command(["tmux", "-L", socketName, ...args]);
 
@@ -17,6 +18,7 @@ export class HostService {
   private sampling?: Promise<HostSample>;
   constructor(private readonly sample: () => Promise<HostSample>, private readonly socketName = "kintsugi-host", private readonly network?: (request: Extract<HostCommand, { operation: "network" }>) => Promise<HostResult>) {}
 
+  meters?: (workspaceIds: readonly string[]) => Promise<ResourceSnapshot>;
   resourceControl?: (request: Extract<HostCommand, { operation: "resources" | "resource-policy" }>) => Promise<HostResult>;
 
   private async list(): Promise<HostTerminal[]> {
@@ -35,6 +37,10 @@ export class HostService {
   }
   async handle(request: HostCommand): Promise<HostResult> {
     switch (request.operation) {
+      case "meters": {
+        if (!this.meters) throw new Error("Resource meters are unavailable");
+        return this.meters(request.workspaceIds);
+      }
       case "resource-policy":
       case "resources": {
         if (!this.resourceControl) throw new Error("Workspace resource control is unavailable");
@@ -66,7 +72,7 @@ export class HostService {
 }
 
 /** Only the app receives this socket mount. No privileged API on the public supervisor listener. */
-export async function startHostService(options: { resourceControl?: (request: Extract<HostCommand, { operation: "resources" | "resource-policy" }>) => Promise<HostResult>; root: string; effectiveMemory: number; socketPath?: string; tmuxSocketName?: string; network?: (request: Extract<HostCommand, { operation: "network" }>) => Promise<HostResult> }) {
+export async function startHostService(options: { workspaceCounters?: (ids: readonly string[]) => Promise<Record<string, ResourceCounter>>; resourceControl?: (request: Extract<HostCommand, { operation: "resources" | "resource-policy" }>) => Promise<HostResult>; root: string; effectiveMemory: number; socketPath?: string; tmuxSocketName?: string; network?: (request: Extract<HostCommand, { operation: "network" }>) => Promise<HostResult> }) {
   const socketPath = options.socketPath ?? hostSocketPath;
   const socketName = options.tmuxSocketName ?? "kintsugi-host";
   await mkdir(dirname(socketPath), { recursive: true });
@@ -74,6 +80,20 @@ export async function startHostService(options: { resourceControl?: (request: Ex
   await tmux(socketName, "-f", "/dev/null", "start-server", ";", "set-option", "-g", "exit-empty", "off");
   const service = new HostService(() => sampleHost(options.root, options.effectiveMemory), socketName, options.network);
   service.resourceControl = options.resourceControl;
+  const workspaceCounters = options.workspaceCounters;
+  if (workspaceCounters) service.meters = async ids => {
+    const [system, workspaces] = await Promise.all([
+      readCgroupResourceCounter(options.root, "system").catch(error => {
+        console.error("System resource counters unavailable", error);
+        return unavailableResourceCounter();
+      }),
+      workspaceCounters(ids).catch(error => {
+        console.error("Workspace resource inspection unavailable", error);
+        return Object.fromEntries(ids.map(id => [id, unavailableResourceCounter()]));
+      }),
+    ]);
+    return { scope: "system", system, workspaces };
+  };
   const server = createServer(socket => {
     let terminal: ObservableTerminalConnection | undefined;
     let initialized = false;

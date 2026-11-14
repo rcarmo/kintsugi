@@ -1,3 +1,4 @@
+import { renderResourceMetersMount } from "./resource-meters.ts";
 import { workspaceTemplateChoiceHtml, workspaceTemplateIconHtml } from "./workspace-template-presentation.ts";
 import { disclosureHtml } from "@kintsugi/design-system/disclosure";
 import { contentRowHtml } from "@kintsugi/design-system/content-row";
@@ -215,6 +216,7 @@ export function renderWorkspacePane(presentation: WorkspacePanePresentation, sid
       </section>
       <section class="workspace-pane-slide" data-workspace-pane-target="picker" aria-label="New workspace" inert>${renderWorkspaceTemplatePicker(presentation, launchComposerBinding)}</section>
     </div></div>`,
+    footerHtml: renderResourceMetersMount(),
   })}</div></div>`;
 }
 
