@@ -1357,3 +1357,9 @@ test("individual Stop can cancel a one-shot's active tool without making its con
   await expect(child.submit({ requestId: "forbidden-edit", text: "Not editable" })).rejects.toThrow("read-only");
   expect(faux.state.callCount).toBe(4);
 });
+
+test("passive runtime opening does not await MCP discovery, but task recovery does",async()=>{
+  const f=await setup();await f.runtime.suspend();const entered=Promise.withResolvers<void>(),release=Promise.withResolvers<void>();let resumed=false;
+  f.load.harness=async()=>({models:f.models,registry:f.registry,mcp:{async attach(){},ready(){entered.resolve();return release.promise;},async close(){release.resolve();}}});
+  const reopened=await f.open();const pending=reopened.resume().then(()=>{resumed=true;});await entered.promise;expect(resumed).toBe(false);release.resolve();await pending;expect(resumed).toBe(true);expect(f.faux.state.callCount).toBe(0);
+});

@@ -66,7 +66,7 @@ test("native MCP adapter exposes only code mode, preserves structured results an
   const harness=await Harness.open(new MemoryStorage(),{registry,models},context);cleanup.push(()=>harness.close(context));
   const conversation=await harness.root(context);await conversation.configure({model:{provider:"faux",modelId:"faux-1"}},context);
   await harness.commit(async tx=>{(await tx.doc(WorkspaceAgents)).agents.push({agentId:"allowed",durableId:conversation.id,label:"Allowed",title:"Allowed"});},context);
-  const runtime=createWorkspaceMcpRuntime("workspace",registry,()=>harness,store);await runtime.attach();cleanup.push(()=>runtime.close());
+  const runtime=createWorkspaceMcpRuntime("workspace",registry,()=>harness,store);await runtime.attach();await runtime.ready();cleanup.push(()=>runtime.close());
   faux.setResponses([request=>{expect(request.messages.flatMap(message=>message.role==="system"?(message.toolsAdded??[]).map(tool=>tool.name):[])).toEqual(["codemode"]);return fauxAssistantMessage([fauxToolCall("codemode",{code:"const r=await tools.mcp__fixture__items({});const catalog=await tools.mcp__fixture__resource_read({uri:'memory://catalog'});return {first:r.items[0],catalog};"})],{stopReason:"toolUse"});},request=>{
     const output=request.messages.filter(message=>message.role==="toolResult").map(message=>contentText(message.content)).join("\n");expect(output).toContain("alpha");expect(output).not.toContain("beta");expect(output).toContain("Fixture catalog");expect(JSON.stringify(request)).not.toContain(config.bearer);return fauxAssistantMessage("Done");
   }]);
@@ -78,7 +78,7 @@ test("native MCP adapter exposes only code mode, preserves structured results an
   await store.save({...store.credential(config.id)!,enabled:false});faux.setResponses([fauxAssistantMessage([fauxToolCall("codemode",{code:"await tools.mcp__fixture__items({});"})],{stopReason:"toolUse"}),fauxAssistantMessage("Denied")]);
   await(await conversation.submit({type:"input",content:"Try again"},context)).wait(context);expect(rpcCalls).toBe(1);
   // Reconnect replaces the old registry schemas and client; Stop must cancel a waiting remote call.
-  await store.save({...store.credential(config.id)!,enabled:true});stall=true;
+  await store.save({...store.credential(config.id)!,enabled:true});await runtime.ready();stall=true;
   faux.setResponses([fauxAssistantMessage([fauxToolCall("codemode",{code:"await tools.mcp__fixture__items({});"})],{stopReason:"toolUse"})]);
   const blocked=await conversation.submit({type:"input",content:"Wait for remote result"},context);await started.promise;
   await conversation.abort(context);expect((await blocked.status(context)).status).toBe("unanswered");expect(rpcCalls).toBe(2);

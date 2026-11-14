@@ -32,3 +32,10 @@ test("stdio config requires explicit arguments, clears HTTP credentials and surv
     const reopened=new McpConnectionStore(directory);await reopened.load();expect(reopened.credential(config.id)).toMatchObject({transport:"stdio",command:config.command,bearer:"",url:""});expect(reopened.credential(config.id)?.oauth).toBeUndefined();
   }finally{await rm(directory,{recursive:true,force:true});}
 });
+
+test("cancelling pending stdio discovery terminates the workspace process",async()=>{
+  let output!:ReadableStreamDefaultController<Uint8Array>,errors!:ReadableStreamDefaultController<Uint8Array>,ended=false;
+  const started=Promise.withResolvers<void>(),exited=Promise.withResolvers<{exitCode:number}>();const finish=()=>{if(ended)return;ended=true;output.close();errors.close();exited.resolve({exitCode:0});};
+  const start:typeof startInWorkspace=()=>({stdout:new ReadableStream({start(controller){output=controller;}}),stderr:new ReadableStream({start(controller){errors=controller;}}),exited:exited.promise,write(){started.resolve();},closeStdin:finish,cancel:finish,signal:finish,resize(){throw Error("Unexpected PTY");}});
+  const controller=new AbortController(),pending=connectMcpStdio(config,start,controller.signal);await started.promise;controller.abort();await expect(pending).rejects.toThrow();expect(ended).toBe(true);
+});

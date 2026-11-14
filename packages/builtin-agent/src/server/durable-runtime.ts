@@ -599,6 +599,8 @@ export async function openDurableAgentRuntime(
       const catalog = (await harness.snapshot(WorkspaceAgents, context))!;
       await Promise.all(catalog.agents.filter(record => !record.readOnly && !closed.has(record.durableId)).map(record => this.agent(record)));
       await readyForExecution();
+      // Passive opening stays non-blocking; recovered scripts need their tool definitions first.
+      await harnessOptions.mcp?.ready();
       harness.resume();
     },
     /** Host shutdown/unload: stop observation and scheduling, not the task's effects. */

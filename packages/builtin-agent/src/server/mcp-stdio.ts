@@ -13,9 +13,13 @@ export function workspaceMcpPipe(config:McpConnection,handlers:McpPipeHandlers,s
   });
   return {write:data=>process.write(data),closeStdin:()=>process.closeStdin(),close:()=>process.cancel(),exited};
 }
-export async function connectMcpStdio(config:McpConnection,start:typeof startInWorkspace=startInWorkspace){
+export async function connectMcpStdio(config:McpConnection,start:typeof startInWorkspace=startInWorkspace,signal?:AbortSignal){
   const client=new McpClient({name:"kintsugi",version:"1",requestTimeoutMs:config.timeoutSeconds*1000});
   const transport=new PipeTransport({open:async handlers=>workspaceMcpPipe(config,handlers,start),maxMessageBytes:4*1024*1024,maxStderrBytes:16*1024,closeTimeoutMs:500});
-  try {await client.connect(transport);return {client,tools:await client.listTools()};}
+  let closing:Promise<void>|undefined;
+  const abort=()=>{closing??=client.close();};
+  signal?.addEventListener("abort",abort,{once:true});
+  try {signal?.throwIfAborted();await client.connect(transport);return {client,tools:await client.listTools({signal})};}
   catch(error){await client.close();throw error;}
+  finally {signal?.removeEventListener("abort",abort);await closing;}
 }

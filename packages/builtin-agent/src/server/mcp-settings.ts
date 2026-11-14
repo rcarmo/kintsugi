@@ -35,24 +35,24 @@ function recallEditor(server?:PublicMcpConnection){
     `<p class="settings-help">Recall tools search and retrieve this Agent’s retained data. Pins obey storage caps. Forget and expiry leave journal evidence intact. Maximum result: 1 MiB.</p>`});
 }
 async function editor(server?:PublicMcpConnection){const id=server?.id??crypto.randomUUID();return `<form method="post" action="/settings/mcp/save" data-turbo="true" class="form-stack"><input type="hidden" name="id" value="${h(id)}">
-  ${field("Name",`<input class="text-field" name="name" required pattern="[a-z][a-z0-9_]{0,31}" value="${h(server?.name??"memento")}" placeholder="memento">`)}
+  ${field("Name",`<input class="text-field" name="name" required pattern="[a-z][a-z0-9_]{0,31}" value="${h(server?.name??"")}" placeholder="my_server">`)}
   ${field("Transport",`<select class="popup-select" data-controller="popup-select" name="transport"><option value="http">Streamable HTTP</option><option value="stdio"${server?.transport==="stdio"?" selected":""}>Workspace stdio</option></select>`)}
-  ${field("Streamable HTTP endpoint",`<input class="text-field" type="url" name="url" value="${h(server?.url??"")}" placeholder="https://memory.example/mcp">`)}
+  ${field("Streamable HTTP endpoint",`<input class="text-field" type="url" name="url" value="${h(server?.url??"")}" placeholder="https://mcp.example.com/mcp">`)}
   ${field("HTTP authentication",`<select class="popup-select" data-controller="popup-select" name="auth"><option value="bearer">Bearer token</option><option value="oauth"${server?.auth==="oauth"?" selected":""}>OAuth browser sign-in</option></select>`)}
-  ${field("Bearer token",`<input class="text-field" type="password" name="bearer" autocomplete="new-password"  placeholder="${server?"Leave blank to keep saved token":"Principal token"}">`)}
+  ${field("Bearer token",`<input class="text-field" type="password" name="bearer" autocomplete="new-password"  placeholder="${server?"Leave blank to keep saved token":"Access token"}">`)}
   ${disclosureHtml({summary:{kind:"compact",label:{kind:"text",text:"OAuth client (optional)"}},bodyHtml:field("Client ID",`<input class="text-field" name="clientId" value="${h(server?.oauth?.clientId??"")}" autocomplete="off">`)+field("Client secret",`<input class="text-field" type="password" name="clientSecret" autocomplete="new-password" placeholder="Leave blank to keep saved secret">`)+field("Scopes",`<input class="text-field" name="oauthScope" value="${h(server?.oauth?.scope??"")}">`)+`<p class="settings-help">Leave the client ID blank for dynamic registration. For a fixed client, use this app’s origin plus <code>/settings/mcp/oauth/${h(id)}/callback</code> as the redirect URL.</p>`})}
   ${disclosureHtml({summary:{kind:"compact",label:{kind:"text",text:"Workspace command (stdio)"}},bodyHtml:field("Command arguments (JSON array)",`<textarea class="text-field" name="command" rows="3" placeholder='["bun", "/work/mcp-server.ts"]'>${h(JSON.stringify(server?.command??[]))}</textarea>`)+field("Working directory",`<input class="text-field" name="workdir" value="${h(server?.workdir??"/work")}">`)+`<p class="settings-help">Runs inside the selected workspace as agent, not on the app host. No shell expansion. Stdout must contain only MCP messages.</p>`})}
   ${field("Access",await scopeOptions(server))}
   ${recallEditor(server)}
   ${field("Request timeout (seconds)",`<input class="text-field" type="number" name="timeoutSeconds" min="1" max="300" value="${server?.timeoutSeconds??30}">`)}
   <label><input type="checkbox" name="allowHttp" value="true"${server?.allowHttp?" checked":""}> Allow HTTP on a trusted network</label>
-  <p class="settings-help">Tools are available through code mode. Tokens stay outside Agent sandboxes. Memento uses a principal bearer token, not browser sign-in.</p>
+  <p class="settings-help">Use the authentication method required by your server. HTTP credentials stay outside Agent sandboxes.</p>
   ${button(server?"Save and reconnect":"Save and connect")}</form>`;}
 export async function renderMcpSettings(message=""){
   const store=await mcpConnections();const rows=await Promise.all(store.list().map(async server=>{
     const status=mcpConnectionStatus(server.id);const label=server.enabled?status?.message??"Not connected yet": "Disabled";
     return disclosureHtml({element:{id:`mcp_server_${server.id}`},summary:{kind:"multiline",label:{kind:"text",text:server.name},description:`${server.transport==="stdio"?"Workspace stdio":server.url} · ${label}`},bodyHtml:`<div class="form-stack"><p>Access: ${h(server.workspaceId)} · ${h(server.agentIds.join(", ")||"all Agents")}</p>
-    <form method="post" action="/settings/mcp/test" data-turbo="true"><input type="hidden" name="id" value="${h(server.id)}">${button("Test connection")}${server.enabled?button("Reconnect","reconnect"):""}${button(server.enabled?"Disable":"Enable",server.enabled?"disable":"enable")}${destructiveConfirmationHtml({id:`mcp_remove_${server.id}`,trigger:{type:"button",variant:"danger",content:{kind:"caption",caption:"Remove"}},confirmCaption:"Remove connection",cancelCaption:"Cancel",confirmFormAction:"/settings/mcp/remove"})}</form>
+    <form method="post" action="/settings/mcp/test" data-turbo="true"><input type="hidden" name="id" value="${h(server.id)}">${button("Refresh status","refresh")}${button("Test connection")}${server.enabled?button("Reconnect","reconnect"):""}${button(server.enabled?"Disable":"Enable",server.enabled?"disable":"enable")}${destructiveConfirmationHtml({id:`mcp_remove_${server.id}`,trigger:{type:"button",variant:"danger",content:{kind:"caption",caption:"Remove"}},confirmCaption:"Remove connection",cancelCaption:"Cancel",confirmFormAction:"/settings/mcp/remove"})}</form>
     ${server.auth==="oauth"?`<form method="post" action="/settings/mcp/oauth/${server.id}/start" data-turbo="false">${button("Sign in")}</form><form method="post" action="/settings/mcp/oauth/${server.id}/disconnect" data-turbo="false">${button("Sign out and disable")}</form>`:""}
     ${status?.tools.length?disclosureHtml({summary:{kind:"compact",label:{kind:"text",text:`Tools (${status.tools.length})`}},bodyHtml:`<ul>${status.tools.map(name=>`<li><code>${h(name)}</code></li>`).join("")}</ul>`}):""}
     ${status?.resources?.length||status?.templates?.length?disclosureHtml({summary:{kind:"compact",label:{kind:"text",text:"Resources"}},bodyHtml:`<ul>${[...status.resources??[],...status.templates??[]].map(uri=>`<li><code>${h(uri)}</code></li>`).join("")}</ul>`}):""}
@@ -62,7 +62,7 @@ export async function renderMcpSettings(message=""){
 }
 export const mcpSettingsContribution:SettingsContribution={id:"mcp",label:"MCP servers",order:76,render:renderMcpSettings,async handleAction({request,url}){
   const oauth=await handleMcpOAuth(request,url);if(oauth)return oauth;
-  const match=/^\/settings\/mcp\/(save|test|reconnect|enable|disable|remove)$/.exec(url.pathname);if(!match||request.method!=="POST")return;
+  const match=/^\/settings\/mcp\/(save|test|refresh|reconnect|enable|disable|remove)$/.exec(url.pathname);if(!match||request.method!=="POST")return;
   const form=await request.formData(),store=await mcpConnections(),id=String(form.get("id")??""),previous=store.credential(id);let message="Connection updated.";
   try {
     if(match[1]==="save"){
@@ -76,8 +76,9 @@ export const mcpSettingsContribution:SettingsContribution={id:"mcp",label:"MCP s
       const recall=form.has("recallMode")?{mode:String(form.get("recallMode")),maxAgeDays:Number(form.get("recallDays")),maxItems:Number(form.get("recallItems")),maxBytes:Number(form.get("recallBytes")),profiles}:previous?.recall??defaultMcpRecallSettings();
       if(!Value.Check(McpRecallSettingsSchema,recall))throw new McpRecallSettingsError("Check recall limits and profile fields, kinds and item limits.");
       await store.save({id,transport,auth,command,recall,workdir:String(form.get("workdir")??"/work"),oauth:{clientId:clientId||undefined,clientSecret:String(form.get("clientSecret")??"")||(sameEndpoint&&previous?.oauth?.clientId===clientId?previous?.oauth?.clientSecret:undefined),scope:String(form.get("oauthScope")??"")||undefined},name:String(form.get("name")??""),url:endpoint,bearer:String(form.get("bearer")??"").trim()||(sameEndpoint?previous?.bearer:"")||"",workspaceId:scope[0],agentIds:scope[1]?[scope[1]]:[],allowHttp:form.get("allowHttp")==="true",timeoutSeconds:Number(form.get("timeoutSeconds")??30),enabled:true});
-      message=transport!=="stdio"&&auth==="oauth"?"Saved. Sign in to connect.":(await testMcpConnection(store.credential(id)!)).message;
+      message=transport!=="stdio"&&auth==="oauth"?"Saved. Sign in to connect.":"Saved. Connection discovery runs in the background.";
     }else if(!previous)throw new Error("Unknown connection");
+    else if(match[1]==="refresh")message="Connection status refreshed.";
     else if(match[1]==="test")message=(await testMcpConnection(previous)).message;
     else if(match[1]==="remove"){await store.remove(id);message="Connection removed.";}
     else {await store.save({...previous,enabled:match[1]!=="disable"});message=match[1]==="reconnect"?"Reconnect requested.":match[1]==="enable"?"Connection enabled.":"Connection disabled.";}
