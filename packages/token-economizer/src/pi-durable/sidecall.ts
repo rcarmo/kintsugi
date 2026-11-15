@@ -7,7 +7,7 @@ import { purposeAllowed, type Policy } from "../core/config.ts";
 import type { InferenceRequest, InferenceResult, SideCall, Spend } from "../core/types.ts";
 import { JobsDoc, type InferenceJob } from "./documents.ts";
 import type { OperationSink } from "./operations.ts";
-export type JobOrigin = { sessionKey: string; account: string; runId: string | null; revision: string; digest: string; estimatedMaximumCost: number | null };
+export type JobOrigin = { sessionKey: string; account: string; runId: string | null; revision: string; digest: string; estimatedMaximumCost: number | null; expiresAt?: number };
 export type JobAdmission = { accepted: boolean; reason: string; job: InferenceJob | null };
 export function createInferenceQueue(options: { harness: () => Harness; backgroundOwner?:() => ConversationId; policy: (sessionKey: string) => Policy; sideCall: SideCall; maximumCost?:(request:InferenceRequest) => number|null;onAuthPause?:(account:string,revision:number,key:string) => Promise<void>; now?:() => number;onOperation?:OperationSink }) {
   async function report(tx:Tx,job:InferenceJob,at:number) {
@@ -64,12 +64,13 @@ export function createInferenceQueue(options: { harness: () => Harness; backgrou
         let result: InferenceResult | null = null, error: string | null = null, attempted = false;
         try {
           if (!purposeAllowed(options.policy(job.sessionKey),job.request)) throw new Error("Optimisation disabled");
+          if (runtime.now() >= job.deadline) throw new Error("Optimisation deadline exceeded before invocation");
           const aborted = new Promise<never>((_, reject) => {
             if (signal.aborted) reject(signal.reason);
             else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
           });
           attempted = true;
-          const reply = await Promise.race([options.sideCall(job.request, signal), aborted]);
+          const reply = await Promise.race([options.sideCall({...job.request,cacheScope:job.sessionKey}, signal), aborted]);
           if (reply.cost !== null && (!Number.isFinite(reply.cost) || reply.cost < 0) || !Number.isFinite(reply.durationMs) || reply.durationMs < 0) throw new Error("Invalid optimization billing metadata");
           result = {...reply,text:redact(reply.text).slice(0,64_000),error:reply.text.length > 64_000 ? "Optimization output limit exceeded" : reply.error === null ? null : redact(reply.error)};
         } catch (cause) { error = redact(Error.isError(cause) ? cause.message : String(cause)); }
@@ -125,10 +126,13 @@ export function createInferenceQueue(options: { harness: () => Harness; backgrou
         if (!purposeAllowed(policy,request)) return { accepted: false, reason: "disabled", job: null };
         if (state.paused.includes(origin.account)) return { accepted: false, reason: "auth_paused", job: null };
         if (Object.values(state.jobs).filter(row => ["queued","running"].includes(row.status)).length >= 32) return { accepted: false, reason: "queue_full", job: null };
-        const now = (options.now ?? Date.now)(), admission = reserve(state.budget, request.id, origin.sessionKey, new Date(now).toISOString().slice(0,10), origin.estimatedMaximumCost ?? options.maximumCost?.(request) ?? null, policy);
+        const now = (options.now ?? Date.now)();
+        const deadlineMs = Math.min(policy.budget.deadlineMs,request.deadlineMs,origin.expiresAt === undefined ? Infinity : origin.expiresAt-now);
+        if (deadlineMs <= 0) return {accepted:false,reason:"expired",job:null};
+        const admission = reserve(state.budget, request.id, origin.sessionKey, new Date(now).toISOString().slice(0,10), origin.estimatedMaximumCost ?? options.maximumCost?.(request) ?? null, policy);
         if (!admission.accepted) return { accepted: false, reason: admission.reason, job: null };
         const job: InferenceJob = { id: request.id, sessionKey: origin.sessionKey, account: origin.account, runId: origin.runId, revision: origin.revision, digest: origin.digest,
-          conversationId,request: { ...request, prompt:redact(request.prompt), maxOutputTokens: Math.min(request.maxOutputTokens,policy.budget.maxOutputTokens), deadlineMs: Math.min(policy.budget.deadlineMs,request.deadlineMs) }, created: now, deadline: now+Math.min(policy.budget.deadlineMs,request.deadlineMs), taskId: null, status: "queued", result: null, error: null };
+          conversationId,request: { ...request, prompt:redact(request.prompt), maxOutputTokens: Math.min(request.maxOutputTokens,policy.budget.maxOutputTokens), deadlineMs }, created: now, deadline: now+deadlineMs, taskId: null, status: "queued", result: null, error: null };
         job.taskId = await tx.createTask(task, { id: job.id }, { ownership: { kind: "conversation" }, conversationId:options.backgroundOwner?.() ?? conversationId, background: true });
         state.jobs[job.id] = job;
         await report(tx,job,now);

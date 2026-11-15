@@ -1,7 +1,7 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { contentText, type JsonObject, type Message } from "@earendil-works/pi-ai";
 import { AssistantEntry, LiveDoc, ToolResultEntry, UserEntry, type Conversation, type ConversationId, type Cursor, type EntryId, type EntryRecord, type Harness } from "@earendil-works/pi-durable";
-import { ContextSnapshotEntry } from "@kintsugi/token-economizer/pi-durable";
+import { ContextSnapshotEntry, FactContextEntry } from "@kintsugi/token-economizer/pi-durable";
 import { isJsonObject } from "@kintsugi/core";
 import { makeObservation, type ToolMapping } from "@kintsugi/token-economizer/core";
 import { decodeArguments, decodeResult } from "@kintsugi/token-economizer/pi-durable";
@@ -49,7 +49,7 @@ export async function carriedSnapshotIds(conversation:Conversation,section:strin
   let cursor:Cursor|undefined;
   do {
     const page = await conversation.entries({},200,cursor,context);
-    for (const entry of page.items) if (ContextSnapshotEntry.is(entry) && entry.data.section === section) return entry.data.injectedIds;
+    for (const entry of page.items) if ((ContextSnapshotEntry.is(entry) || FactContextEntry.is(entry)) && entry.data.section === section) return entry.data.injectedIds;
     cursor = page.next;
   } while (cursor);
   return [];
@@ -59,7 +59,9 @@ export function optimizerMessageSections(messages:readonly Message[]) {
   for (const message of messages) if (message.role === "system") for (const [key,value] of Object.entries(message.sections ?? {})) {if (value === null) delete sections[key];else sections[key] = value;}
   return sections;
 }
-export function optimizerSections(entries:readonly EntryRecord[]) {return optimizerMessageSections(entries.flatMap(entry => [...entry.model ?? []]));}
+export function optimizerSections(entries:readonly EntryRecord[]) {
+  return optimizerMessageSections(entries.flatMap(entry => FactContextEntry.is(entry) ? [{role:"system" as const,content:"",sections:{"token-economizer":entry.data.section},timestamp:0}] : [...entry.model ?? []]));
+}
 /** One conversation's committed tool results within a session range. */
 function readSource(entries:readonly EntryRecord[],host:HostSession) {
   const observed:Observation[] = [], calls = new Map<string,{name:string;args:JsonObject;runId:string}>(), starts = new Map<string,{start:CallStart;entry:EntryRecord}>();

@@ -23,7 +23,7 @@ Kintsugi accepts direct pull requests without a prior issue. See [Contributing](
 
 ## Install
 
-The current release is [v0.6.10](https://github.com/rcarmo/kintsugi/releases/tag/v0.6.10) ([release notes](release_notes/v0.6.10.md)). Use a dedicated Linux server with Docker:
+The current release is [v0.6.11](https://github.com/rcarmo/kintsugi/releases/tag/v0.6.11) ([release notes](release_notes/v0.6.11.md)). Use a dedicated Linux server with Docker:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/rcarmo/kintsugi/main/scripts/install.sh -o /tmp/install-kintsugi.sh

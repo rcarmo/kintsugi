@@ -3,7 +3,7 @@ import type {Knowledge} from "@kintsugi/token-economizer/pi-durable";
 import { projectDurableTranscript } from "../../src/server/durable-transcript.ts";
 import { applyTranscriptContributions } from "@kintsugi/agent/server/transcript-contributions";
 import { tokenOptimizerSettingsContribution } from "../../src/server/token-optimizer-settings.ts";
-import { carriedSnapshotIds, latestOptimizerEntry, optimizerEntries, optimizerMessageSections } from "../../src/server/token-optimizer-source.ts";
+import { carriedSnapshotIds, latestOptimizerEntry, optimizerEntries, optimizerSections, optimizerMessageSections } from "../../src/server/token-optimizer-source.ts";
 import { openDurableWorkspace, WorkspaceAgents } from "../../src/server/durable-workspace.ts";
 import { openDurableAgentRuntime } from "../../src/server/durable-runtime.ts";
 import { renderAgentPaneComposerFooter } from "../../src/server/render-composer.ts";
@@ -18,7 +18,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import { contentText, createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, normalizeContext, type Model } from "@earendil-works/pi-ai";
+import { contentText, createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, normalizeContext, type Model, type Api, type ProviderStreams } from "@earendil-works/pi-ai";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { openNodeJsonlStorage } from "@earendil-works/pi-durable/storage/jsonl/node";
@@ -47,7 +47,7 @@ async function settleLearning(harness:Harness) {
     for (const row of pending) {await harness.waitForTask(row.record.id,context);waited.add(row.record.id);}
   }
 }
-async function setup(kind:"memory"|"sqlite"|"jsonl" = "memory",overrideConfig?:TokenOptimizerConfiguration,withLongRead = false) {
+async function setup(kind:"memory"|"sqlite"|"jsonl" = "memory",overrideConfig?:TokenOptimizerConfiguration,withLongRead = false,retry = false) {
   const path = await mkdtemp(join(tmpdir(),"native-optimizer-"));cleanups.push(() => rm(path,{recursive:true,force:true}));
   const configuration = overrideConfig ?? new TokenOptimizerConfiguration(path);await configuration.load();
   const models = createModels(), faux = fauxProvider({tokensPerSecond:100_000});models.setProvider(faux.provider);
@@ -56,7 +56,7 @@ async function setup(kind:"memory"|"sqlite"|"jsonl" = "memory",overrideConfig?:T
   registry.install(defineExtension({name:"fixture-tools",tools:[defineTool({name:"bash",description:"Run",parameters:Type.Object({command:Type.String()}),structuredOutputSchema:Type.Object({output:Type.String(),exitCode:Type.Integer(),aborted:Type.Boolean(),timedOut:Type.Boolean(),truncated:Type.Boolean()}),replay:"safe",async execute() {if (gate) {entered.resolve();await gate;gate = null;}return {structuredOutput:{output:failing ? failureOutput : "passed",exitCode:failing ? 1 : 0,aborted:false,timedOut:false,truncated:false},details:{exitCode:failing ? 1 : 0,aborted:false,timedOut:false}};}}),defineTool({name:"rare",description:"Rare helper",parameters:Type.Object({}),execute:async () => ({output:[{type:"text",text:"done"}]})}),defineTool({name:"plan",description:"Plan",parameters:Type.Object({}),execute:async () => ({output:[{type:"text",text:"done"}]})})]}));
   if (withLongRead) registry.install(defineExtension({name:"long-read-fixture",tools:[defineTool({name:"read",description:"Read fixture",parameters:Type.Object({path:Type.String()}),replay:"safe",async execute(){return {output:[{type:"text",text:"x".repeat(20_000)}]};}})]}));
   const native = createNativeTokenOptimizer({workspaceId:"fixture",models,registry,harness:() => harness,configuration});registry.install(native.optimizer.extension);
-  harness = await Harness.open(kind === "memory" ? new MemoryStorage() : kind === "sqlite" ? await openNodeSqliteStorage(join(path,"state.sqlite")) : await openNodeJsonlStorage(join(path,"journal"),context),{models,registry},context);cleanups.push(async () => {await native.close();await harness.close(context);});
+  harness = await Harness.open(kind === "memory" ? new MemoryStorage() : kind === "sqlite" ? await openNodeSqliteStorage(join(path,"state.sqlite")) : await openNodeJsonlStorage(join(path,"journal"),context),{models,registry,settings:retry?{retry:{enabled:true,baseDelayMs:1,maxRetries:1}}:undefined},context);cleanups.push(async () => {await native.close();await harness.close(context);});
   const root = await harness.commit(tx => tx.createConversation({ownership:{kind:"ownerless"}}),context), conversation = (await harness.conversation(root.id,context))!;
   await conversation.configure({model:{provider:"faux",modelId:"faux-1"},instructions:"Main instructions"},context);
   await native.attach();const host = (await native.start(conversation,{agentId:"agent"}))!;
@@ -465,12 +465,12 @@ for (const kind of ["memory","sqlite","jsonl"] as const) test(`native ${kind}: o
   expect(learned.map(entry => entry.data.status)).toEqual(["running","complete"]);
   expect(learned[0]!.data.id).toBe(learned[1]!.data.id);
   expect(learned[0]!.data.input.observations).toBe(1);
-  expect(learned[1]!.data.output).toMatchObject({newFacts:["absent_tool:pytest"],changes:{facts:[{id:"absent_tool:pytest",state:"CANDIDATE"}],suggestedTools:[],withdrawnTools:[]},activePrefixChanged:false});
+  expect(learned[1]!.data.output).toMatchObject({newFacts:["absent_tool:pytest"],changes:{facts:[{id:"absent_tool:pytest",state:"CANDIDATE"}],suggestedTools:[],withdrawnTools:[]},activeFactsChanged:false});
   expect(learned[0]!.data.startedAt).toBe(learned[0]!.data.at);
   const final = (await f.conversation.entries({order:"ascending"},500,undefined,context)).items.filter(AssistantEntry.is).at(-1)!;
   expect(learned[0]!.data.startedAt).toBeGreaterThanOrEqual(final.model![0]!.timestamp);
   expect(operations.every(entry => entry.model === undefined)).toBe(true);
-  expect(JSON.stringify((await f.conversation.context(context)).messages)).not.toContain("activePrefixChanged");
+  expect(JSON.stringify((await f.conversation.context(context)).messages)).not.toContain("activeFactsChanged");
   expect(f.faux.state.callCount).toBe(3);
   await f.native.optimizer.apply(f.host,["rare"]);await f.native.optimizer.restore(f.host,["rare"]);
   const actions = (await f.conversation.entries({order:"ascending"},500,undefined,context)).items.filter(OptimizerOperationEntry.is).map(entry => entry.data.name);
@@ -560,3 +560,105 @@ test("fact-review routes bind approval to exact text, persist feedback and revok
   expect((await f.harness.snapshot(KnowledgeDoc,scopeKey(f.host.scope),context))?.distiller.facts[0].life.fire_den).toBe(4);
   expect(f.faux.state.callCount).toBe(2);
 },20_000);
+
+test("live learned facts preserve the serialized system prefix and append only once",async()=>{
+  const f=await setup(),config=f.configuration.snapshot();Object.assign(config.policy,{enabled:true,microSkills:"both",generativeModel:{provider:"faux",id:"faux-1"}});await f.configuration.configure(config);const active=f.configuration.snapshot();active.policy.mode="active";await f.configuration.configure(active);
+  const requests:Parameters<typeof normalizeContext>[0][]=[];const original=f.models.streamSimple.bind(f.models);
+  f.models.streamSimple=(model,request,options)=>{requests.push(request);return original(model,request,options);};
+  f.faux.setResponses([fauxAssistantMessage("First answer"),fauxAssistantMessage("Second answer"),fauxAssistantMessage("Third answer")]);
+  await(await f.conversation.submit({type:"input",content:"First",requestId:"cache-first"},context)).wait(context);
+  const claim="Use bun test for this repository.",id="cache-fact";await f.harness.commit(async tx=>{reviewedFact(await tx.doc(KnowledgeDoc,scopeKey(f.host.scope),f.host.scope),id,claim);},context);
+  await f.native.optimizer.reviewFact(f.host,"distilled",id,"approved",fingerprint(claim));
+  await(await f.conversation.submit({type:"input",content:"Second",requestId:"cache-second"},context)).wait(context);
+  await(await f.conversation.submit({type:"input",content:"Third",requestId:"cache-third"},context)).wait(context);
+  expect(requests).toHaveLength(3);expect(JSON.stringify(requests[1]!.messages)).toContain(claim);expect(JSON.stringify(requests[2]!.messages).split(claim).length-1).toBe(1);
+  expect(requests[1]!.messages.slice(0,requests[0]!.messages.length)).toEqual(requests[0]!.messages);
+  expect(requests[2]!.messages.slice(0,requests[1]!.messages.length)).toEqual(requests[1]!.messages);
+  const apis=["anthropic-messages","openai-responses","openai-codex-responses","openai-completions","azure-openai-responses","bedrock-converse-stream","google-generative-ai","google-vertex","mistral-conversations","pi-messages"] as const;
+  for(const api of apis){
+    const captured:JsonObject[]=[],serializer:ProviderStreams=await import(`@earendil-works/pi-ai/api/${api}`);let networkCalls=0;
+    const model:Model<Api>={id:api==="bedrock-converse-stream"?"anthropic.claude-sonnet-4-20250514-v1:0":api==="anthropic-messages"?"claude-sonnet-4-20250514":"gpt-5.4",name:"Offline",provider:"offline",api,baseUrl:"https://never-contact.invalid",reasoning:false,input:["text"],contextWindow:200000,maxTokens:1024,cost:{input:0,output:0,cacheRead:0,cacheWrite:0}};
+    const token=`x.${Buffer.from(JSON.stringify({"https://api.openai.com/auth":{chatgpt_account_id:"offline"}})).toString("base64url")}.x`;
+    for(const request of requests){const result=await serializer.stream(model,normalizeContext(request),{apiKey:api==="openai-codex-responses"?token:"offline-only",cacheRetention:"short",sessionId:"offline-main-session",async onPayload(payload){const serialized:unknown=JSON.parse(JSON.stringify(payload));if(!isJsonObject(serialized))throw Error("Invalid payload");captured.push(serialized);throw Error("STOP_BEFORE_NETWORK");},fetch:api.startsWith("google-")?undefined:Object.assign(async()=>{networkCalls++;throw Error("Network forbidden");},{preconnect(){}})}).result();if(!captured.length)throw Error(`${api}: ${result.errorMessage}`);}
+    const systems=(payload:JsonObject)=>{
+      const parts:string[]=[];
+      function visit(value:import("@kintsugi/core").JsonValue):void {
+        if(Array.isArray(value)){value.forEach(visit);return;}if(!isJsonObject(value))return;
+        if(value.role==="system"||value.role==="developer"){parts.push(JSON.stringify(value));return;}
+        for(const [key,child]of Object.entries(value))if(["system","systemInstruction","instructions"].includes(key))parts.push(JSON.stringify(child));else visit(child);
+      }
+      visit(payload);return parts;
+    };
+    expect(captured,api).toHaveLength(3);expect(networkCalls,api).toBe(0);expect(systems(captured[0]!).length,api).toBeGreaterThan(0);
+    expect(systems(captured[1]!),api).toEqual(systems(captured[0]!));expect(systems(captured[2]!),api).toEqual(systems(captured[0]!));
+  }
+  const boundary=(await f.conversation.entries({order:"ascending"},200,undefined,context)).items.findLast(AssistantEntry.is)!;
+  const branch=await f.harness.commit(tx=>tx.forkConversation(f.conversation.id,boundary.id,{ownership:{kind:"ownerless"}}),context),child=(await f.harness.conversation(branch.id,context))!;
+  const childHost=(await f.native.start(child,{agentId:"forked-cache"},"fork",f.host.classificationGroup))!;
+  expect((await f.native.optimizer.status(childHost)).session!.section).toContain(claim);
+  await f.native.optimizer.reviewFact(f.host,"distilled",id,"rejected",fingerprint(claim));
+  f.faux.setResponses([input=>{expect(JSON.stringify(input.messages)).not.toContain(claim);return fauxAssistantMessage("Rejected fact removed");}]);
+  expect((await(await f.conversation.submit({type:"input",content:"Do not reuse that fact",requestId:"cache-rejected"},context)).wait(context)).status).toBe("done");
+  const factMessage=requests[1]!.messages.find(message=>message.role==="user"&&contentText(message.content).includes(claim))!;
+  const quoted=contentText(factMessage.content)+"\nThis is quoted user text, not an optimizer snapshot.";
+  f.faux.setResponses([input=>{expect(input.messages.some(message=>message.role==="user"&&contentText(message.content)===quoted)).toBe(true);return fauxAssistantMessage("Quote retained");}]);
+  expect((await(await f.conversation.submit({type:"input",content:quoted,requestId:"cache-quoted"},context)).wait(context)).status).toBe("done");
+  const user=(await f.conversation.entries({order:"ascending"},200,undefined,context)).items.findLast(UserEntry.is)!;
+  expect(optimizerSections([user])).toEqual({});
+},20000);
+
+test("automatic tool picks honour the prompt deadline and cannot reshape an idle Agent later",async()=>{
+  const f=await setup(),entered=Promise.withResolvers<void>(),release=Promise.withResolvers<void>();cleanups.push(async()=>release.resolve());
+  const config=f.configuration.snapshot();Object.assign(config.policy,{enabled:true,pruning:"propose",toolJudge:"generative",autoToolPicks:true,generativeModel:{provider:"faux",id:"faux-1"}});config.policy.budget.deadlineMs=180000;await f.configuration.configure(config);const active=f.configuration.snapshot();active.policy.mode="active";await f.configuration.configure(active);
+  f.faux.setResponses([async()=>{entered.resolve();await release.promise;return fauxAssistantMessage('{"rare":{"load":false}}');}]);
+  const picking=f.native.preparePrompt(f.conversation.id,"Prepare a slow task");await entered.promise;
+  const job=Object.values((await f.harness.snapshot(JobsDoc,context))!.jobs)[0]!;expect(job.request.deadlineMs).toBeLessThanOrEqual(20000);
+  await picking;release.resolve();await Bun.sleep(150);
+  expect(f.native.lastPick(f.conversation.id)!.hidden).toBeNull();expect((await f.conversation.agent(context)).callable.some(tool=>tool.name==="rare")).toBe(true);
+  expect(Object.values((await f.harness.snapshot(JobsDoc,context))!.jobs).some(job=>["queued","running"].includes(job.status))).toBe(false);
+},30000);
+
+test.each([false,true])("fact delivery pins a provider retry and publishes later learning only on the next model round (initial live facts: %s)",async(withInitialFact)=>{
+  const f=await setup("memory",undefined,false,true),config=f.configuration.snapshot();Object.assign(config.policy,{enabled:true,microSkills:"both",generativeModel:{provider:"faux",id:"faux-1"}});await f.configuration.configure(config);const active=f.configuration.snapshot();active.policy.mode="active";await f.configuration.configure(active);
+  async function approve(id:string,claim:string){await f.harness.commit(async tx=>{reviewedFact(await tx.doc(KnowledgeDoc,scopeKey(f.host.scope),f.host.scope),id,claim);},context);await f.native.optimizer.reviewFact(f.host,"distilled",id,"approved",fingerprint(claim));}
+  if(withInitialFact)await approve("retry-first","First cache-safe fact.");let requests=0;
+  f.faux.setResponses([async input=>{requests++;if(withInitialFact)expect(JSON.stringify(input.messages)).toContain("First cache-safe fact.");await approve("retry-later","Later cache-safe fact.");return fauxAssistantMessage("",{stopReason:"error",errorMessage:"429 rate limit exceeded"});},input=>{requests++;if(withInitialFact)expect(JSON.stringify(input.messages)).toContain("First cache-safe fact.");expect(JSON.stringify(input.messages)).not.toContain("Later cache-safe fact.");return fauxAssistantMessage("Retried");}]);
+  expect((await(await f.conversation.submit({type:"input",content:"Retry this request",requestId:"facts-retry"},context)).wait(context)).status).toBe("done");expect(requests).toBe(2);
+  f.faux.setResponses([input=>{expect(JSON.stringify(input.messages)).toContain("Later cache-safe fact.");return fauxAssistantMessage("New round");}]);
+  expect((await(await f.conversation.submit({type:"input",content:"Continue",requestId:"facts-after-retry"},context)).wait(context)).status).toBe("done");
+});
+
+test("compaction keeps retained live fact snapshots separate from the frozen system section",async()=>{
+  const f=await setup(),config=f.configuration.snapshot();Object.assign(config.policy,{enabled:true,microSkills:"both",generativeModel:{provider:"faux",id:"faux-1"}});await f.configuration.configure(config);const active=f.configuration.snapshot();active.policy.mode="active";await f.configuration.configure(active);
+  await f.conversation.configure({compaction:{keepRecentTokens:1000}},context);
+  f.faux.setResponses([fauxAssistantMessage("Old reply")]);await(await f.conversation.submit({type:"input",content:"old context ".repeat(2000),requestId:"before-live"},context)).wait(context);
+  const claim="Keep this live repository fact.",id="compact-live";
+  await f.harness.commit(async tx=>{reviewedFact(await tx.doc(KnowledgeDoc,scopeKey(f.host.scope),f.host.scope),id,claim);},context);await f.native.optimizer.reviewFact(f.host,"distilled",id,"approved",fingerprint(claim));
+  f.faux.setResponses([fauxAssistantMessage("Done"),fauxAssistantMessage("Compacted summary")]);
+  await(await f.conversation.submit({type:"input",content:"Use context",requestId:"compact-live"},context)).wait(context);
+  await f.harness.waitForTask(await f.conversation.compact(undefined,context),context);await f.native.detach();
+  const view=await f.conversation.context(context),sections=optimizerSections(view.entries);
+  expect(sections["token-economizer"]).toContain(claim);
+  expect((await f.native.optimizer.status(f.host)).session!.section).toBe(sections["token-economizer"]??"");
+});
+
+test("revoking an initial fact does not erase surviving live facts from session replay",async()=>{
+  const f=await setup(),config=f.configuration.snapshot();Object.assign(config.policy,{enabled:true,microSkills:"both",generativeModel:{provider:"faux",id:"faux-1"}});await f.configuration.configure(config);const active=f.configuration.snapshot();active.policy.mode="active";await f.configuration.configure(active);
+  const initial="Initial repository fact.",live="Surviving live repository fact.";
+  await f.harness.commit(async tx=>{reviewedFact(await tx.doc(KnowledgeDoc,scopeKey(f.host.scope),f.host.scope),"initial",initial);},context);
+  const record=await f.harness.commit(tx=>tx.createConversation({ownership:{kind:"ownerless"}}),context),root=(await f.harness.conversation(record.id,context))!;await root.configure({model:{provider:"faux",modelId:"faux-1"}},context);const host=(await f.native.start(root,{agentId:"initial-revoke"}))!;
+  f.faux.setResponses([fauxAssistantMessage("First"),fauxAssistantMessage("Second"),input=>{expect(JSON.stringify(input.messages)).not.toContain(initial);expect(JSON.stringify(input.messages)).toContain(live);return fauxAssistantMessage("Third");}]);
+  await(await root.submit({type:"input",content:"First",requestId:"initial-first"},context)).wait(context);
+  await f.harness.commit(async tx=>{reviewedFact(await tx.doc(KnowledgeDoc,scopeKey(host.scope),host.scope),"live",live);},context);await f.native.optimizer.reviewFact(host,"distilled","live","approved",fingerprint(live));
+  await(await root.submit({type:"input",content:"Second",requestId:"initial-second"},context)).wait(context);
+  await f.native.optimizer.reviewFact(host,"distilled","initial","rejected",fingerprint(initial));
+  expect((await(await root.submit({type:"input",content:"Third",requestId:"initial-third"},context)).wait(context)).status).toBe("done");await f.native.detach();
+  expect((await f.native.optimizer.status(host)).session!.section).toContain(live);
+});
+
+test("a tool-pick deadline is rechecked inside the schema-change transaction",async()=>{
+  const f=await setup(),catalogue=f.native.domain.catalogue;
+  f.native.domain.catalogue=async host=>{await Bun.sleep(25);return catalogue(host);};
+  await expect(f.native.domain.setTools(f.host,["rare"],Date.now()+5)).rejects.toThrow("expired before tool changes committed");
+  expect((await f.conversation.agent(context)).callable.some(tool=>tool.name==="rare")).toBe(true);
+});

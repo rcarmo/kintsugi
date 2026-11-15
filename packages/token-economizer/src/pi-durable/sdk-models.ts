@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Models, Usage as SdkUsage, AnyModel } from "@earendil-works/pi-ai";
+import {fingerprint} from "../core/identity.ts";
 import { cacheBuckets } from "../core/accounting.ts";
 import type { DecisionClassifier, SideCall, Usage, InferenceRequest } from "../core/types.ts";
 function usage(value:SdkUsage|undefined):Usage|null {
@@ -19,7 +20,7 @@ export function createSdkModelTransport(models:Models) {
   const sideCall:SideCall = async (request,signal) => {
     const model = models.getModel(request.model.provider,request.model.id), start = Date.now();
     if (!model) return {text:"",model:request.model,usage:null,cost:0,durationMs:0,authUnavailable:false,error:"Selected generation model is unavailable"};
-    const message = await models.completeSimple(model,{messages:[{role:"user",content:request.prompt,timestamp:Date.now()}]},{signal,maxTokens:request.maxOutputTokens,maxRetries:0,sessionId:crypto.randomUUID()});
+    const message = await models.completeSimple(model,{messages:[{role:"user",content:request.prompt,timestamp:Date.now()}]},{signal,maxTokens:request.maxOutputTokens,maxRetries:0,cacheRetention:"short",sessionId:`token-economizer:${fingerprint(JSON.stringify([request.cacheScope ?? request.id,request.purpose,request.auditFor ?? request.classification?.purpose ?? null,request.model.provider,request.model.id])).slice(0,40)}`});
     return {text:message.content.filter(part => part.type === "text").map(part => part.text).join("\n"),model:{provider:message.provider,id:message.model},usage:usage(message.usage),cost:cost(message.usage,model),durationMs:Date.now()-start,authUnavailable:message.stopReason === "error" && /auth|api.?key|unauthori[sz]ed|sign.?in|credential|oauth|\b40[13]\b/i.test(message.errorMessage ?? ""),error:["error","aborted"].includes(message.stopReason) ? message.errorMessage ?? message.stopReason : null};
   };
   const decisionClassifier:DecisionClassifier = async (request,signal) => {

@@ -1,9 +1,10 @@
+import {createFactContext} from "./fact-context.ts";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { runIdentity } from "./run-identity.ts";
 // SPDX-License-Identifier: Apache-2.0
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { defineExtension, defineEntry, LiveDoc, section, type ConversationId, type Harness, type LiveState, type Tx } from "@earendil-works/pi-durable";
+import { defineExtension, defineEntry, LiveDoc, type ConversationId, type Harness, type LiveState, type Tx } from "@earendil-works/pi-durable";
 import { defaultPolicy, emitting, inferenceAllowed, modelFor, observing, type Policy } from "../core/config.ts";
 import { compactGuardDigest, reuseKey } from "../core/savers.ts";
 import { fingerprint } from "../core/identity.ts";
@@ -158,13 +159,13 @@ export function createTokenEconomizer(options:TokenEconomizerOptions) {
     if (delivery.notice && await notice(delivery.notice)) {const id = delivery.notice.id;await options.harness().commit(async tx => {const row = (await tx.doc(RunDoc,key,null)).decisions.find(item => item.id === id);if (row) {row.status = "consumed";await reportDecision(tx,host,row);}},BACKGROUND_CONTEXT);}
   }
   const recorder = createCommittedObservations({harness:options.harness,domain:{...options.domain,session:resolve},policy:policyFor,onObservation,onLive,onActivity:async (id,at) => {const host = conversations.get(id), owner = host && !host.delegated ? learner(host) : null;if (owner && observing(policyFor(sessionKey(owner.scope,owner.id)))) await lifecycle.transcriptChanged(owner,at);},onError:failure});
-  const extension = defineExtension({name:"token-economizer",tasks:[...queue.extension.tasks ?? [],...lifecycle.extension.tasks ?? [],...pipeline.extension.tasks ?? [],...publication.extension.tasks ?? [],...training.extension.tasks ?? []],hooks:[...recorder.extension.hooks ?? []],sections:[section(contextSection,async input => {
-    const host = conversations.get(input.conversationId) ?? await resolve(input.conversationId);if (!host || host.delegated) return undefined;
-    // A subagent sees its parent's published session facts, never an unrelated repository cache.
+  const facts = createFactContext({harness:options.harness,async state(id) {
+    const host = conversations.get(id) ?? await resolve(id);if (!host || host.delegated) return;
     const row = (await options.harness().snapshot(SessionsDoc,BACKGROUND_CONTEXT))?.sessions[sessionKey(host.scope,host.parent ?? host.id)];
-    const knowledge = await options.harness().snapshot(KnowledgeDoc,scopeKey(host.scope),BACKGROUND_CONTEXT), policy = options.policy(host);
-    return row && !row.factsSuppressed && knowledge ? permittedFactSection(row.section,knowledge.environment,knowledge.distiller,host.scope.repository,policy,knowledge.factReviews) || undefined : undefined;
-  },{tag:false})]});
+    const knowledge = await options.harness().snapshot(KnowledgeDoc,scopeKey(host.scope),BACKGROUND_CONTEXT);
+    if (row && knowledge) return {row,host,knowledge,policy:options.policy(host)};
+  }});
+  const extension = defineExtension({name:"token-economizer",tasks:[...queue.extension.tasks ?? [],...lifecycle.extension.tasks ?? [],...pipeline.extension.tasks ?? [],...publication.extension.tasks ?? [],...training.extension.tasks ?? []],hooks:[...recorder.extension.hooks ?? [],...facts.hooks],sections:facts.sections});
   return {
     extension,
     async attach() {
@@ -187,23 +188,24 @@ export function createTokenEconomizer(options:TokenEconomizerOptions) {
       const key = sessionKey(host.scope,host.id);
       await options.harness().commit(async tx => {const state = await tx.doc(SessionsDoc), row = state.sessions[key];if (!row) return;state.sessions[key] = replaySections(row,sections,compacted,clock());},BACKGROUND_CONTEXT);
     },
-    async prepareTools(host:HostSession,task:string,attachments:AttachmentType[] = [],requestId = "",stage:{index:number;reauditEvery:number} = {index:0,reauditEvery:0},isCurrent:() => Promise<boolean> = async () => true) {
+    async prepareTools(host:HostSession,task:string,attachments:AttachmentType[] = [],requestId = "",stage:{index:number;reauditEvery:number;expiresAt?:number} = {index:0,reauditEvery:0},isCurrent:() => Promise<boolean> = async () => true) {
       if (host.parent) throw new Error("Subagents use their parent's tools; prepare the parent instead");
       const startedAt = clock(), operationId = `prepare:${fingerprint(JSON.stringify([host.id,requestId || crypto.randomUUID()]))}`;
       const key = sessionKey(host.scope,host.id), knowledge = await options.harness().snapshot(KnowledgeDoc,scopeKey(host.scope),BACKGROUND_CONTEXT), catalogue = await options.domain.catalogue(host);
       if (!knowledge) throw new Error("Start the logical session before preparing tools");
+      if (stage.expiresAt !== undefined && !Number.isFinite(stage.expiresAt)) throw new Error("Invalid preparation deadline");
       if (!Number.isSafeInteger(stage.index) || stage.index < 0 || !Number.isSafeInteger(stage.reauditEvery) || stage.reauditEvery < 0) throw new Error("Invalid task re-audit cadence");
       if (stage.index > 0 && stage.reauditEvery > 0 && stage.index%stage.reauditEvery === 0) {
-        if (emitting(policyFor(key)) && policyFor(key).pruning !== "off") {await options.domain.setTools(host,[]);await options.harness().commit(async tx => {(await tx.doc(SessionsDoc)).sessions[key].frozenMask = [];},BACKGROUND_CONTEXT);}
+        if (emitting(policyFor(key)) && policyFor(key).pruning !== "off") {if (!await isCurrent()) throw new Error("Task preparation expired");await options.domain.setTools(host,[],stage.expiresAt);await options.harness().commit(async tx => {(await tx.doc(SessionsDoc)).sessions[key].frozenMask = [];},BACKGROUND_CONTEXT);}
         return [];
       }
-      const choices = await taskJudge(host,task,catalogue,knowledge.tools.applied,knowledge.tools.used,knowledge.tools.kept,attachments,requestId,isCurrent);
+      const choices = await taskJudge(host,task,catalogue,knowledge.tools.applied,knowledge.tools.used,knowledge.tools.kept,attachments,requestId,isCurrent,stage.expiresAt);
       const current = await options.domain.catalogue(host), mask = unionExclusions(knowledge.tools.applied,choices,current.tools,knowledge.tools.used,knowledge.tools.kept);
       if (!await isCurrent()) {
         await options.harness().commit(async tx => options.onOperation?.(tx,host.conversationId,{id:operationId,name:"optimizer.prepare-tools",status:"failed",startedAt,at:clock(),input:{task,attachments},output:{error:"Task preparation expired; no tool changes applied"}}),BACKGROUND_CONTEXT);
         throw new Error("Task preparation expired; retry at an idle boundary");
       }
-      if (emitting(policyFor(key))) {await options.domain.setTools(host,mask);await options.harness().commit(async tx => {(await tx.doc(SessionsDoc)).sessions[key].frozenMask = mask;},BACKGROUND_CONTEXT);}
+      if (emitting(policyFor(key))) {await options.domain.setTools(host,mask,stage.expiresAt);await options.harness().commit(async tx => {(await tx.doc(SessionsDoc)).sessions[key].frozenMask = mask;},BACKGROUND_CONTEXT);}
       if (options.onOperation && Object.keys(choices).length) await options.harness().commit(async tx => options.onOperation?.(tx,host.conversationId,{id:operationId,name:"optimizer.prepare-tools",status:"complete",startedAt,at:clock(),input:{task,attachments,mode:policyFor(key).mode},output:{decisions:choices,hidden:mask,applied:emitting(policyFor(key))}}),BACKGROUND_CONTEXT);
       return mask;
     },

@@ -5,7 +5,7 @@ import { isFinalAssistantMessage } from "@kintsugi/agent/server/transcript";
 import { createOptimizerGoalsExtension, GoalContextEntry } from "./token-optimizer-goals.ts";
 import { agentPlanStore } from "@kintsugi/agent/server/plan";
 import { contextSection, fingerprint, scopeKey, sessionKey, type AttachmentType, type LearningSession } from "@kintsugi/token-economizer/core";
-import { createSdkModelTransport, createTokenEconomizer, decodeArguments, decodeResult, detach, KnowledgeDoc, RunDoc, runIdentity, SessionsDoc, SteeringEntry, type HostDomain, type HostSession, type Knowledge } from "@kintsugi/token-economizer/pi-durable";
+import { createSdkModelTransport, createTokenEconomizer, decodeArguments, decodeResult, detach, KnowledgeDoc, RunDoc, runIdentity, SessionsDoc, SteeringEntry, FactContextEntry, type HostDomain, type HostSession, type Knowledge } from "@kintsugi/token-economizer/pi-durable";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import type { Models } from "@earendil-works/pi-ai";
 import { AgentDoc, AssistantEntry, CompactionEntry, ResetEntry, ToolResultEntry, defineDoc, defineEntry, LiveDoc, SystemEntry, type LiveState, type AgentState, type Conversation, type ConversationId, type Harness, type RegistryReader } from "@earendil-works/pi-durable";
@@ -33,7 +33,7 @@ export const tokenOptimizerIntegration:BuiltinAgentIntegration = {id:"token-opti
   const operations = new Set(view.entries.flatMap(entry => OptimizerOperationEntry.is(entry) ? [entry.data.id] : []));
   const order = new Map<string,number>();
   const inputs = view.entries.flatMap((entry,index) => {
-    if (SteeringEntry.is(entry) || GoalContextEntry.is(entry) || durablePlanContextEntry.is(entry) || CompactionEntry.is(entry) || ResetEntry.is(entry)) return [];
+    if (SteeringEntry.is(entry) || FactContextEntry.is(entry) || GoalContextEntry.is(entry) || durablePlanContextEntry.is(entry) || CompactionEntry.is(entry) || ResetEntry.is(entry)) return [];
     return (entry.model ?? []).flatMap((message,offset) => message.role === "user" ? [{index,key:offset === 0 ? String(entry.id) : `${entry.id}:message:${offset}`}] : []);
   });
   const inputAt = new Map(inputs.map(input => [input.index,input]));
@@ -118,9 +118,9 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
     return chipRefresh;
   }
   const picks = new Map<ConversationId,{at:number;ms:number;hidden:string[]|null;note:string|null}>();
-  async function prepare(host:HostSession,task:string,requestId:string,attachments:AttachmentType[] = []) {
+  async function prepare(host:HostSession,task:string,requestId:string,attachments:AttachmentType[] = [],expiresAt?:number) {
     if ((await options.harness().snapshot(LiveDoc,host.conversationId,context))?.run) throw new Error("Wait for the Agent to become idle before picking tools for a task");
-    return optimizer.prepareTools(host,task,attachments,requestId,{index:0,reauditEvery:0},async () => hosts.get(host.conversationId)?.id === host.id && !(await options.harness().snapshot(LiveDoc,host.conversationId,context))?.run);
+    return optimizer.prepareTools(host,task,attachments,requestId,{index:0,reauditEvery:0,expiresAt},async () => (expiresAt === undefined || Date.now() < expiresAt) && hosts.get(host.conversationId)?.id === host.id && !(await options.harness().snapshot(LiveDoc,host.conversationId,context))?.run);
   }
   /**
    * Subagents are recognised from the Agent catalogue the first time their conversation is seen, which is no later than
@@ -148,7 +148,7 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
       const tools = [...new Map(options.registry.snapshot().tools().filter(item => extensions.has(item.extension.name)).map(item => [item.tool.name,item.tool])).values()].filter(tool => Array.isArray(baseline) ? baseline.includes(tool.name) : !baseline?.remove.includes(tool.name)).map(tool => ({name:tool.name,description:tool.description.slice(0,4096),revision:fingerprint(JSON.stringify([tool.name,tool.description,tool.parameters,tool.callers])),protected:/plan|user|ask|permission|agent|delegat|message|stop|cancel|credential|recover|codemode|tool_search/i.test(tool.name),highRisk:!nativeOptimizerTool(tool.name).readOnly,exposed:exposed.has(tool.name)}));
       return {revision:fingerprint(JSON.stringify(tools.map(({exposed:_exposed,...tool}) => tool))),source:"native-registry-and-agent-filter",complete:true,tools};
     },
-    async setTools(host,excluded) {
+    async setTools(host,excluded,expiresAt) {
       const catalogue = await domain.catalogue(host), safe = excluded.filter(name => catalogue.tools.some(tool => tool.name === name && !tool.protected));
       await options.harness().commit(async tx => {
         const owner = await tx.doc(NativeMask,host.conversationId), agent = await tx.doc(AgentDoc,host.conversationId), current:Filter = agent.tools === undefined ? null : detach({value:agent.tools}).value;
@@ -156,6 +156,7 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
         if (JSON.stringify(current) !== JSON.stringify(owner.rendered)) throw new Error("The tool filter changed outside the optimizer; refusing to overwrite another owner's restrictions");
         const baseline:Filter = detach({value:owner.baseline}).value, next:Filter = Array.isArray(baseline) ? baseline.filter(name => !safe.includes(name)) : safe.length ? {remove:[...new Set([...(baseline?.remove ?? []),...safe])]} : baseline;
         if (JSON.stringify(current) !== JSON.stringify(next) && !preparing.has(host.conversationId) && (await tx.doc(LiveDoc,host.conversationId)).run) throw new Error("Task preparation expired while the Agent started work");
+        if (expiresAt !== undefined && Date.now() >= expiresAt) throw new Error("Task preparation expired before tool changes committed");
         if (JSON.stringify(current) !== JSON.stringify(next)) {if (next === null) delete agent.tools;else agent.tools = next;}
         owner.rendered = next;owner.owned = safe;
       },context);
@@ -184,7 +185,7 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
     const scope = {host:"kintsugi.builtin",repository:options.workspaceId,environment:"native-v1"}, known = (await options.harness().snapshot(NativeEpoch,conversation.id,context))?.id ?? null;
     // A known session keeps its frozen context, so reopening a workspace needs no context or history read.
     const resumed = known !== null && Boolean((await options.harness().snapshot(SessionsDoc,context))?.sessions[sessionKey(scope,known)]);
-    const view = resumed ? null : await conversation.context(context), latest = resumed ? null : await latestOptimizerEntry(conversation), carried = view ? optimizerMessageSections(view.messages) : {};
+    const view = resumed ? null : await conversation.context(context), latest = resumed ? null : await latestOptimizerEntry(conversation), carried = view ? optimizerSections(view.entries) : {};
     const host = await options.harness().commit(async tx => {
       const epoch = await tx.doc(NativeEpoch,conversation.id), sessions = await tx.doc(NativeOptimizerSessions);
       if (epoch.id === null) {
@@ -228,7 +229,7 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
         for (const change of publication.changes) if (change.type === "entry" && (SystemEntry.is(change.value) || CompactionEntry.is(change.value))) {
           const entry = change.value, host = hosts.get(entry.conversationId);if (!host) continue;
           events = events.then(async () => {
-            const compacted = CompactionEntry.is(entry), sections = compacted ? optimizerMessageSections((await (await options.harness().conversation(host.conversationId,context))!.context(context)).messages) : optimizerSections([entry]);
+            const compacted = CompactionEntry.is(entry), sections = compacted ? optimizerSections((await (await options.harness().conversation(host.conversationId,context))!.context(context)).entries) : optimizerSections([entry]);
             await optimizer.replaySections(host,sections,compacted);
           }).catch(error => console.error("Token optimizer section replay failed",error));
         }
@@ -259,8 +260,10 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
       const policy = options.configuration.policy(options.workspaceId,actor(host));
       if (!policy.autoToolPicks || policy.toolJudge === "none" || policy.pruning === "off" || !(policy.mode === "active" || policy.mode === "observe" && policy.inferenceInObserve)) return;
       if ((await options.harness().snapshot(LiveDoc,id,context))?.run) return;
-      const began = Date.now(), work = prepare(host,task,crypto.randomUUID(),attachments).then(mask => ({mask}),error => ({error:errorMessage(error)}));
-      const outcome = await Promise.race([work,new Promise<null>(resolve => setTimeout(resolve,promptPickLimitMs,null))]);
+      const began = Date.now(), work = prepare(host,task,crypto.randomUUID(),attachments,began+promptPickLimitMs).then(mask => ({mask}),error => ({error:errorMessage(error)}));
+      let timer:ReturnType<typeof setTimeout>|undefined;
+      const timeout = new Promise<null>(resolve => {timer=setTimeout(resolve,promptPickLimitMs,null);});
+      const outcome = await Promise.race([work,timeout]).finally(() => clearTimeout(timer));
       picks.set(id,{at:Date.now(),ms:Date.now()-began,hidden:outcome && "mask" in outcome ? outcome.mask : null,note:outcome === null ? "Took too long, so the prompt went ahead with the current tools." : "error" in outcome ? outcome.error : null});
     },
     async hostForAgent(agentId:string) {const record=(await options.harness().snapshot(WorkspaceAgents,context))?.agents.find(record=>record.agentId===agentId);const host=record&&hosts.get(record.durableId);if(!host)throw new Error("This Agent has no optimizer session.");return host;},

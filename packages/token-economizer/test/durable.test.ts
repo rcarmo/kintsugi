@@ -156,3 +156,15 @@ test("feedback arriving during a fold cannot be overwritten or published from it
   expect(knowledge.factReviews!["environment:live"].decision).toBe("rejected");expect(knowledge.render).toBe("");
   expect((await f.harness.snapshot(SessionsDoc,context))!.sessions[sessionKey(host.scope,host.id)].section).toBe("");
 });
+
+test("expired prompt preparation never reserves budget or extends its absolute queue deadline",async()=>{
+  let calls=0;const f=await setup("memory",async()=>{calls++;return reply;});
+  const request={id:"expired",purpose:"proposer" as const,model:reply.model,prompt:"bounded",maxOutputTokens:10,deadlineMs:10000};
+  const origin={sessionKey:"session",account:"account",runId:null,revision:"1",digest:"digest",estimatedMaximumCost:null,expiresAt:Date.now()-1};
+  expect((await f.queue.enqueue(f.root.id,request,origin)).reason).toBe("expired");
+  expect(Object.keys((await f.harness.snapshot(JobsDoc,context))!.budget.reserved)).toHaveLength(0);
+  const expiresAt=Date.now()+200,admitted=await f.queue.enqueue(f.root.id,{...request,id:"bounded"},{...origin,expiresAt});
+  expect(admitted.job!.deadline).toBe(expiresAt);
+  await Bun.sleep(210);await f.harness.waitForTask(admitted.job!.taskId!,context);
+  expect(calls).toBe(0);expect((await f.harness.snapshot(JobsDoc,context))!.jobs.bounded.status).toBe("cancelled");
+});

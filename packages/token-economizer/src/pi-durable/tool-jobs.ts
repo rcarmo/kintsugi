@@ -22,7 +22,7 @@ import { detach } from "./detach.ts";
 import type { createInferenceQueue } from "./sidecall.ts";
 const classifierOutput = Type.Object({label:Type.Union([Type.String(),Type.Null()]),probabilities:Type.Record(Type.String(),Type.Number())});
 export function createTaskToolJudge(options:{harness:() => Harness;policy:(key:string) => Policy;queue:ReturnType<typeof createInferenceQueue>}) {
-  return async (host:HostSession,task:string,catalogue:CatalogueSnapshot,evidence:string[],used:string[],kept:string[],attachments:AttachmentType[] = [],requestId = "",isCurrent:() => Promise<boolean> = async () => true) => {
+  return async (host:HostSession,task:string,catalogue:CatalogueSnapshot,evidence:string[],used:string[],kept:string[],attachments:AttachmentType[] = [],requestId = "",isCurrent:() => Promise<boolean> = async () => true,expiresAt?:number) => {
     const key = sessionKey(host.scope,host.id), scope = scopeKey(host.scope), policy = options.policy(key), decisions:Record<string,boolean> = {};
     if (!observing(policy) || policy.pruning === "off" || policy.toolJudge === "none" && !policy.savers.toolPrefilter && !policy.savers.localToolDrops || !catalogue.complete || !task.trim()) return decisions;
     const candidates = taskCandidates(catalogue.tools,used,kept,evidence), tokenized = tokenize(task,attachments), teacher = modelFor(policy,"toolJudge"), classifier = modelFor(policy,"toolClassifier");
@@ -36,7 +36,9 @@ export function createTaskToolJudge(options:{harness:() => Harness;policy:(key:s
     let localMs = lexicalMs, localPredictions = policy.savers.toolPrefilter && data?.lexical ? 1 : 0;
     async function call(request:InferenceRequest) {
       if (!await isCurrent()) return null;
-      const admission = await options.queue.enqueue(host.conversationId,request,{sessionKey:key,account:JSON.stringify([host.scope.host,request.model.provider]),runId:null,revision:fingerprint(JSON.stringify(policy)),digest:fingerprint(request.prompt),estimatedMaximumCost:null});
+      const remaining = expiresAt === undefined ? request.deadlineMs : Math.min(request.deadlineMs,Math.floor(expiresAt-Date.now()));
+      if (remaining <= 0) return null;
+      const admission = await options.queue.enqueue(host.conversationId,{...request,deadlineMs:remaining},{sessionKey:key,account:JSON.stringify([host.scope.host,request.model.provider]),runId:null,revision:fingerprint(JSON.stringify(policy)),digest:fingerprint(request.prompt),estimatedMaximumCost:null,expiresAt});
       if (!admission.job?.taskId) return null;
       await options.harness().waitForTask(admission.job.taskId,BACKGROUND_CONTEXT);
       const row = (await options.harness().snapshot(JobsDoc,BACKGROUND_CONTEXT))!.jobs[request.id];return row.status === "complete" ? row.result : null;

@@ -6,6 +6,7 @@ import { compareCodePoints } from "../src/core/ordering.ts";
 import { emptyEvidence, foldEvidence } from "../src/core/toolprune/evidence.ts";
 import type { ToolInfo } from "../src/core/types.ts";
 import fixtures from "./fixtures/catalogue.json";
+import {toolJudgePrompt} from "../src/core/toolprune/judge.ts";
 const tool = (name: string, description: string): ToolInfo => ({ name, description, revision: "1", protected: false, highRisk: false, exposed: true });
 for (const fixture of fixtures.cases) test(`upstream retained catalogue ${fixtures.cases.indexOf(fixture)}`, () => {
   const prior = emptyEvidence();
@@ -26,4 +27,12 @@ test("master Off cannot advance evidence even when pruning is configured Auto", 
   const prior = emptyEvidence(), policy = defaultPolicy();
   policy.pruning = "auto";
   expect(foldEvidence(prior, [], [tool("rare", "Rare")], 10, policy, 100)).toEqual(prior);
+});
+
+test("tool selection puts the reusable catalogue before variable task text",()=>{
+  const tools=[tool("rare","Reusable catalogue description"),tool("other","Another helper")];
+  const first=toolJudgePrompt("Fix the parser",tools),second=toolJudgePrompt("Review the tests",tools);
+  expect(first.split("\n\nTASK:\n")[0]).toBe(second.split("\n\nTASK:\n")[0]);
+  expect(first.indexOf("Reusable catalogue description")).toBeLessThan(first.indexOf("Fix the parser"));
+  expect(second).toContain("Review the tests");expect(second).not.toContain("Fix the parser");
 });

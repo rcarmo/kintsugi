@@ -117,7 +117,7 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
             newFacts:current.filter(fact => !previous.has(fact.id)).map(fact => fact.id),
             facts:current.slice(-40),changes,learning:result.learning?.lastCheck ?? null,
             toolSuggestions:result.tools.proposal,hiddenTools:result.tools.applied,sessions:result.tools.sessions,prompts:result.tools.prompts,
-            activePrefixChanged:previousSection !== row.section,
+            activeFactsChanged:previousSection !== row.section,
           } : {error:trajectory.kind === "ready" ? "No learning result" : trajectory.reason};
           await options.onOperation?.(tx,host.conversationId,{...activity,status:!observing(options.policy(key)) ? "cancelled" : result ? "complete" : "failed",at:runtime.now(),output});
         }

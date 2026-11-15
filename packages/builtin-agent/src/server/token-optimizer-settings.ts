@@ -133,7 +133,7 @@ function settingsForm(config: OptimizerConfig, catalogue: Catalogue, view: View)
   const models = modelOptions(catalogue, false, policy.generativeModel, "Choose a model…");
   const modelBlock = `<div class="token-optimizer__model form-stack">
     ${selectRow("model", "Model for optimizer calls", policy.generativeModel ? JSON.stringify(policy.generativeModel) : "", models, models.length > 1 ? "A small, fast model is plenty." : "Connect a model provider under Models first.")}
-    ${checkboxRow("autoToolPicks", "Pick tools before each new prompt", policy.autoToolPicks ?? false, "Adds a short model call before the Agent starts. If it takes over 20 seconds, the prompt goes ahead anyway.")}
+    ${checkboxRow("autoToolPicks", "Pick tools before each new prompt", policy.autoToolPicks ?? false, "Adds a model call before the Agent starts. After 20 seconds it is cancelled and the prompt goes ahead. Tool changes can invalidate the prompt cache.")}
     ${checkboxRow("inferenceInObserve", "Use the model while watching", policy.inferenceInObserve, "Off means Watch only never costs anything.")}
     <p class="settings-help">Up to ${plural(budget.callsPerSession, "call")} per Agent session and ${budget.callsPerDay} per day. Change this in Advanced settings › Limits.</p>
   </div>`;
@@ -184,7 +184,7 @@ function factsHtml(workspaceId: string, agentId: string, data: Status, mode: Mod
     return disclosure(fact.claim,`<p>${h(fact.claim)}</p><p>${h(factStatus[fact.status])} · ${fact.source === "distilled" ? "Model proposal" : "Observed pattern"} · ${plural(fact.confirmations,"confirmation")} · ${plural(fact.contradictions,"contradiction")}</p>${list(fact.evidence.map(line => item(line)))}${fact.review ? `<p class="settings-help">Last reviewed ${time(fact.review.at)}.</p>` : ""}${feedback}`);
   });
   const body = `<p class="settings-help">Facts are shared within this workspace, not across workspaces. Model proposals need your approval as well as repeated evidence. Approval does not override safety rules or promote an unconfirmed fact.</p>
-    <p class="settings-help">Rejection or stale feedback removes a fact from subsequent model requests, including existing sessions. Eligible approved facts are available on the next request in existing sessions when the optimizer is On. Changing facts can rebuild the prompt cache; running tools are not stopped.</p>
+    <p class="settings-help">Rejection or stale feedback removes a fact from subsequent model requests, including existing sessions. Eligible approved facts are available on the next request in existing sessions when the optimizer is On. New facts append to context without rewriting earlier history. Removing facts or changing tools can invalidate the prompt cache; running tools are not stopped.</p>
     ${shown.length ? `<p>In this session:</p>${list(shown.map(line => item(line)))}` : `<p class="settings-help">${mode === "off" ? "Learning is off." : "This session has no permitted learned facts."}</p>`}
     ${rows.length ? rows.join("") : `<p class="settings-help">No facts yet. Learning checks completed tool results between replies.</p>`}
     ${rows.length ? actionForm(workspaceId,agentId,"stale-facts","Mark all facts stale",`<p class="settings-help">Use after changing the checkout, dependencies or environment. Facts are kept for review, but excluded until you approve them again. History is unchanged.</p><label><input type="checkbox" name="confirmed" value="true" required> Apply to all learned facts in this workspace</label>`) : ""}
