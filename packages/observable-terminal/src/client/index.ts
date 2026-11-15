@@ -301,8 +301,11 @@ async function initializeTerminalViewer(options: ObservableTerminalViewerOptions
     defaultCursorBlink: options.mode === "interactive",
     wasm,
     callbacksWasm,
-    cols: options.connectBeforeRender ? size.cols : options.cols,
-    rows: options.connectBeforeRender ? size.rows : options.rows,
+    // Only fixed-size viewers pin the renderer grid. Gespenst's ResizeObserver
+    // reapplies these options after fit(), so pinning the early attachment size
+    // would undo every later pane resize. The transport still starts at `size`.
+    cols: options.cols,
+    rows: options.rows,
   });
   if (signal.aborted) { term.dispose(); return undefined; }
   try {
