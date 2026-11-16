@@ -1,7 +1,8 @@
 import { escapeHtml, liveCollection, type LiveRegion } from "@kintsugi/shared";
-import { commentaryContext, ids, type AgentRenderContext } from "@kintsugi/agent/server/render-context";
+import { agentPath, commentaryContext, ids, type AgentRenderContext } from "@kintsugi/agent/server/render-context";
 import { renderIdleSeparator, renderModelContextEntries, renderTranscriptItem, renderWorkingSection, workingCommentaryItems, type AgentModelContextView } from "@kintsugi/agent/server/render-transcript";
 import type { TranscriptItem, WorkingTranscriptItem } from "@kintsugi/agent/server/transcript";
+import { buttonHtml } from "@kintsugi/design-system/button";
 
 export class LiveTranscriptRenderer {
   private readonly cache = new Map<string, { fingerprint: string; html: string }>();
@@ -33,8 +34,10 @@ export class LiveTranscriptRenderer {
     });
   }
 
-  renderTranscript(ctx: AgentRenderContext, items: TranscriptItem[], modelContext: AgentModelContextView, busy = false): LiveRegion {
-    const region = liveCollection(ids.transcript(ctx), [{ id: `${ids.transcript(ctx)}_context`, html: renderModelContextEntries(ctx, modelContext) }, ...this.rows(ctx, items), { id: `${ids.transcript(ctx)}_idle`, html: renderIdleSeparator(items, busy) }]);
+  renderTranscript(ctx: AgentRenderContext, items: TranscriptItem[], modelContext: AgentModelContextView, busy = false, before?: number): LiveRegion {
+    const url = `${agentPath(ctx, "/scrollback")}?branch=${encodeURIComponent(ctx.branchId!)}&before=${before}`;
+    const history = before === undefined ? "" : `<div data-controller="agent-scrollback" data-agent-scrollback-url-value="${escapeHtml(url)}"><p>${buttonHtml({ type: "button", variant: "secondary", content: { kind: "caption", caption: "Load earlier messages" }, attributesHtml: 'data-agent-scrollback-target="button" data-action="agent-scrollback#load"' })}</p><p role="status" data-agent-scrollback-target="status"></p></div>`;
+    const region = liveCollection(ids.transcript(ctx), [{ id: `${ids.transcript(ctx)}_history`, html: history }, { id: `${ids.transcript(ctx)}_context`, html: renderModelContextEntries(ctx, modelContext) }, ...this.rows(ctx, items), { id: `${ids.transcript(ctx)}_idle`, html: renderIdleSeparator(items, busy) }]);
     // Notices are browser-owned ephemeral messages, never snapshot state.
     region.html += this.noticesMount(ctx);
     return region;

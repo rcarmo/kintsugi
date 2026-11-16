@@ -175,6 +175,7 @@ export class AgentPresentation {
     this.chrome.invalidate();
   }
   async detailHtml(key: string, count?: number) { return this.presentation.detailHtml(key, count); }
+  async loadEarlier(branch: string, before: number) { this.assertOpen(); return this.presentation.loadEarlier(branch, before, BACKGROUND_CONTEXT); }
   async treeHtml(options: { filter: TreeFilterMode; query: string }) { this.assertOpen(); return renderDurableTree(await this.controller.tree(), { ...options, historyPath: `/workspaces/${encodeURIComponent(this.workspaceId)}/agent-history` }); }
   async dispose() {
     if (this.disposed) return;

@@ -13,6 +13,13 @@ const abortInputSchema = Type.Object({ note: Type.Optional(Type.String()) });
 
 export const handleSessionRequest: AgentRouteHandler = async (request, url, options) => {
   let params: string[] | undefined;
+  if ((params = matchRoute(url, /^\/workspaces\/([^/]+)\/agents\/([^/]+)\/scrollback$/)) && request.method === "GET") {
+    const before = Number(url.searchParams.get("before")), branch = url.searchParams.get("branch");
+    if (!branch || !Number.isSafeInteger(before) || before < 1) return response("Invalid history boundary", { status: 400 });
+    const runtime = await requireAgentPresentation(params[0], params[1], options);
+    const html = await runtime.loadEarlier(branch, before);
+    return html === null ? response("The selected branch changed. Reload this Agent view.", { status: 409 }) : turboStreamResponse(html);
+  }
   if ((params = matchRoute(url, /^\/workspaces\/([^/]+)\/agents\/([^/]+)\/reveal\/([^/]+)$/)) && request.method === "GET") {
     const [workspaceId, agentId, target] = params;
     const runtime = await requireAgentPresentation(workspaceId, agentId, options);

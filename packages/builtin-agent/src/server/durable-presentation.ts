@@ -10,6 +10,8 @@ import type { AgentLivePresentationListener, AgentLivePresentationSubscription }
 import { findTranscriptItem, type TranscriptItem } from "@kintsugi/agent/server/transcript";
 import { activeConversationView, durableViewState, projectDurableTranscript } from "./durable-transcript.ts";
 import { onValues } from "./durable-watch.ts";
+import { readScrollbackPage } from "./durable-scrollback.ts";
+import type { EntryId, EntryRecord } from "@earendil-works/pi-durable";
 
 /**
  * A window that never drops entries: the transcript shows the whole active context, not only its newest entries.
@@ -34,8 +36,13 @@ export class DurableAgentPresentation {
   private disposed = false;
   private readonly ctx: AgentRenderContext;
 
-  private constructor(private readonly watch: WatchHandle<ConversationView>, ctx: AgentRenderContext, private readonly onCommit?: (view: ConversationView) => void | Promise<void>) {
-    this.frame = activeConversationView(watch.value);
+  private older: EntryRecord[] = [];
+  private before?: EntryId;
+  private loading?: Promise<void>;
+
+  private constructor(private readonly watch: WatchHandle<ConversationView>, private readonly conversation: Pick<Conversation, "id"> & { history: Conversation["entries"] }, ctx: AgentRenderContext, private readonly onCommit?: (view: ConversationView) => void | Promise<void>) {
+    this.frame = watch.value;
+    this.before = watch.value.before;
     this.items = projectDurableTranscript(this.frame);
     this.ctx = { ...ctx, streamingText: (key, source) => {
       let cached = this.markdown.get(key);
@@ -55,20 +62,20 @@ export class DurableAgentPresentation {
     this.update(this.frame);
     watch.start(onValues(async value => {
       if (this.disposed) return;
-      const view = activeConversationView(value);
-      this.update(view);
-      await this.onCommit?.(view);
+      this.update(value);
+      await this.onCommit?.(activeConversationView(value));
     }));
     // A failed observer must be visible to the production owner, not mistaken
     // for an idle agent. `closed` returns the native terminal reason to callers.
     void watch.closed.then(() => this.release());
   }
 
-  static async attach(conversation: Pick<Conversation, "watch" | "context">, ctx: AgentRenderContext, context: Context, onCommit?: (view: ConversationView) => void | Promise<void>) {
-    // Start at the newest compaction or reset rather than the start of the history; later ones are cut in update().
+  static async attach(conversation: Pick<Conversation, "id" | "watch" | "context"> & { history: Conversation["entries"] }, ctx: AgentRenderContext, context: Context, onCommit?: (view: ConversationView) => void | Promise<void>) {
+    // Initially read only the active context. Older history is paged separately;
+    // subsequent compactions/reset must not remove messages already on screen.
     const { head } = await conversation.context(context);
     const watch = await conversation.watch(context, { from: head?.head, min: wholeWindow, max: wholeWindow });
-    try { return new DurableAgentPresentation(watch, ctx, onCommit); }
+    try { return new DurableAgentPresentation(watch, conversation, ctx, onCommit); }
     catch (error) { await watch.stop(); throw error; }
   }
 
@@ -78,10 +85,10 @@ export class DurableAgentPresentation {
   get branchId(): string { return this.ctx.branchId!; }
   get closed() { return this.watch.closed; }
 
-  /** `view` holds the active context only. */
+  /** Display history and active model context have independent boundaries. */
   private update(view: ConversationView) {
     this.frame = view;
-    const branch = `${view.conversation.id}:${view.entries.find(entry => entry.head !== undefined)?.id ?? "root"}`;
+    const branch = String(view.conversation.id);
     if (branch !== this.ctx.branchId) {
       this.clearTurns();
       this.markdown.clear();
@@ -90,11 +97,12 @@ export class DurableAgentPresentation {
     }
     const model = this.state.agent.model;
     this.ctx.model = model ? { provider: model.provider, id: model.modelId } : undefined;
-    this.items = projectDurableTranscript(view);
+    this.items = projectDurableTranscript({ ...view, entries: [...this.older, ...view.entries] });
     // Display committed system deltas, never re-render a mutable prompt loader
     // while reconstructing history. Honor context overrides for these details.
-    const edits = new Map(view.entries.flatMap(entry => entry.edits ?? []).map(edit => [edit.target, edit]));
-    const messages = view.entries.flatMap(entry => {
+    const active = activeConversationView(view);
+    const edits = new Map(active.entries.flatMap(entry => entry.edits ?? []).map(edit => [edit.target, edit]));
+    const messages = active.entries.flatMap(entry => {
       const edit = edits.get(entry.id);
       return edit?.action === "omit" ? [] : edit?.action === "replace" ? edit.messages : entry.model ?? [];
     });
@@ -116,7 +124,31 @@ export class DurableAgentPresentation {
 
   transcriptRegion(): LiveRegion {
     this.assertOpen();
-    return this.renderer.renderTranscript(this.ctx, this.items, this.modelContext, this.busy);
+    return this.renderer.renderTranscript(this.ctx, this.items, this.modelContext, this.busy, this.before);
+  }
+
+  /** View-only expansion, shared by this Agent's viewers; retries cannot consume another page. */
+  async loadEarlier(branch: string, before: number, context: Context): Promise<string | null> {
+    const current = () => !this.disposed && branch === this.branchId && String(this.conversation.id) === String(this.frame.conversation.id);
+    if (!current()) return null;
+    while (this.loading) await this.loading;
+    if (!current()) return null;
+    if (before === this.before) {
+      this.loading = (async () => {
+        const page = await readScrollbackPage(this.conversation.history, this.before!, context);
+        if (!current()) return;
+        this.older = [...page.entries, ...this.older];
+        this.before = page.before;
+        this.update(this.frame);
+      })();
+      try { await this.loading; } finally { this.loading = undefined; }
+    }
+    if (!current()) return null;
+    // A snapshot also works when live updates are disconnected or beat the HTTP reply.
+    let html = "";
+    const subscription = this.presentation.subscribe(stream => { html = stream; });
+    subscription.unsubscribe();
+    return html;
   }
 
   subscribeLivePresentation(listener: AgentLivePresentationListener, shown?: LiveRegionDigests): AgentLivePresentationSubscription {

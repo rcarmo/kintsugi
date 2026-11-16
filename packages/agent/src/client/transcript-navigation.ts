@@ -12,6 +12,8 @@ interface TranscriptGeometry {
 
 /** Transcript content dispatches this, bubbling, when the reader expands it in place. */
 export const transcriptExpandEvent = "agent-transcript:expand";
+/** Explicit reading intent, not a scroll caused by initial layout or live updates. */
+export const transcriptReadingEvent = "agent-transcript:reading";
 
 /** Show the end of the answer, scrolling back only as far as its prompt requires.
  * A prompt taller than the viewport opens at its beginning instead. */
@@ -34,6 +36,8 @@ export class TranscriptNavigation {
   private width = 0;
   private height = 0;
   private readingAnchor?: { element: HTMLElement; offset: number; height: number };
+  private contentHeight = 0;
+  private readingGap = 0;
   private streaming = false;
   private motionFrame = 0;
   private motionTarget = 0;
@@ -113,6 +117,7 @@ export class TranscriptNavigation {
     this.setStreaming(busy);
     this.stopMotion();
     this.floor = 0;
+    this.readingGap = 0;
     this.readingAnchor = undefined;
     this.positionStale = true;
     this.transcript.style.removeProperty("--agent-follow-floor");
@@ -141,6 +146,7 @@ export class TranscriptNavigation {
     this.selectionAwaitingSnapshot = false;
     this.touch = undefined;
     this.following = true;
+    this.readingGap = 0;
     this.pendingPosition = "smooth";
     this.renderMode();
     this.layoutChanged();
@@ -154,12 +160,18 @@ export class TranscriptNavigation {
   }
 
   private pause(): void {
+    const geometry = this.geometry();
+    // A short transcript can leave space below its last line. Keep that bounded
+    // space while prepending history, or the scroll limit would shift the passage.
+    this.readingGap = Math.min(geometry.viewport, Math.max(this.readingGap,
+      this.transcript.scrollTop + geometry.viewport - geometry.contentEnd - geometry.bottomPadding));
     this.stopMotion();
     this.pendingPosition = undefined;
     this.selectionAwaitingSnapshot = false;
     this.following = false;
     this.renderMode();
     this.rememberPosition();
+    this.transcript.dispatchEvent(new Event(transcriptReadingEvent));
     this.layoutChanged();
   }
 
@@ -198,7 +210,8 @@ export class TranscriptNavigation {
     // the current scrollTop: using scrollTop here lets scrolling into the
     // reserve grow the reserve again, with no effective end to the transcript.
     const { viewport, contentStart, bottomPadding, latestTop } = geometry;
-    const floor = Math.ceil(Math.max(0, latestTop + viewport - contentStart - bottomPadding));
+    const floor = Math.ceil(Math.max(0, latestTop + viewport - contentStart - bottomPadding,
+      this.following ? 0 : geometry.contentEnd - contentStart + this.readingGap));
     if (floor === this.floor) return;
     this.floor = floor;
     this.transcript.style.setProperty("--agent-follow-floor", `${floor}px`);
@@ -222,6 +235,7 @@ export class TranscriptNavigation {
     if (this.following) return;
     const top = this.transcript.getBoundingClientRect().top;
     for (const element of this.content.querySelectorAll<HTMLElement>(".agent-item, p, pre, li, h1, h2, h3, h4, h5, h6")) {
+      if (element.closest('[data-controller~="agent-scrollback"]')) continue;
       const bounds = element.getBoundingClientRect();
       if (bounds.height === 0 || bounds.bottom <= top) continue;
       // Prefer the innermost visible block over a potentially very long message.
@@ -244,20 +258,27 @@ export class TranscriptNavigation {
     const geometry = this.geometry();
     if (this.positionStale) this.rememberPosition(geometry.latestTop);
     const widthChanged = this.width !== 0 && width !== this.width;
+    const contentHeight = geometry.contentEnd - geometry.contentStart;
+    const contentChanged = this.contentHeight !== 0 && contentHeight !== this.contentHeight;
+    this.contentHeight = contentHeight;
     const resized = widthChanged || (this.height !== 0 && geometry.viewport !== this.height);
     this.width = width;
     this.height = geometry.viewport;
     this.reconciled = true;
+    // Install the reading reserve before restoring an anchor, so scrollTop is
+    // not clamped to the old end while newly prepended rows are being placed.
+    this.reserve(geometry);
     if (resized && this.following) {
       // Composer/keyboard changes resize the viewport immediately. Match that
       // layout change with a snap, even if a follow glide is already running.
       this.stopMotion();
       this.pendingPosition = "instant";
-    } else if (widthChanged && !this.pendingPosition && this.readingAnchor && this.content.contains(this.readingAnchor.element)) {
+    } else if ((widthChanged || contentChanged) && !this.following && !this.pendingPosition && this.readingAnchor && this.content.contains(this.readingAnchor.element)) {
       const { element, offset, height } = this.readingAnchor;
       const bounds = element.getBoundingClientRect();
-      // Scale an offset inside a reflowed block; preserve gaps above it.
-      const nextOffset = offset < 0 ? offset * bounds.height / height : offset;
+      // History can arrive in several Turbo streams. Preserve the passage through
+      // every height change above it, not only the first newly prepended row.
+      const nextOffset = widthChanged && offset < 0 ? offset * bounds.height / height : offset;
       this.moveTo(this.transcript.scrollTop + bounds.top - this.transcript.getBoundingClientRect().top - nextOffset, true);
     }
     this.reconcileMotion(geometry);
@@ -343,11 +364,17 @@ export class TranscriptNavigation {
     // A scroll event from showing the pane must not override its pending selection position.
     if (towardEnd && !this.following && !this.pendingPosition && !this.motionFrame && distanceToEnd <= 2) {
       this.following = true;
+      this.readingGap = 0;
       this.renderMode();
     }
     // Geometry does not toggle intent, and being above the padded end is normal.
     // Paused/idle scrolling must also reclaim reserve behind the viewport.
-    if (!this.motionFrame) this.layoutChanged();
+    if (!this.motionFrame) {
+      // Ordinary reader scrolling updates the anchor; a content-induced scroll
+      // must retain the one from before that content changed.
+      if (this.content.getBoundingClientRect().height === this.contentHeight) this.rememberReadingPosition();
+      this.layoutChanged();
+    }
   };
 
   // Conservatively treat upward input anywhere in the transcript as reading,

@@ -1,4 +1,5 @@
 import type { WorkspaceClientModule } from "@kintsugi/shared";
+import { createAgentScrollbackController } from "./scrollback-controller.ts";
 import { createMcpAccessController } from "./mcp-access-controller.ts";
 import { createAgentNotificationsController } from "./notifications-controller.ts";
 import { createAgentPaneController, registerAgentPaneVisibilityHooks } from "./agent-pane.ts";
@@ -13,6 +14,7 @@ const builtinAgentClientModule: WorkspaceClientModule = {
     application.register("agent-notifications", createAgentNotificationsController(Controller));
     application.register("agent-pane", createAgentPaneController(Controller));
     application.register("agent-turn", createAgentTurnController(Controller));
+    application.register("agent-scrollback", createAgentScrollbackController(Controller));
     application.register("agent-term", createAgentTermController(Controller));
     application.register("builtin-background", createBackgroundController(Controller));
     application.register("builtin-child-transcript", createChildTranscriptController(Controller));
