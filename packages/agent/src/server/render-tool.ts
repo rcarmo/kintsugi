@@ -20,7 +20,7 @@ import { isBashTool, formatCost, formatDuration, formatTokens, toolOutcomeLabel,
 import { agentPath, ids, sessionImageUrl, transcriptItemPath, type AgentRenderContext } from "./render-context.ts";
 import { codeBlockHtml, detailFullscreen, fullscreenAttributes, transcriptRowContent, transcriptTimestampAttributes } from "./render-markup.ts";
 
-type ToolArgumentKey = "code" | "command" | "path" | "file_path" | "content" | "offset" | "limit" | "timeout" | "edits" | "oldText" | "newText";
+type ToolArgumentKey = "code" | "command" | "path" | "file_path" | "content" | "offset" | "limit" | "timeout" | "edits" | "oldText" | "newText" | "kind" | "session" | "url";
 
 const toolStringArgumentSchema = Type.String();
 const toolNumberArgumentSchema = Type.Number();
@@ -95,7 +95,28 @@ function planSummary(tool: ToolView): string {
   }
 }
 
+function presentSummary(tool: ToolView): string {
+  const args = toolArgs(tool), kind = stringArg(args, "kind");
+  if (kind === "desktop") return "Show desktop";
+  if (kind === "tmux") {
+    const session = stringArg(args, "session")?.replace(/\s+/g, " ").trim();
+    return summaryHtml(["Show terminal", session ? truncateOneLine(session, 120) : undefined]);
+  }
+  if (kind === "browser") {
+    const value = stringArg(args, "url");
+    if (!value || value.length > 8192) return "Open browser";
+    try {
+      const url = new URL(value);
+      // Do not repeat URL userinfo, query values or fragments in the headline.
+      const target = ["http:", "https:"].includes(url.protocol) ? url.host + (url.pathname === "/" ? "" : url.pathname) : "";
+      return summaryHtml(["Open browser", target ? truncateOneLine(target, 120) : undefined]);
+    } catch { return "Open browser"; } // Incomplete/invalid retained URL: keep the action label.
+  }
+  return "Show work view";
+}
+
 function toolSummaryText(tool: ToolView): string {
+  if (tool.name === "present" && !agentToolPresentation(tool.name)) return presentSummary(tool);
   return [agentToolPresentation(tool.name)?.displayName ?? (codemodeCallName(tool.name) || "tool"), toolSummaryHtml(tool)].filter(Boolean).join(" · ");
 }
 
