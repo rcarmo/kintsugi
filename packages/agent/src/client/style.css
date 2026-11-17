@@ -227,6 +227,9 @@
 }
 
 .agent-tool { margin: 0; border: 0; border-radius: 0; background: transparent; overflow: visible; }
+/* Collapsed log entries stay compact even where touch menus use taller rows. */
+.agent-tool > .disclosure:not([open]) > summary,
+.agent-tool-summary-only > .content-row { min-height: 28px; padding-block: 2px; }
 /* Reserve the absent disclosure slot while a tool has no detail to open. */
 .agent-tool-summary-only > .content-row > .content-row__icon::before { content: ""; width: 16px; flex: 0 0 auto; }
 .agent-tool-status { display: inline-flex; width: 8px; flex: 0 0 auto; align-items: center; justify-content: center; }
