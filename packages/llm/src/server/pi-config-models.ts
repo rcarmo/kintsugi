@@ -1,4 +1,5 @@
 import { availableProviderModels } from "./known-model-provider-incorrectness.ts";
+import { refreshGitHubCopilotModelAvailability } from "./copilot-model-catalogue.ts";
 import { providerAvailability } from "./provider-availability.ts";
 import type { ModelRef } from "./model-reference.ts";
 import { readJsonSettings, updateJsonSettings } from "@kintsugi/core/json-settings";
@@ -182,6 +183,7 @@ export async function setEnabledModels(models: EnabledModel[]): Promise<void> {
 }
 
 let modelRuntime: Promise<ModelRuntime> | undefined;
+let modelRuntimeConfigDir: string | undefined;
 /** The provider's model with the lowest input price, for small housekeeping requests. */
 export function cheapestProviderModel(runtime: Pick<ModelRuntime, "getModels">, provider: string) {
   return runtime.getModels(provider).toSorted((a, b) => a.cost.input - b.cost.input)[0];
@@ -213,7 +215,8 @@ export function claudeCodeHeaders(model: Model<Api>): ProviderHeaders | undefine
 /** Settings catalogues must not refresh providers, resolve OAuth or start inference. */
 export async function readPiModelCatalogue(): Promise<ModelRuntime & { configuredProviderIds: ReadonlySet<string>; credentialTypes: ReadonlyMap<string, "api_key" | "oauth"> }> {
   await preparePiModelsJson();
-  const runtime = identifyAsKintsugi(await ModelRuntime.create({authPath:piAuthJsonPath(),modelsPath:piModelsJsonPath(),allowModelNetwork:false,refreshOnCreate:false}));
+  // Reuse a live catalogue after refresh; a fresh no-refresh runtime only has bundled definitions.
+  const runtime = modelRuntime && modelRuntimeConfigDir === piConfigDir() ? await modelRuntime : identifyAsKintsugi(await ModelRuntime.create({authPath:piAuthJsonPath(),modelsPath:piModelsJsonPath(),allowModelNetwork:false,refreshOnCreate:false}));
   // Without refresh, the SDK's auth-status snapshot omits stored credentials.
   // Listing metadata is local and does not resolve or refresh OAuth tokens.
   const credentials = await runtime.listCredentials();
@@ -226,9 +229,31 @@ export async function readPiModelCatalogue(): Promise<ModelRuntime & { configure
 }
 export function createPiModelRuntime(): Promise<ModelRuntime> {
   return modelRuntime ??= (async () => {
+    modelRuntimeConfigDir = piConfigDir();
     await preparePiModelsJson();
     return identifyAsKintsugi(await ModelRuntime.create({ authPath: piAuthJsonPath(), modelsPath: piModelsJsonPath() }));
   })();
+}
+
+let catalogueRefresh: ReturnType<ModelRuntime["refresh"]> | undefined;
+
+/** Like pi update --models: refresh definitions, not packages or enabled-model choices. */
+export function refreshPiModelCatalogue(): ReturnType<ModelRuntime["refresh"]> {
+  return catalogueRefresh ??= (async () => {
+    const runtime = await createPiModelRuntime(), signal = AbortSignal.timeout(15_000);
+    const result = await runtime.refresh({ allowNetwork: true, force: true, signal });
+    if (result.aborted) return result;
+    const errors = new Map(result.errors);
+    try {
+      if (!await refreshGitHubCopilotModelAvailability(runtime, piAuthJsonPath(), signal)) return result;
+      // Reload the SDK availability snapshot after the account allow-list changes.
+      const local = await runtime.refresh({ providers: ["github-copilot"], allowNetwork: false, signal });
+      for (const [provider, error] of local.errors) errors.set(provider, error);
+    } catch (error) {
+      errors.set("github-copilot", new Error(`Copilot account catalogue refresh failed. ${errorMessage(error)}`, { cause: error }));
+    }
+    return { aborted: signal.aborted, errors };
+  })().finally(() => { catalogueRefresh = undefined; });
 }
 
 export interface GitHubCopilotUsageCredentials { token: string; enterpriseUrl?: string }

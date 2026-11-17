@@ -390,7 +390,11 @@
         "@kintsugi/proxy-egress": "workspace:*",
         "@kintsugi/shared": "workspace:*",
         "@kintsugi/workspace": "workspace:*",
+        "proper-lockfile": "4.1.2",
         "typebox": "^1.0.57",
+      },
+      "devDependencies": {
+        "@types/proper-lockfile": "4.1.4",
       },
     },
     "packages/markdown": {

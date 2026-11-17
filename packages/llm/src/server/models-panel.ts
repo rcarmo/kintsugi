@@ -19,6 +19,7 @@ import {
   connectModelProviderApiKey,
   ProviderCatalogueRefreshError,
   createPiModelRuntime,
+  refreshPiModelCatalogue,
   disconnectModelProvider,
   getEnabledModels,
   getCustomModelsJson,
@@ -47,6 +48,8 @@ const ids = {
   connectionStep: (host: ModelsHost, provider: string, reconnect: boolean) => reconnect ? ids.reconnect(host, provider) : ids.connect(host),
   otherProviders: (host: ModelsHost) => domId("models_other_providers", host),
   enabledModels: (host: ModelsHost) => domId("models_enabled_models", host),
+  enabledSection: (host: ModelsHost) => domId("models_enabled_section", host),
+  catalogueRefresh: "models_catalogue_refresh",
   catalogue: (host: ModelsHost) => domId("models_catalogue", host),
   catalogueRow: (host: ModelsHost, model: ModelRef) => domId("models_catalogue_row", host, model.provider, model.id),
   continue: (host: ModelsHost) => domId("models_continue", host),
@@ -217,7 +220,7 @@ function renderCatalogue(entries: CatalogueEntry[], host: ModelsHost, query: str
 }
 
 async function renderEnabledModelsSection(runtime: Runtime, accounts: Account[], host: ModelsHost, focus: boolean): Promise<string> {
-  return `<section class="models-panel__section" aria-labelledby="${domId("models_enabled_models_section", host)}">
+  return `<section class="models-panel__section" id="${ids.enabledSection(host)}" aria-labelledby="${domId("models_enabled_models_section", host)}">
     <header class="models-panel__header">
       <h3 class="models-panel__heading" id="${domId("models_enabled_models_section", host)}">Enabled models</h3>
       <p class="models-panel__hint">Choose which models appear in the composer.</p>
@@ -260,16 +263,27 @@ const customModelsPlaceholder = `{
 
 type CustomModelsView = { source: string; open?: boolean; error?: string; status?: string };
 
-function renderCustomModelsSettings(view: CustomModelsView): string {
-  const saveButton = buttonHtml({ type: "submit", variant: "secondary", content: { kind: "caption", caption: "Validate and save" } });
+function renderCatalogueRefresh(feedback: Pick<CustomModelsView, "error" | "status"> = {}): string {
   const refreshButton = buttonHtml({
     type: "submit",
     variant: "secondary",
     content: { kind: "caption", caption: "Refresh model catalogue" },
     attributesHtml: 'data-turbo-submits-with="Refreshing…"',
   });
-  return `<div class="custom-models-settings">${disclosureHtml({ element: { id: "custom_models_settings" }, open: view.open, summary: { kind: "compact", label: { kind: "text", text: "Advanced model settings" } }, bodyHtml: `
+  return `<section class="models-panel__section" id="${ids.catalogueRefresh}" aria-labelledby="models_catalogue_refresh_heading">
+    <header class="models-panel__header">
+      <h3 class="models-panel__heading" id="models_catalogue_refresh_heading">Built-in model catalogue</h3>
+      <p class="models-panel__hint">Fetch the latest model definitions without updating Kintsugi.</p>
+    </header>
     <form method="post" action="/models/catalogue/refresh" data-turbo="true">${refreshButton}</form>
+    ${feedback.error ? `<p class="settings-error" role="alert">${escapeHtml(feedback.error)}</p>` : ""}
+    ${feedback.status ? `<p role="status">${escapeHtml(feedback.status)}</p>` : ""}
+  </section>`;
+}
+
+function renderCustomModelsSettings(view: CustomModelsView): string {
+  const saveButton = buttonHtml({ type: "submit", variant: "secondary", content: { kind: "caption", caption: "Validate and save" } });
+  return `<div class="custom-models-settings">${disclosureHtml({ element: { id: "custom_models_settings" }, open: view.open, summary: { kind: "compact", label: { kind: "text", text: "Advanced model settings" } }, bodyHtml: `
     <form class="custom-models-form form-stack" method="post" action="/models/custom" data-turbo="true">
       <div><label for="custom_models_json">Custom Pi model configuration</label><p>Paste a Pi <code>models.json</code> object containing <code>providers</code>. Custom models are merged with the official catalogue.</p></div>
       <textarea class="textarea custom-models-json" id="custom_models_json" name="models" placeholder="${escapeHtml(customModelsPlaceholder)}" spellcheck="false" autocomplete="off">${escapeHtml(view.source)}</textarea>
@@ -302,7 +316,7 @@ async function renderModelsPanel(host: ModelsHost, options: PanelOptions = {}): 
   const advanced = host === "settings" ? renderCustomModelsSettings({ source: await getCustomModelsJson(), ...options.customModels }) : "";
   const actions = host === "onboarding" ? onboardingActions(await hasAvailableEnabledModel()) : "";
   const error = options.error ? `<p class="settings-error" role="alert">${escapeHtml(options.error)}</p>` : "";
-  return `<div id="${ids.panel(host)}" class="models-panel">${error}${providers}${models}${advanced}${actions}</div>`;
+  return `<div id="${ids.panel(host)}" class="models-panel">${error}${host === "settings" ? renderCatalogueRefresh() : ""}${providers}${models}${advanced}${actions}</div>`;
 }
 
 type DialogHost = Exclude<ModelsHost, "settings">;
@@ -699,17 +713,20 @@ export async function handleModelsRequest(request: Request, url: URL, renderPick
   if (url.pathname === "/models/catalogue/refresh" && request.method === "POST") {
     let feedback: Pick<CustomModelsView, "error" | "status">;
     try {
-      const runtime = await createPiModelRuntime();
-      const result = await runtime.refresh({ allowNetwork: true, force: true });
+      const result = await refreshPiModelCatalogue();
       const errors = [...result.errors].map(([provider, error]) => `${provider}: ${error.message}`);
-      if (result.aborted) errors.push("Refresh was interrupted.");
+      if (result.aborted) errors.push("Refresh timed out or was interrupted. Try again.");
       feedback = errors.length
         ? { error: `Model catalogue refresh was incomplete. ${errors.join(" ")}` }
         : { status: "Model catalogue refreshed." };
     } catch (error) {
       feedback = { error: `Model catalogue refresh failed. ${errorMessage(error)}` };
     }
-    return panelResponse("settings", renderPickerUpdates, { customModels: { open: true, ...feedback } });
+    const runtime = await createPiModelRuntime();
+    const accounts = await listAccounts(runtime);
+    // Leave the custom editor and connection forms alone, including unsaved input.
+    const models = accounts.length ? replace(ids.enabledSection("settings"), await renderEnabledModelsSection(runtime, accounts, "settings", false)) : "";
+    return stream(replace(ids.catalogueRefresh, renderCatalogueRefresh(feedback)) + models + await renderPickerUpdates());
   }
   if (url.pathname === "/models/custom" && request.method === "POST") {
     const form = await request.formData();

@@ -14,6 +14,10 @@
     "@kintsugi/proxy-egress": "workspace:*",
     "@earendil-works/pi-ai": "catalog:",
     "@earendil-works/pi-coding-agent": "catalog:",
+    "proper-lockfile": "4.1.2",
     "typebox": "^1.0.57"
+  },
+  "devDependencies": {
+    "@types/proper-lockfile": "4.1.4"
   }
 }
