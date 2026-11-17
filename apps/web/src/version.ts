@@ -1,1 +1,1 @@
-export const kintsugiVersion = "v0.6.13";
+export const kintsugiVersion = "v0.7.0";
