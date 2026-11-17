@@ -1,10 +1,11 @@
+import {migrateLegacyMcpRecall,legacyMcpMembership} from "./mcp-recall-migration.ts";
 import {createHash} from "node:crypto";
 import type {Database} from "bun:sqlite";
 import {Type} from "typebox";
 import {Value} from "typebox/value";
 import {mcpAgentAllowed} from "./mcp-policy.ts";
 import type {Harness,ConversationId,DocumentReader} from "@earendil-works/pi-durable";
-import type {Context} from "@earendil-works/chord/context";
+import {BACKGROUND_CONTEXT,type Context} from "@earendil-works/chord/context";
 import {invalidArguments} from "@kintsugi/core";
 import {defaultMcpRecallSettings,recallStorageAllowed,type McpRecallSettings} from "@kintsugi/token-economizer/core";
 import {WorkspaceAgents} from "./durable-workspace.ts";
@@ -24,19 +25,36 @@ export function mcpRecallAllowed(config:McpConnection|undefined,workspaceId:stri
 }
 const grantsSchema=Type.Array(Type.Object({connectionId:Type.String(),epoch:Type.String()}));
 const sourcesSchema=Type.Array(Type.String());
-type Row={id:string;owner:string;tool:string;kind:string;grants:string;sources:string;handler:string;bytes:number;createdAt:number;lastSeen:number;hits:number;pinned:number;isError:number;summary:string};
+type Row={id:string;owner:string;tool:string;kind:string;grants:string;sources:string;handler:string;bytes:number;createdAt:number;lastSeen:number;hits:number;pinned:number;isError:number;summary:string;legacy:number};
 // Metadata columns precede the raw value, so listing and pruning never read its overflow pages.
-const columns="r.id,r.owner,r.tool,r.kind,r.grants,r.sources,r.handler,r.bytes,r.createdAt,r.lastSeen,r.hits,r.pinned,r.isError,r.summary";
+const columns="r.id,r.owner,r.tool,r.kind,r.grants,r.sources,r.handler,r.bytes,r.createdAt,r.lastSeen,r.hits,r.pinned,r.isError,r.summary,r.legacy";
 const item=(row:Row):McpRecallItem=>({id:row.id,owner:row.owner,tool:row.tool,kind:row.kind==="emitted-text"?"emitted-text":"mcp-envelope",grants:Value.Parse(grantsSchema,JSON.parse(row.grants)),sources:Value.Parse(sourcesSchema,JSON.parse(row.sources)),handler:row.handler,bytes:row.bytes,createdAt:row.createdAt,lastSeen:row.lastSeen,hits:row.hits,pinned:Boolean(row.pinned),isError:Boolean(row.isError),summary:row.summary});
+// SQLite TEXT normalises unpaired UTF-16 units. Keep their exact JSON representation separately; FTS indexes plain text.
+const retainedRaw=(row:{raw:string;exact_raw:string|null}):string=>row.exact_raw===null?row.raw:Value.Parse(Type.String(),JSON.parse(row.exact_raw));
 const initialized=new WeakSet<Database>();
 function initialize(db:Database){
   if(initialized.has(db))return;
-  db.exec(`CREATE TABLE IF NOT EXISTS mcp_recall (n INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE, digest TEXT NOT NULL, owner TEXT NOT NULL, conversation INTEGER NOT NULL, after INTEGER NOT NULL, tool TEXT NOT NULL, kind TEXT NOT NULL, grants TEXT NOT NULL, sources TEXT NOT NULL, handler TEXT NOT NULL, bytes INTEGER NOT NULL, createdAt INTEGER NOT NULL, lastSeen INTEGER NOT NULL, hits INTEGER NOT NULL, pinned INTEGER NOT NULL, isError INTEGER NOT NULL, summary TEXT NOT NULL, raw TEXT NOT NULL);
+  // Publish the table, triggers and rebuilt FTS index in one transaction, including recovery after an interrupted upgrade.
+  db.transaction(()=>{
+  let rebuilt=false;
+  if(db.query("SELECT 1 FROM sqlite_master WHERE name='mcp_recall'").get()) {
+    const statement=db.prepare<{name:string},[]>("PRAGMA table_info(mcp_recall)");let names:string[];
+    try {names=statement.all().map(column=>column.name);}finally{statement.finalize();}
+    if(!names.includes("legacy")||!names.includes("exact_raw")) {
+        db.exec("DROP TRIGGER IF EXISTS mcp_recall_insert; DROP TRIGGER IF EXISTS mcp_recall_delete; DROP TABLE IF EXISTS mcp_recall_search; ALTER TABLE mcp_recall RENAME TO mcp_recall_previous;");
+        db.exec("CREATE TABLE mcp_recall(n INTEGER PRIMARY KEY,id TEXT NOT NULL UNIQUE,digest TEXT NOT NULL,owner TEXT NOT NULL,conversation INTEGER NOT NULL,after INTEGER NOT NULL,tool TEXT NOT NULL,kind TEXT NOT NULL,grants TEXT NOT NULL,sources TEXT NOT NULL,handler TEXT NOT NULL,bytes INTEGER NOT NULL,createdAt INTEGER NOT NULL,lastSeen INTEGER NOT NULL,hits INTEGER NOT NULL,pinned INTEGER NOT NULL,isError INTEGER NOT NULL,summary TEXT NOT NULL,legacy INTEGER NOT NULL DEFAULT 0,exact_raw TEXT,raw TEXT NOT NULL);");
+        db.exec(`INSERT INTO mcp_recall SELECT n,id,digest,owner,conversation,after,tool,kind,grants,sources,handler,bytes,createdAt,lastSeen,hits,pinned,isError,summary,${names.includes("legacy")?"legacy":"0"},${names.includes("exact_raw")?"exact_raw":"NULL"},raw FROM mcp_recall_previous; DROP TABLE mcp_recall_previous;`);
+      rebuilt=true;
+    }
+  }
+  db.exec(`CREATE TABLE IF NOT EXISTS mcp_recall (n INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE, digest TEXT NOT NULL, owner TEXT NOT NULL, conversation INTEGER NOT NULL, after INTEGER NOT NULL, tool TEXT NOT NULL, kind TEXT NOT NULL, grants TEXT NOT NULL, sources TEXT NOT NULL, handler TEXT NOT NULL, bytes INTEGER NOT NULL, createdAt INTEGER NOT NULL, lastSeen INTEGER NOT NULL, hits INTEGER NOT NULL, pinned INTEGER NOT NULL, isError INTEGER NOT NULL, summary TEXT NOT NULL, legacy INTEGER NOT NULL DEFAULT 0, exact_raw TEXT, raw TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS mcp_recall_owner ON mcp_recall(owner, digest);
     CREATE VIRTUAL TABLE IF NOT EXISTS mcp_recall_search USING fts5(raw, content='mcp_recall', content_rowid='n', tokenize='unicode61');
     CREATE TRIGGER IF NOT EXISTS mcp_recall_insert AFTER INSERT ON mcp_recall BEGIN INSERT INTO mcp_recall_search(rowid,raw) VALUES(new.n,new.raw); END;
     CREATE TRIGGER IF NOT EXISTS mcp_recall_delete AFTER DELETE ON mcp_recall BEGIN INSERT INTO mcp_recall_search(mcp_recall_search,rowid,raw) VALUES('delete',old.n,old.raw); END;
     INSERT INTO mcp_recall_search(mcp_recall_search,rank) VALUES('secure-delete',1);`);
+  if(rebuilt)db.exec("INSERT INTO mcp_recall_search(mcp_recall_search) VALUES('rebuild')");
+  })();
   initialized.add(db);
 }
 /** Retention bounds the live recall index. It never deletes committed source journal evidence. */
@@ -65,8 +83,11 @@ export function createMcpRecallStore(workspaceId:string,harness:()=>Harness,conn
   /** Rows this conversation may use: its Agent's, captured on its branch history, under current grants. */
   async function visible(conversationId:ConversationId,context:Context){
     const owner=await mcpRecallOwner(conversationId,harness(),context),lineage=lineageCondition("r",await conversationLineage(harness(),conversationId,context));
+    const db=await database();await db.withSync(initialize);
+    await migrateLegacyMcpRecall(db,harness(),BACKGROUND_CONTEXT,raw=>{prune(raw);});
+    const legacy=await legacyMcpMembership(db,harness(),conversationId,BACKGROUND_CONTEXT);
     await use(db=>checkpoint(db,db.transaction(()=>prune(db))()));
-    return {owner,sql:`r.owner=? AND ${lineage.sql}`,params:[owner,...lineage.params]};
+    return {owner,sql:`r.owner=? AND ((r.legacy=0 AND ${lineage.sql}) OR (r.legacy=1 AND r.id IN (SELECT value FROM json_each(?))))`,params:[owner,...lineage.params,JSON.stringify(legacy)],legacy};
   }
   async function list(conversationId:ConversationId,context:Context,tool?:string){
     const scope=await visible(conversationId,context);
@@ -75,8 +96,9 @@ export function createMcpRecallStore(workspaceId:string,harness:()=>Harness,conn
   async function get(conversationId:ConversationId,id:string,context:Context):Promise<McpRecallRecord|undefined>{
     const scope=await visible(conversationId,context);
     return use(db=>{
-    const row=db.query<Row&{raw:string},(string|number)[]>(`SELECT ${columns},r.raw FROM mcp_recall r WHERE r.id=? AND ${scope.sql}`).get(id,...scope.params);
+    const row=db.query<Row&{raw:string;exact_raw:string|null},(string|number)[]>(`SELECT ${columns},r.raw,r.exact_raw FROM mcp_recall r WHERE r.id=? AND ${scope.sql}`).get(id,...scope.params);
     if(!row)return;
+    row.raw=retainedRaw(row);
     // Retained copies are re-checked against the current sensitivity rules before they leave the store.
     if(!recallStorageAllowed(row.tool,row.raw)){checkpoint(db,remove(db,[row.id]));return;}
     const value=item(row);return allowed(value,scope.owner)?{...value,raw:row.raw}:undefined;
@@ -87,9 +109,9 @@ export function createMcpRecallStore(workspaceId:string,harness:()=>Harness,conn
     const scope=await visible(conversationId,context),limit=input.limit??10;
     return use(db=>{
     // FTS ranks candidates; grants are checked afterwards, so read a bounded surplus.
-    const rows=db.query<Row&{raw:string;excerpt:string},(string|number)[]>(`SELECT ${columns},r.raw,snippet(mcp_recall_search,0,'[',']',' … ',40) AS excerpt FROM mcp_recall_search JOIN mcp_recall r ON r.n=mcp_recall_search.rowid
+    const rows=db.query<Row&{raw:string;exact_raw:string|null;excerpt:string},(string|number)[]>(`SELECT ${columns},r.raw,r.exact_raw,snippet(mcp_recall_search,0,'[',']',' … ',40) AS excerpt FROM mcp_recall_search JOIN mcp_recall r ON r.n=mcp_recall_search.rowid
       WHERE mcp_recall_search MATCH ? AND ${scope.sql} AND (?='' OR r.tool=?) ORDER BY bm25(mcp_recall_search),r.lastSeen DESC LIMIT ?`).all(words.map(word=>`"${word}"`).join(" AND "),...scope.params,input.tool??"",input.tool??"",limit*4+1);
-    const results=rows.filter(row=>recallStorageAllowed(row.tool,row.raw)).map(row=>({...item(row),excerpt:row.excerpt.slice(0,600)})).filter(row=>allowed(row,scope.owner));
+    const results=rows.map(row=>({...row,raw:retainedRaw(row)})).filter(row=>recallStorageAllowed(row.tool,row.raw)).map(row=>({...item(row),excerpt:row.excerpt.slice(0,600)})).filter(row=>allowed(row,scope.owner));
     return {results:results.slice(0,limit),limited:results.length>limit};
     });
   }
@@ -97,8 +119,7 @@ export function createMcpRecallStore(workspaceId:string,harness:()=>Harness,conn
     const owner=await mcpRecallOwner(conversationId,harness(),context),bytes=Buffer.byteLength(input.raw);
     if(!bytes||bytes>1024*1024||!input.grants.length||!recallStorageAllowed(input.tool,input.raw))return null;
     const digest=createHash("sha256").update(JSON.stringify([owner,input.grants,input.tool,input.kind,input.raw])).digest("hex"),conversation=Number(conversationId);
-    const id="mcp_"+createHash("sha256").update(JSON.stringify([digest,conversation])).digest("hex");
-    const scope=await visible(conversationId,context),after=await captureMark(harness(),conversationId,context),at=now();
+    const scope=await visible(conversationId,context),id=scope.legacy.includes(`mcp_${digest}`)?`mcp_${digest}`:"mcp_"+createHash("sha256").update(JSON.stringify([digest,conversation])).digest("hex"),after=await captureMark(harness(),conversationId,context),at=now();
     const draft:McpRecallItem={...input,grants:input.grants.map(grant=>({...grant})),sources:[...input.sources],owner,id,bytes,createdAt:at,lastSeen:at,hits:1,pinned:false};
     if(!allowed(draft,owner))return null;
     return use(db=>{
@@ -111,8 +132,8 @@ export function createMcpRecallStore(workspaceId:string,harness:()=>Harness,conn
         db.run("UPDATE mcp_recall SET hits=hits+1,lastSeen=?,summary=?,handler=?,sources=? WHERE id=?",[at,input.summary,input.handler,JSON.stringify(input.sources),previous.id]);
         return {...item(previous),hits:previous.hits+1,lastSeen:at,summary:input.summary,handler:input.handler,sources:[...input.sources]};
       }
-      db.run("INSERT OR IGNORE INTO mcp_recall(id,digest,owner,conversation,after,tool,kind,grants,sources,handler,bytes,createdAt,lastSeen,hits,pinned,isError,summary,raw) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        [id,digest,owner,conversation,after,draft.tool,draft.kind,JSON.stringify(draft.grants),JSON.stringify(draft.sources),draft.handler,bytes,at,at,1,0,Number(draft.isError),draft.summary,input.raw]);
+      db.run("INSERT OR IGNORE INTO mcp_recall(id,digest,owner,conversation,after,tool,kind,grants,sources,handler,bytes,createdAt,lastSeen,hits,pinned,isError,summary,legacy,exact_raw,raw) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [id,digest,owner,conversation,after,draft.tool,draft.kind,JSON.stringify(draft.grants),JSON.stringify(draft.sources),draft.handler,bytes,at,at,1,0,Number(draft.isError),draft.summary,Number(scope.legacy.includes(id)),/[\uD800-\uDFFF]/u.test(input.raw)?JSON.stringify(input.raw):null,input.raw]);
       removed=prune(db);
       const row=db.query<Row,[string]>(`SELECT ${columns} FROM mcp_recall r WHERE r.id=?`).get(id);
       return row?item(row):null;

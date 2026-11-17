@@ -1,3 +1,5 @@
+import {Type} from "typebox";
+import {Value} from "typebox/value";
 import type { Database } from "bun:sqlite";
 import { invalidArguments } from "@kintsugi/core";
 import { checkpointDeletes, lineageCondition, type AgentDatabase, type Lineage } from "./agent-database.ts";
@@ -6,6 +8,8 @@ import { checkpointDeletes, lineageCondition, type AgentDatabase, type Lineage }
 export const toolOutputLimits = { maxChars: 4 * 1024 * 1024, maxTotalBytes: 256 * 1024 * 1024, maxOutputs: 5000, readLines: 500, readChars: 16_000, lineChars: 2000, chunkLines: 20, chunkChars: 4000 } as const;
 export type StoredToolOutput = { id: string; owner: string; conversation: number; after: number; tool: string; label: string; lines: number; bytes: number; complete: boolean; createdAt: number; expiresAt: number };
 type Row = Omit<StoredToolOutput, "complete"> & { complete: number; text: string };
+// SQLite TEXT replaces unpaired UTF-16 surrogates. Rare non-well-formed copies use JSON-in-BLOB; FTS chunks remain searchable text.
+const decodeText = (text:string|Uint8Array):string => text instanceof Uint8Array?Value.Parse(Type.String(),JSON.parse(Buffer.from(text).toString("utf8"))):text;
 const unavailable = () => invalidArguments("This stored output is unavailable: it expired, belongs to another Agent or branch, or was never stored. The command can be run again.");
 /** Who is asking: the owning Agent, and the branch history it can see. */
 export type ToolOutputScope = { owner: string; lineage: Lineage };
@@ -39,8 +43,9 @@ export function createToolOutputStore(database: AgentDatabase, now: () => number
     for (const id of ids) {database.run("DELETE FROM tool_output_chunks WHERE outputId=?", [id]);database.run("DELETE FROM tool_outputs WHERE id=?", [id]);}
     return ids.length;
   }
+  function expireIn(database:Database) {return remove(database,database.query<{id:string},[number]>("SELECT id FROM tool_outputs WHERE expiresAt<=?").all(now()).map(row=>row.id));}
   function pruneIn(database: Database) {
-    let removed = remove(database, database.query<{ id: string }, [number]>("SELECT id FROM tool_outputs WHERE expiresAt<=?").all(now()).map(row => row.id));
+    let removed = expireIn(database);
     const totals = database.query<{ n: number; bytes: number }, []>("SELECT count(*) AS n,coalesce(sum(bytes),0) AS bytes FROM tool_outputs").get()!;
     let { n, bytes } = totals;
     if (n > limits.maxOutputs || bytes > limits.maxTotalBytes) for (const row of database.query<{ id: string; bytes: number }, []>("SELECT id,bytes FROM tool_outputs ORDER BY createdAt").all()) {
@@ -58,9 +63,12 @@ export function createToolOutputStore(database: AgentDatabase, now: () => number
   }
   async function find(scope: ToolOutputScope, id: string) {
     const visible = lineageCondition("o", scope.lineage);
-    const row = await use(db => db.query<Row, (string | number)[]>(`SELECT * FROM tool_outputs o WHERE o.id=? AND o.owner=? AND o.expiresAt>? AND ${visible.sql}`).get(id, scope.owner, now(), ...visible.params));
+    const row = await use(db => {
+      checkpoint(db,db.transaction(()=>expireIn(db))());
+      return db.query<Omit<Row,"text">&{text:string|Uint8Array}, (string | number)[]>(`SELECT * FROM tool_outputs o WHERE o.id=? AND o.owner=? AND o.expiresAt>? AND ${visible.sql}`).get(id, scope.owner, now(), ...visible.params);
+    });
     if (!row) throw unavailable();
-    return row;
+    return {...row,text:decodeText(row.text)};
   }
   const describe = (row: Row): StoredToolOutput => ({ id: row.id, owner: row.owner, conversation: row.conversation, after: row.after, tool: row.tool, label: row.label, lines: row.lines, bytes: row.bytes, complete: Boolean(row.complete), createdAt: row.createdAt, expiresAt: row.expiresAt });
   return {
@@ -79,7 +87,7 @@ export function createToolOutputStore(database: AgentDatabase, now: () => number
           return describe({ ...existing, text: "", expiresAt: Math.max(existing.expiresAt, at + input.retentionMs) });
         }
         const lines = text.split("\n"), row: Row = { id: input.id, owner: input.owner, conversation: input.conversation, after: input.after, tool: input.tool, label: input.label.slice(0, 1000), text, lines: lines.length, bytes: Buffer.byteLength(text), complete: Number(complete), createdAt: at, expiresAt: at + input.retentionMs };
-        database.run("INSERT INTO tool_outputs(id,owner,conversation,after,tool,label,lines,bytes,complete,createdAt,expiresAt,text) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", [row.id, row.owner, row.conversation, row.after, row.tool, row.label, row.lines, row.bytes, row.complete, row.createdAt, row.expiresAt, row.text]);
+        database.run("INSERT INTO tool_outputs(id,owner,conversation,after,tool,label,lines,bytes,complete,createdAt,expiresAt,text) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", [row.id, row.owner, row.conversation, row.after, row.tool, row.label, row.lines, row.bytes, row.complete, row.createdAt, row.expiresAt, /[\uD800-\uDFFF]/u.test(row.text)?Buffer.from(JSON.stringify(row.text)):row.text]);
         // Small line groups keep search results close to the line a reader should open.
         let offset = 0, chunk: string[] = [], chunkLine = 1, chunkOffset = 0;
         const flush = () => {if (chunk.length) database.run("INSERT INTO tool_output_chunks(outputId,line,offset,text) VALUES(?,?,?,?)", [row.id, chunkLine, chunkOffset, chunk.join("\n")]);chunk = [];};
@@ -99,6 +107,7 @@ export function createToolOutputStore(database: AgentDatabase, now: () => number
         return describe(row);
       })();
       checkpoint(database,removed);
+      if (!database.query("SELECT 1 FROM tool_outputs WHERE id=?").get(saved.id)) throw new Error("Stored output was not retained within the configured limits");
       return saved;
       });
     },
@@ -109,6 +118,7 @@ export function createToolOutputStore(database: AgentDatabase, now: () => number
       if (input.id) await find(scope, input.id);
       return use(db => {
       const visible = lineageCondition("o", scope.lineage);
+      checkpoint(db,db.transaction(()=>expireIn(db))());
       try {
         return db.query<{ id: string; tool: string; label: string; line: number; offset: number; excerpt: string; expiresAt: number }, (string | number)[]>(`SELECT o.id,o.tool,o.label,c.line,c.offset,snippet(tool_output_search,0,'[',']',' … ',32) AS excerpt,o.expiresAt
           FROM tool_output_search JOIN tool_output_chunks c ON c.id=tool_output_search.rowid JOIN tool_outputs o ON o.id=c.outputId

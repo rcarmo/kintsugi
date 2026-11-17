@@ -1,4 +1,4 @@
-import {afterEach,expect,test} from "bun:test";
+import {afterEach,expect,test,spyOn} from "bun:test";
 import {Database} from "bun:sqlite";
 import {mkdtemp,rm} from "node:fs/promises";
 import {existsSync} from "node:fs";
@@ -12,7 +12,7 @@ import {Type} from "typebox";
 import {CodemodeSandbox} from "@earendil-works/pi-codemode";
 import {createWorkspaceCodemodeExtension} from "../../../codemode/src/server/extension.ts";
 import {createNativeTokenOptimizer} from "../../src/server/token-optimizer.ts";
-import {agentDatabasePath,closeAgentDatabase} from "../../src/server/agent-database.ts";
+import {agentDatabasePath,closeAgentDatabase,workspaceAgentDatabase,type AgentDatabase} from "../../src/server/agent-database.ts";
 import {TokenOptimizerConfiguration} from "../../src/server/token-optimizer-config.ts";
 import {OptimizerOperationEntry} from "../../src/server/token-optimizer-operations.ts";
 import {JobsDoc,ObservationsDoc} from "../../../token-economizer/src/pi-durable/documents.ts";
@@ -22,7 +22,7 @@ afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close()
 const big=Array.from({length:300},(_,i)=>i===249?"line 250: NEEDLE-ALPHA failed in src/parser.ts":`line ${i+1}: value-${i+1}`).join("\n");
 const huge=Array.from({length:1000},(_,i)=>i===0?"HEAD-MARKER first line":`row ${i+1}`).join("\n");
 const outputs=new Map(Object.entries({"cat big.log":{text:big,truncated:false},"cat huge.log":{text:huge.split("\n").slice(-100).join("\n")+"\n\n[Output truncated: showing the last 1 KB of output. Full output: /home/agent/.local/state/kintsugi/agent-bash/00000000-0000-4000-8000-000000000000/output.log]",truncated:true},"echo small":{text:"one\ntwo",truncated:false}}));
-type Options={mode?:"observe"|"active";summaries?:boolean;persistent?:boolean};
+type Options={mode?:"observe"|"active";summaries?:boolean;persistent?:boolean;database?:AgentDatabase};
 async function setup(options:Options={}) {
   const mode=options.mode??"active",dir=await mkdtemp(join(tmpdir(),"optimizer-offload-")),old=process.env.KINTSUGI_DATA_DIR;process.env.KINTSUGI_DATA_DIR=dir;
   cleanup.push(async()=>{if(old===undefined)delete process.env.KINTSUGI_DATA_DIR;else process.env.KINTSUGI_DATA_DIR=old;await rm(dir,{recursive:true,force:true});});
@@ -37,7 +37,7 @@ async function setup(options:Options={}) {
     const structuredOutput={output:output.text,exitCode:0,truncated:output.truncated,timedOut:false,aborted:false};
     return {output:[{type:"text",text:output.text}],structuredOutput:output.truncated?{...structuredOutput,fullOutputPath:path}:structuredOutput,details:{fullOutputPath:path,exitCode:0}};
   }})]}));
-  const native=createNativeTokenOptimizer({workspaceId:"fixture",models,registry,harness:()=>harness,configuration,readSavedOutput:async path=>{reads.push(path);return {status:"available",text:huge,truncated:false};}});
+  const native=createNativeTokenOptimizer({workspaceId:"fixture",models,registry,harness:()=>harness,configuration,database:options.database,readSavedOutput:async path=>{reads.push(path);return {status:"available",text:huge,truncated:false};}});
   registry.install(native.optimizer.extension);
   const open=async()=>Harness.open(options.persistent?await openNodeJsonlStorage(join(dir,"journal"),context):new MemoryStorage(),{models,registry},context);
   harness=await open();cleanup.push(async()=>{await native.close();await harness.close(context);await closeAgentDatabase("fixture");});
@@ -141,4 +141,31 @@ test("Settings store offloading limits and opt-in summaries, and refuse summarie
   const invalid=await post([["mode","observe"],["preset","custom"],["offload.lines","50"],["offload.kilobytes","4"],["offload.retentionDays","31"]]);
   expect(invalid.status).toBe(422);expect(invalid.html).toContain("Days to keep stored outputs must be a whole number from 1 to 30");
   expect(tokenOptimizerConfiguration().snapshot().policy.offload?.retentionDays).toBe(3);
+});
+
+test("detach drains in-flight output housekeeping before storage can close",async()=>{
+  const original=globalThis.setInterval;let tick:(()=>Promise<number>)|undefined;
+  const implementation=(...args:Parameters<typeof globalThis.setInterval>)=>{
+    const [callback,ms]=args,handle=original(...args);
+    if(ms===3_600_000){
+      // SAFETY: this exact hourly interval is the output-prune callback, whose declared return is Promise<number>.
+      tick=callback as ()=>Promise<number>;
+    }
+    return handle;
+  };
+  // SAFETY: this backend fixture uses only native function/Timer overloads, and restores the original after the test.
+  const timer=spyOn(globalThis,"setInterval").mockImplementation(implementation as typeof globalThis.setInterval);
+  const entered=Promise.withResolvers<void>(),finish=Promise.withResolvers<void>();let calls=0;
+  const database:AgentDatabase=async()=>{if(++calls===2){entered.resolve();await finish.promise;}return workspaceAgentDatabase("fixture")();};
+  try {
+    const f=await setup({database});await f.native.optimizer.drained();expect(tick).toBeDefined();
+    const pruning=tick!();await entered.promise;let detached=false;
+    const closing=f.native.detach().then(()=>{detached=true;});
+    await Bun.sleep(5);expect(detached).toBe(false);finish.resolve();await pruning;await closing;
+  }finally{finish.resolve();timer.mockRestore();}
+});
+test("incomplete-copy presentation does not incorrectly claim a tail-only capture",async()=>{
+  const {offloadPresentation}=await import("@kintsugi/token-economizer/core");
+  const text=offloadPresentation({id:"out_"+"a".repeat(32),tool:"bash",label:"fixture",lines:20,bytes:1024,complete:false,expiresAt:Date.now()+60000,exitCode:0},{summary:null,text:"captured prefix"});
+  expect(text).toContain("stored copy is incomplete");expect(text).not.toContain("only the visible tail");
 });

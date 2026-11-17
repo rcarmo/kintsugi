@@ -177,3 +177,84 @@ test("recall capture rechecks grants after waiting for the database connection",
   try {await f.connections.save({...f.connections.credential("fixture")!,recall:{...defaultMcpRecallSettings(),mode:"off"}});} finally {finish.resolve();}
   expect(await pending).toBeNull();
 });
+
+test("legacy recall IDs, pins, source bytes and as-of branch membership survive forward migration",async()=>{
+  const f=await setup(),config=f.connections.credential("fixture")!;
+  const {LegacyMcpRecall}=await import("../../src/server/mcp-recall-migration.ts"),{createHash}=await import("node:crypto");
+  const boundary=await f.conversation.commit(tx=>tx.appendEntry(f.conversation.id,{kind:"test.boundary",model:[{role:"user",content:"before capture",timestamp:1}]}),context);
+  const early=await f.conversation.fork(boundary.id,{ownership:{kind:"ownerless"}},context);
+  const input={owner:"agent",grants:[{connectionId:config.id,epoch:mcpAccessEpoch(config)}],tool:"fixture",kind:"emitted-text" as const,raw:"legacy needle retained",summary:"old summary",handler:"passthrough",sources:[],isError:false};
+  const id="mcp_"+createHash("sha256").update(JSON.stringify([input.owner,input.grants,input.tool,input.kind,input.raw])).digest("hex");
+  await f.harness.commit(async tx=>{(await tx.doc(LegacyMcpRecall,f.conversation.id)).records[id]={...input,id,bytes:Buffer.byteLength(input.raw),createdAt:Date.now()-1000,lastSeen:Date.now(),hits:3,pinned:true};},context);
+  const after=await f.conversation.commit(tx=>tx.appendEntry(f.conversation.id,{kind:"test.after",model:[{role:"user",content:"after capture",timestamp:2}]}),context);
+  const late=await f.conversation.fork(after.id,{ownership:{kind:"ownerless"}},context);
+  await f.harness.commit(async tx=>{(await tx.doc(WorkspaceAgents)).agents[0]!.branches=[f.conversation.id,early.id,late.id];},context);
+  expect(await f.store.get(f.conversation.id,id,context)).toMatchObject({id,raw:input.raw,pinned:true,hits:3});
+  expect(await f.store.get(early.id,id,context)).toBeUndefined();
+  expect(await f.store.get(late.id,id,context)).toMatchObject({id,raw:input.raw});
+  expect((await f.store.search(late.id,{query:"legacy needle"},context)).results[0]?.id).toBe(id);
+  expect(await f.store.capture(f.conversation.id,input,context)).toMatchObject({id,hits:4});
+  await f.store.change(f.conversation.id,"forget",id,false,false,context);
+  const future=await f.conversation.fork(after.id,{ownership:{kind:"ownerless"}},context);
+  await f.harness.commit(async tx=>{(await tx.doc(WorkspaceAgents)).agents[0]!.branches!.push(future.id);},context);
+  expect(await f.store.get(future.id,id,context)).toBeUndefined();
+  expect((await f.harness.snapshot(LegacyMcpRecall,f.conversation.id,context))!.records[id]!.raw).toBe(input.raw);
+});
+
+test("legacy recall migration streams canonical SQLite documents and keeps IDs across a cold reopen",async()=>{
+  const f=await setup(),config=f.connections.credential("fixture")!;
+  const {LegacyMcpRecall}=await import("../../src/server/mcp-recall-migration.ts"),{createHash}=await import("node:crypto"),{openDurableWorkspace}=await import("../../src/server/durable-workspace.ts"),{agentDatabase}=await import("../../src/server/agent-database.ts");
+  const path=join(f.directory,"canonical"),options={models:createModels(),registry:createRegistry()},one=await openDurableWorkspace(path,"workspace",options);cleanup.push(()=>one.close());
+  const root=await one.agent({agentId:"agent",label:"Agent",title:"Legacy"}),grants=[{connectionId:config.id,epoch:mcpAccessEpoch(config)}],raw="canonical legacy needle \ud800\ntrailingword\udc00",tool="fixture",kind="emitted-text" as const;
+  const id="mcp_"+createHash("sha256").update(JSON.stringify(["agent",grants,tool,kind,raw])).digest("hex"),record={id,owner:"agent",grants,tool,kind,raw,summary:"overview",handler:"passthrough",sources:[],bytes:Buffer.byteLength(raw),createdAt:Date.now()-50*86400000,lastSeen:Date.now()-40*86400000,hits:2,pinned:true,isError:false};
+  await one.harness.commit(async tx=>{(await tx.doc(LegacyMcpRecall,root.id)).records[id]=record;},context);
+  const database=agentDatabase(async()=>join(path,"agent.sqlite"));
+  const store=createMcpRecallStore("workspace",()=>one.harness,f.connections,Date.now,database);
+  expect(await store.get(root.id,id,context)).toMatchObject({id,raw,pinned:true});
+  expect((await store.search(root.id,{query:"legacy needle"},context)).results[0]?.id).toBe(id);
+  expect((await store.search(root.id,{query:"trailingword"},context)).results[0]?.id).toBe(id);
+  await one.close();
+  const two=await openDurableWorkspace(path,"workspace",options);cleanup.push(()=>two.close());
+  const cold=createMcpRecallStore("workspace",()=>two.harness,f.connections,Date.now,database);
+  expect(await cold.get(root.id,id,context)).toMatchObject({id,raw,hits:2,pinned:true});
+  await cold.change(root.id,"pin",id,false,false,context);
+  expect(await cold.get(root.id,id,context)).toBeUndefined();
+  expect((await two.harness.snapshot(LegacyMcpRecall,root.id,context))!.records[id]).toEqual(record);
+});
+test("recall metadata schema upgrade preserves existing IDs, raw values and FTS rows",async()=>{
+  const f=await setup(),config=f.connections.credential("fixture")!;
+  const row=(await f.store.capture(f.conversation.id,{grants:[{connectionId:config.id,epoch:mcpAccessEpoch(config)}],tool:"fixture",kind:"emitted-text",raw:"retained schema needle",summary:"overview",handler:"passthrough",sources:[],isError:false},context))!;
+  const {workspaceAgentDatabase}=await import("../../src/server/agent-database.ts");
+  await (await workspaceAgentDatabase("workspace")()).exec("ALTER TABLE mcp_recall DROP COLUMN legacy");
+  await closeAgentDatabase("workspace");
+  const database=await workspaceAgentDatabase("workspace")();
+  const restore=await database.withSync(raw=>{const exec=raw.exec;raw.exec=(sql,...bindings)=>{if(sql.includes("VALUES('rebuild')"))throw new Error("interrupted FTS upgrade");return exec.call(raw,sql,...bindings);};return()=>{raw.exec=exec;};});
+  try {await expect(f.store.get(f.conversation.id,row.id,context)).rejects.toThrow("interrupted FTS upgrade");}finally{await database.withSync(()=>restore());}
+  await database.withSync(raw=>{expect(columns(raw,"mcp_recall")).not.toContain("legacy");expect(raw.query("SELECT rowid FROM mcp_recall_search WHERE mcp_recall_search MATCH 'needle'").all()).toHaveLength(1);});
+  await closeAgentDatabase("workspace");
+  expect(await f.store.get(f.conversation.id,row.id,context)).toMatchObject({id:row.id,raw:"retained schema needle"});
+  expect((await f.store.search(f.conversation.id,{query:"schema needle"},context)).results[0]?.id).toBe(row.id);
+});
+test("new recall captures preserve unpaired UTF-16 units without changing word-search boundaries",async()=>{
+  const f=await setup(),config=f.connections.credential("fixture")!,raw="first\ud800\nsecond\udc00";
+  const row=(await f.store.capture(f.conversation.id,{grants:[{connectionId:config.id,epoch:mcpAccessEpoch(config)}],tool:"fixture",kind:"emitted-text",raw,summary:"overview",handler:"passthrough",sources:[],isError:false},context))!;
+  expect((await f.store.get(f.conversation.id,row.id,context))?.raw).toBe(raw);
+  expect((await f.store.search(f.conversation.id,{query:"second"},context)).results[0]?.id).toBe(row.id);
+  await closeAgentDatabase("workspace");expect((await f.store.get(f.conversation.id,row.id,context))?.raw).toBe(raw);
+});
+test("an interrupted two-pass legacy import retries without partial payloads or lost IDs",async()=>{
+  const f=await setup(),config=f.connections.credential("fixture")!;await f.store.list(f.conversation.id,context);
+  const {LegacyMcpRecall}=await import("../../src/server/mcp-recall-migration.ts"),{createHash}=await import("node:crypto");
+  const records=["first","second"].map(raw=>{const row={owner:"agent",grants:[{connectionId:config.id,epoch:mcpAccessEpoch(config)}],tool:"fixture",kind:"emitted-text" as const,raw,summary:"overview",handler:"passthrough",sources:[],bytes:Buffer.byteLength(raw),createdAt:Date.now(),lastSeen:Date.now(),hits:1,pinned:false,isError:false};return {...row,id:"mcp_"+createHash("sha256").update(JSON.stringify([row.owner,row.grants,row.tool,row.kind,raw])).digest("hex")};});
+  await f.harness.commit(async tx=>{const doc=await tx.doc(LegacyMcpRecall,f.conversation.id);for(const row of records)doc.records[row.id]=row;},context);
+  await (await workspaceAgentDatabase("workspace")()).exec("UPDATE mcp_recall_legacy_state SET complete=0; CREATE TRIGGER interrupt_legacy BEFORE INSERT ON mcp_recall WHEN new.raw='second' BEGIN SELECT RAISE(ABORT,'interrupted legacy import'); END;");
+  await closeAgentDatabase("workspace");
+  await expect(f.store.get(f.conversation.id,records[0]!.id,context)).rejects.toThrow("interrupted legacy import");
+  const db=await workspaceAgentDatabase("workspace")();
+  expect(await db.get("SELECT complete FROM mcp_recall_legacy_state")).toEqual({complete:0});
+  expect(await db.get("SELECT count(*) AS n FROM mcp_recall")).toEqual({n:0});
+  expect(await db.get("SELECT count(*) AS n FROM mcp_recall_legacy_ids WHERE imported=0")).toEqual({n:2});
+  await db.exec("DROP TRIGGER interrupt_legacy");
+  for(const row of records)expect((await f.store.get(f.conversation.id,row.id,context))?.raw).toBe(row.raw);
+  expect(await db.get("SELECT complete FROM mcp_recall_legacy_state")).toEqual({complete:1});
+});

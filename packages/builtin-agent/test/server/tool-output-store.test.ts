@@ -62,7 +62,7 @@ test("expired outputs are never returned, then pruning removes their text, chunk
   f.advance(60_001);
   // Expiry is enforced at read time even before the next prune.
   expect(await f.store.search(scope,{query:"NEEDLE"})).toEqual([]);await expect(f.store.read(scope,{id:saved.id})).rejects.toThrow("unavailable");await expect(f.store.read(scope,{id:other.id})).rejects.toThrow("unavailable");
-  expect(await f.store.prune()).toBe(2);await (await f.database()).withSync(db=>{
+  expect(await f.store.prune()).toBe(0);await (await f.database()).withSync(db=>{
   for(const table of ["tool_outputs","tool_output_chunks"]) expect(db.query<{n:number},[]>(`SELECT count(*) AS n FROM ${table}`).get()!.n).toBe(0);expect(db.query("SELECT rowid FROM tool_output_search WHERE tool_output_search MATCH 'NEEDLE'").all()).toEqual([]);
   });
   // secure_delete and the WAL checkpoint leave no readable copy in the database files.
@@ -110,4 +110,29 @@ test("expiry pruning during a save checkpoints deleted retained copies",async()=
   await save(f,"out_"+"a".repeat(32),marker);f.advance(60_001);
   await save(f,"out_"+"b".repeat(32),"new result");
   expect(await present(f.file,marker)).toBe(false);
+});
+
+test("backward clock movement cannot advertise a copy evicted during its own save",async()=>{
+  const f=await fixture(1),older=await save(f,"out_"+"a".repeat(32),"older retained");f.advance(-1000);
+  await expect(save(f,"out_"+"b".repeat(32),"new backdated")).rejects.toThrow("not retained");
+  expect((await f.store.read(scope,{id:older.id})).text).toBe("older retained");
+  await expect(f.store.read(scope,{id:"out_"+"b".repeat(32)})).rejects.toThrow("unavailable");
+});
+test("read-time expiry remains forgotten after the clock moves backwards",async()=>{
+  const f=await fixture(),saved=await save(f);f.advance(60_001);
+  await expect(f.store.read(scope,{id:saved.id})).rejects.toThrow("unavailable");f.advance(-60_001);
+  await expect(f.store.read(scope,{id:saved.id})).rejects.toThrow("unavailable");
+});
+
+test("retained output preserves unpaired UTF-16 units while text chunks remain searchable",async()=>{
+  const f=await fixture(),text="before\ud800\nafter\udc00",saved=await save(f,undefined,text);
+  expect((await f.store.read(scope,{id:saved.id,offset:0})).text).toBe(text);
+  expect((await f.store.search(scope,{query:"after"}))[0]?.id).toBe(saved.id);
+  await closeAgentDatabaseFile(f.file);
+  expect((await f.store.read(scope,{id:saved.id,offset:0})).text).toBe(text);
+});
+test("a character cap splitting a surrogate pair retains the exact incomplete prefix",async()=>{
+  const f=await fixture(),text="x".repeat(toolOutputLimits.maxChars-1)+"😀",saved=await save(f,undefined,text);
+  expect(saved.complete).toBe(false);
+  expect((await f.store.read(scope,{id:saved.id,offset:toolOutputLimits.maxChars-2})).text).toBe(text.slice(toolOutputLimits.maxChars-2,toolOutputLimits.maxChars));
 });

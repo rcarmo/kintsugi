@@ -181,7 +181,8 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
     scope:outputScope,mark:id => captureMark(options.harness(),id,context),store:outputStore,readSaved:options.readSavedOutput ?? (path => readSavedWorkspaceOutput(options.workspaceId,path)),
     summarize:(id,input,timeoutMs) => optimizer.summarizeOutput(id,input,timeoutMs),
   });
-  let pruneTimer:ReturnType<typeof setInterval>|undefined;
+  let pruneTimer:ReturnType<typeof setInterval>|undefined,pruning:Promise<number>|undefined;
+  const pruneOutputs = () => pruning ??= outputStore.prune().catch(error=>{console.error("Could not prune stored tool outputs",error);return 0;}).finally(()=>{pruning=undefined;});
   const goalExtension = createOptimizerGoalsExtension({harness:options.harness,host:domain.session,policy:host => options.configuration.policy(options.workspaceId,actor(host)),drained:optimizer.drained,async plan(host) {
     // Child Agents have separate plans/tasks; never borrow the root's objective.
     const child = host.parent ? (await options.harness().snapshot(WorkspaceAgents,context))?.agents.find(record => record.durableId === host.conversationId || record.branches?.includes(host.conversationId)) : undefined;
@@ -230,8 +231,7 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
       detached = false;
       maintenance = (await options.harness().root(context)).id;await optimizer.attach();
       // Expired outputs are never returned; this also removes them while nobody is using the workspace.
-      const prune = () => outputStore.prune().catch(error => {console.error("Could not prune stored tool outputs",error);return 0;});
-      await prune();clearInterval(pruneTimer);pruneTimer = setInterval(prune,3_600_000);pruneTimer.unref?.();
+      await pruneOutputs();clearInterval(pruneTimer);pruneTimer = setInterval(pruneOutputs,3_600_000);pruneTimer.unref?.();
       const catalogue = await options.harness().snapshot(WorkspaceAgents,context), gates = await options.harness().snapshot(WorkspaceAdmission,context);
       if (!gates?.deleted) for (const record of catalogue?.agents ?? []) if (!record.readOnly && !record.parentId && !record.oneShotCallId && !gates?.closed.includes(record.durableId)) await start((await options.harness().conversation(record.durableId,context))!,record,"resume");
       stop = options.configuration.watch(async () => {await optimizer.updatePolicy(true);void refreshChips();});active.set(options.workspaceId,this);
@@ -282,7 +282,7 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
     async hostForAgent(agentId:string) {const record=(await options.harness().snapshot(WorkspaceAgents,context))?.agents.find(record=>record.agentId===agentId);const host=record&&hosts.get(record.durableId);if(!host)throw new Error("This Agent has no optimizer session.");return host;},
     async commandNotice(host:HostSession,id:string,text:string) {await options.harness().commit(async tx=>{const state=await tx.doc(NativeNotices);const key=`command:${host.id}:${id}`;if(state.ids.includes(key))return;state.ids.push(key);await tx.appendEntry(OptimizerNotice,host.conversationId,{data:{id:key,text,at:Date.now(),code:"optimizer-command"}});},context);},
     host(id:ConversationId) {const host = hosts.get(id);if (!host) throw new Error("This Agent has no optimizer logical session");return host;},
-    async detach() {detached = true;clearInterval(pruneTimer);pruneTimer = undefined;await events;stop?.();observer?.();await optimizer.close();await chipRefresh;if (active.get(options.workspaceId) === this) active.delete(options.workspaceId);},
+    async detach() {detached = true;clearInterval(pruneTimer);pruneTimer = undefined;await pruning;await events;stop?.();observer?.();await optimizer.close();await chipRefresh;if (active.get(options.workspaceId) === this) active.delete(options.workspaceId);},
     async close() {await events;for (const id of [...hosts.keys()]) await end(id);await this.detach();},
   };
 }

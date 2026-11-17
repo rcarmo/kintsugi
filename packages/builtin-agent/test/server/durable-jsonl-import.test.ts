@@ -256,3 +256,19 @@ test("imports are globally serialised while the parent event loop stays responsi
     await Promise.all([one,two]);expect(ticks).toBeGreaterThan(2);
   }finally{clearInterval(timer);await Promise.allSettled([one,two]);}
 },15_000);
+
+test("abandoned process snapshots are reaped without touching active or unrelated temporary data",async()=>{
+  const {acquireDurableHistorySnapshot,reapAbandonedHistorySnapshots,retireDurableHistorySnapshots}=await import("../../src/server/durable-history-snapshot.ts");
+  const f=await fixture(),active=await acquireDurableHistorySnapshot(f.directory);
+  const orphan=await mkdtemp(join(tmpdir(),`kintsugi-history-snapshot-2147483647-${crypto.randomUUID()}-`));
+  const previousInstance=await mkdtemp(join(tmpdir(),`kintsugi-history-snapshot-${process.pid}-${crypto.randomUUID()}-`));
+  const live=await mkdtemp(join(tmpdir(),`kintsugi-history-snapshot-${process.ppid}-${crypto.randomUUID()}-`));
+  const unrelated=await mkdtemp(join(tmpdir(),"kintsugi-history-snapshot-unrelated-"));
+  for(const path of [orphan,previousInstance,live,unrelated])await writeFile(join(path,"marker"),"fixture");
+  try {
+    await reapAbandonedHistorySnapshots();
+    for(const path of [orphan,previousInstance])expect(await Bun.file(join(path,"marker")).exists()).toBe(false);
+    for(const path of [live,unrelated])expect(await Bun.file(join(path,"marker")).exists()).toBe(true);
+    expect(await Bun.file(active.path).exists()).toBe(true);
+  }finally{await active.release();retireDurableHistorySnapshots();for(const path of [orphan,previousInstance,live,unrelated])await rm(path,{recursive:true,force:true});}
+});

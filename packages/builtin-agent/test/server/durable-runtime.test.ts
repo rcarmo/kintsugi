@@ -1387,7 +1387,7 @@ test("history pages and UI tree projections remain bounded without hiding older 
   await agent.label(String(entries[0]!.id),"Old decision","add");
   expect((await agent.tree({filter:"labeled-only",query:"",limit:10})).nodes[0]?.entry.id).toBe(entries[0]!.id);
   const previousBranch=agent.id;await agent.navigate(String(entries[0]!.id));expect(agent.id).not.toBe(previousBranch);
-  await runtime.harness.commit(async tx=>{for(let i=0;i<2;i++)await tx.appendEntry(agent.id,{kind:"test.large",model:[{role:"user",timestamp:i,content:"x".repeat(1500*1024)}]});},context);
+  await runtime.harness.commit(async tx=>{for(let i=0;i<2;i++)await tx.appendEntry(agent.id,{kind:"test.large",model:[{role:"user",timestamp:i,content:"界".repeat(512*1024)}]});},context);
   const large=await agent.historyView();expect(large.entries).toHaveLength(1);expect(large.before).toBeDefined();
 });
 
