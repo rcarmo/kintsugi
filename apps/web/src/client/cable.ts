@@ -48,7 +48,12 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
   let visibility: WorkspaceVisibilityReport = { surfaceKeys: [] };
   let lastMessageAt = Date.now();
   setInterval(() => {
-    if (connection && Date.now() - lastMessageAt > (connection.heartbeatIntervalMs ?? 30_000) * 2.5) disconnect(connection);
+    if (document.hidden || desired.size === 0) return;
+    // Lifecycle events can be lost when WebKit suspends/restores a page. Also
+    // reconcile visible state when there is no socket left to become stale.
+    if (closingForPageHide) { resume(true); return; }
+    if (!connection) { scheduleReconnect(); return; }
+    if (Date.now() - lastMessageAt > (connection.heartbeatIntervalMs ?? 30_000) * 2.5) disconnect(connection);
   }, cableHeartbeatIntervalMs / 2);
 
   function changed(): void { document.dispatchEvent(new Event("live:connection")); }
@@ -104,7 +109,15 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
     changed();
     const message: Extract<CableClientMessage, { command: "subscribe" }> = { command: "subscribe", identifier: subscription.identifier, subscriptionId };
     const shown = subscription.shownIn?.getAttribute(liveShownAttribute);
-    if (shown) message.shown = Value.Parse(liveRegionDigestsSchema, JSON.parse(shown));
+    if (shown) {
+      try { message.shown = Value.Parse(liveRegionDigestsSchema, JSON.parse(shown)); }
+      catch (error) {
+        // A retained cache hint is optional, not a reason to break the connection.
+        console.error("Invalid live cache hint; requesting a fresh snapshot", error);
+        subscription.shownIn?.removeAttribute(liveShownAttribute);
+        subscription.shownIn = undefined;
+      }
+    }
     subscription.confirmationTimer = setTimeout(() => {
       if (matchingSubscription(subscription.identifier, subscriptionId) === subscription) disconnect(source);
     }, 20_000);
@@ -116,7 +129,7 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
   }
 
   function scheduleReconnect(): void {
-    if (closingForPageHide || reconnectTimer || desired.size === 0 || !navigator.onLine) return;
+    if (closingForPageHide || document.hidden || reconnectTimer || desired.size === 0) return;
     const base = delays[Math.min(attempts++, delays.length - 1)]!;
     // Spread simultaneous reconnects without exceeding the configured delay cap.
     const delay = Math.round(base * (0.8 + Math.random() * 0.2));
@@ -171,11 +184,11 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
       case "confirm_subscription": {
         const subscription = matchingSubscription(message.identifier, message.subscriptionId);
         if (!subscription) break;
-        clearTimeout(subscription.confirmationTimer);
-        subscription.confirmationTimer = undefined;
         const isCurrent = () => matchingSubscription(message.identifier, message.subscriptionId) === subscription;
         const applied = () => {
           if (!isCurrent()) return;
+          clearTimeout(subscription.confirmationTimer);
+          subscription.confirmationTimer = undefined;
           subscription.status = "ready";
           subscription.shownIn?.removeAttribute(liveShownAttribute);
           subscription.shownIn = undefined;
@@ -266,10 +279,10 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
     }
   }
 
-  function connect(probe = false): void {
-    // Offline hints pause background retries, but a local/tailnet app can still
-    // be reachable: allow the initial subscription and explicit wake probe.
-    if (connection || closingForPageHide || document.hidden || desired.size === 0 || !probe && !navigator.onLine) return;
+  function connect(): void {
+    // Online/offline are OS hints, not reachability tests for a local/tailnet app.
+    // Visible pages keep bounded backoff probes; hidden pages do not reconnect.
+    if (connection || closingForPageHide || document.hidden || desired.size === 0) return;
     lastMessageAt = Date.now();
     let source: LiveConnection;
     if (browserTransportFromCookies(document.cookie) === "sse") {
@@ -315,22 +328,25 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
     if (replace && connection && Date.now() - connection.startedAt > 1000) disconnect(connection);
     clearTimeout(reconnectTimer);
     reconnectTimer = undefined;
-    connect(true);
+    connect();
   }
   window.addEventListener("pagehide", pause);
   window.addEventListener("pageshow", event => resume(event.persisted));
   window.addEventListener("online", () => resume(true));
   window.addEventListener("offline", () => {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = undefined;
     if (connection) disconnect(connection);
+    else scheduleReconnect();
   });
   window.addEventListener("focus", () => resume(Date.now() - lastMessageAt > (connection?.heartbeatIntervalMs ?? 30_000)));
   document.addEventListener("visibilitychange", () => document.hidden ? pause() : resume(true));
 
   const client: KintsugiCableClient = {
     ready() { return connection?.connectionId !== undefined && !recovering; },
-    reconnect() { if (connection) disconnect(connection); else scheduleReconnect(); },
+    reconnect() {
+      if (document.hidden) return;
+      closingForPageHide = false;
+      if (connection) disconnect(connection); else scheduleReconnect();
+    },
     reportVisibility(next) {
       visibility = next;
       sendRaw({ command: "visibility", visibility });
@@ -341,7 +357,7 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
       if (!subscription) {
         subscription = { identifier, leases: new Set(), status: "pending", shownIn: options?.shownIn };
         desired.set(key, subscription);
-        connect(true);
+        connect();
         if (connection?.connectionId !== undefined) subscribeOnWire(subscription);
       } else if (subscription.status === "rejected" && connection?.connectionId !== undefined) {
         subscribeOnWire(subscription);
