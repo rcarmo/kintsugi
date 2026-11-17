@@ -11,7 +11,7 @@ test("learned facts are summarised by visibility without advancing their lifecyc
   distiller.facts = [{ spec: { id: "manual", claim: "Run bun test from the repository root.", detector: { scope: "commands", fired: "bun test" } }, life: life("ACTIVE", 5, 5) }];
   const before = structuredClone(environment), summary = describeKnowledge(environment, distiller);
   expect(summary.retired).toBe(1);
-  expect(summary.facts.map(fact => [fact.id, fact.status, fact.source])).toEqual([["manual", "needs-review", "distilled"], ["shown", "in-use", "environment"], ["checking", "checking", "environment"], ["quiet", "quiet", "environment"], ["old", "retired", "environment"]]);
+  expect(summary.facts.map(fact => [fact.id, fact.status, fact.source])).toEqual([["shown", "in-use", "environment"], ["manual", "in-use", "distilled"], ["checking", "checking", "environment"], ["quiet", "quiet", "environment"], ["old", "retired", "environment"]]);
   expect(summary.facts.find(fact => fact.id === "shown")?.claim).toContain("shown.example");
   expect(environment).toEqual(before);
 });

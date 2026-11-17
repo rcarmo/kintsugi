@@ -30,3 +30,20 @@ test("optimizer side calls retain scoped cache affinity without sharing the Agen
   expect(optionsSeen[0]!.sessionId).toBe(optionsSeen[1]!.sessionId);expect(optionsSeen[0]!.sessionId).not.toBe(optionsSeen[2]!.sessionId);expect(optionsSeen[0]!.sessionId).not.toBe(optionsSeen[3]!.sessionId);
   expect(optionsSeen.every(options=>options.cacheRetention==="short")).toBe(true);expect(optionsSeen[0]!.sessionId!.length).toBeLessThanOrEqual(64);expect(optionsSeen[0]!.sessionId).not.toContain(base.cacheScope);
 });
+
+test("side calls choose low effort without expanding the configured token cap",async()=>{
+ for(const api of ["faux","anthropic-messages","bedrock-converse-stream"] as const){
+  const models=createModels(),faux=fauxProvider({tokensPerSecond:100000}),model={...faux.models[0],api,reasoning:true,thinkingLevelMap:{off:null,minimal:null,low:"low"}};
+  models.setProvider({...faux.provider,getModels:()=>[model],getAllModels:()=>[model]});
+  faux.setResponses([(_input,options)=>{expect(options?.maxTokens).toBe(64);expect(options?.reasoning).toBe(api==="faux"?"low":undefined);return fauxAssistantMessage("ok");}]);
+  const result=await createSdkModelTransport(models).sideCall({id:api,purpose:"proposer",model:{provider:"faux",id:model.id},prompt:"bounded",maxOutputTokens:64,deadlineMs:1000},new AbortController().signal);
+  expect(result.error).toBeNull();expect(faux.state.callCount).toBe(1);
+ }
+});
+test("length and empty replies fail visibly without losing usage or making extra calls",async()=>{
+ const models=createModels(),faux=fauxProvider({tokensPerSecond:100000});models.setProvider(faux.provider);
+ faux.setResponses([fauxAssistantMessage('{"facts":',{stopReason:"length"}),fauxAssistantMessage("")]);
+ const transport=createSdkModelTransport(models),request={id:"limited",purpose:"proposer" as const,model:{provider:"faux",id:"faux-1"},prompt:"bounded",maxOutputTokens:1024,deadlineMs:1000};
+ const limited=await transport.sideCall(request,new AbortController().signal);expect(limited.error).toContain("1024-token limit");expect(limited.usage).not.toBeNull();expect(limited.authUnavailable).toBe(false);
+ expect((await transport.sideCall({...request,id:"empty"},new AbortController().signal)).error).toContain("no text");expect(faux.state.callCount).toBe(2);
+});

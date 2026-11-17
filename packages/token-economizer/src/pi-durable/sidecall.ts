@@ -3,6 +3,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { defineExtension, defineTask, type ConversationId, type Harness, type Tx } from "@earendil-works/pi-durable";
 import { reserve, settle } from "../core/accounting.ts";
 import { redact } from "../core/observations.ts";
+import {proposalError} from "../core/microskills/distiller.ts";
 import { purposeAllowed, type Policy } from "../core/config.ts";
 import type { InferenceRequest, InferenceResult, SideCall, Spend } from "../core/types.ts";
 import { JobsDoc, type InferenceJob } from "./documents.ts";
@@ -17,6 +18,12 @@ export function createInferenceQueue(options: { harness: () => Harness; backgrou
       input:{model:job.request.model,prompt:job.request.prompt,classification:job.request.classification ?? null,maxOutputTokens:job.request.maxOutputTokens,deadlineMs:job.request.deadlineMs},
       output:job.status === "queued" || job.status === "running" ? null : {status:job.status,result:job.result?.text ?? null,model:job.result?.model ?? job.request.model,usage:job.result?.usage ?? null,cost:job.result?.cost ?? null,durationMs:job.result?.durationMs ?? null,error:job.error},
     });
+  }
+  function checkedResult(request:InferenceRequest,reply:InferenceResult):InferenceResult {
+    if (reply.cost !== null && (!Number.isFinite(reply.cost) || reply.cost < 0) || !Number.isFinite(reply.durationMs) || reply.durationMs < 0) throw new Error("Invalid optimization billing metadata");
+    const text = redact(reply.text).slice(0,64_000);
+    const invalidProposal = reply.error === null && (request.purpose === "proposer" || request.purpose === "audit" && request.auditFor === "proposer") ? proposalError(text) : null;
+    return {...reply,text,error:reply.text.length > 64_000 ? "Optimization output limit exceeded" : reply.error !== null ? redact(reply.error) : invalidProposal ? `Invalid fact proposal: ${invalidProposal}` : null};
   }
   const controllers = new Map<string, AbortController>();
   const task = defineTask<{ id: string }, { phase: "queued" | "invoke" }, null>({
@@ -71,8 +78,7 @@ export function createInferenceQueue(options: { harness: () => Harness; backgrou
           });
           attempted = true;
           const reply = await Promise.race([options.sideCall({...job.request,cacheScope:job.sessionKey}, signal), aborted]);
-          if (reply.cost !== null && (!Number.isFinite(reply.cost) || reply.cost < 0) || !Number.isFinite(reply.durationMs) || reply.durationMs < 0) throw new Error("Invalid optimization billing metadata");
-          result = {...reply,text:redact(reply.text).slice(0,64_000),error:reply.text.length > 64_000 ? "Optimization output limit exceeded" : reply.error === null ? null : redact(reply.error)};
+          result = checkedResult(job.request,reply);
         } catch (cause) { error = redact(Error.isError(cause) ? cause.message : String(cause)); }
         finally { clear(); controllers.delete(id); }
         // A close cancels this invocation. The next invocation records unknown billing, never retries.
@@ -154,8 +160,9 @@ export function createInferenceQueue(options: { harness: () => Harness; backgrou
         if (!job || job.status !== "unknown") throw new Error("Only uncertain jobs may be reconciled");
         state.budget.ledger = state.budget.ledger.filter(row => row.id !== id);
         if (!state.budget.reserved[id]) state.budget.reserved[id] = { session: job.sessionKey, day: new Date(job.created).toISOString().slice(0,10), cost: null };
-        job.result = result; job.status = result.error ? "failed" : "complete"; job.error = result.error;
-        settle(state.budget, spend(job, result, job.status === "complete" ? "complete" : "failed"));
+        const checked = checkedResult(job.request,result);
+        job.result = checked; job.status = checked.error ? "failed" : "complete"; job.error = checked.error;
+        settle(state.budget, spend(job, checked, job.status === "complete" ? "complete" : "failed"));
         state.budget.unknown = state.budget.unknown.filter(key => key !== id);
         await report(tx,job,(options.now ?? Date.now)());
       }, BACKGROUND_CONTEXT);

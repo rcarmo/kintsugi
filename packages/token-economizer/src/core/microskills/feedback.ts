@@ -7,9 +7,12 @@ export type FactDecision = "approved" | "rejected" | "stale";
 export type FactReview = {decision:FactDecision;at:number;note:string;claim:string};
 export type FactReviews = Record<string,FactReview>;
 export const factKey = (source:FactSource,id:string) => `${source}:${id}`;
-/** Approval is bound to the exact text, not a mutable detector or a reused ID. Rejection stays sticky. */
+/** Eligible facts publish automatically. Explicit vetoes stay sticky; confirmations bind exact text. */
 export function factPermitted(source:FactSource,id:string,text:string,reviews:FactReviews):boolean {
   const review = reviews[factKey(source,id)];
   if (review && review.decision !== "approved") return false;
-  return source === "environment" || Boolean(review?.claim === fingerprint(text));
+  const claim = fingerprint(text);
+  if (review) return source === "environment" || review.claim === claim;
+  // A proposer cannot evade explicit feedback by repeating the same claim under a new ID.
+  return !Object.values(reviews).some(other => other.decision !== "approved" && other.claim === claim);
 }

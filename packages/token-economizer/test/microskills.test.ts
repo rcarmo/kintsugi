@@ -45,7 +45,7 @@ test("proposer grounding, append-only extractors, retrospective learning, immuta
   const spec = {id:"test-form",claim:"The test command is bun test.",injection:"The test command is bun test.",high_stakes:false,detector:{scope:"custom",confirm:"passed",contradict:"impossible"},cite:["0","1"]};
   const completed = completeProposal(state,JSON.stringify({extractors:[{name:"custom",kind:"cmd_regex",pattern:"bun test"}],facts:[spec]}));state = completed.state;
   expect(completed.diagnostics).toEqual([]);expect(state.facts[0].life.state).toBe("ACTIVE");
-  expect(state.facts[0].life.fire_den).toBe(4);expect(renderDistiller(state,"repo")).toBe("");
+  expect(state.facts[0].life.fire_den).toBe(4);expect(renderDistiller(state,"repo")).toContain("The test command is bun test.");
   expect(renderDistiller(state,"repo",4,150,{"distilled:test-form":{decision:"approved",at:1,note:"",claim:fingerprint(spec.injection)}})).toContain("The test command is bun test.");
   const changed = completeProposal(state,JSON.stringify({extractors:[],facts:[{...spec,claim:"A different command."}]}));
   expect(changed.diagnostics).toEqual(["revise-not-contradict-only"]);

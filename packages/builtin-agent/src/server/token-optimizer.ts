@@ -213,11 +213,15 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
     const assistant = view ? view.entries.findLast(entry => AssistantEntry.is(entry)) : await lastAssistantEntry(conversation);modelFree.set(conversation.id,assistant?.model?.some(message => message.role === "assistant" && message.provider === "kintsugi" && message.model === "codemode-template") ?? false);
     const existing = (await options.harness().snapshot(SessionsDoc,context))?.sessions[sessionKey(host.scope,host.id)];
     const carriedIds = existing ? existing.injectedIds : carried[contextSection] ? await carriedSnapshotIds(conversation,carried[contextSection]) : [];
+    // Legacy forks may predate incremental learning. Read the actual fork bound
+    // without scanning history so their inherited observations cannot earn new votes.
+    const inheritedAt = !existing?.learning && !existing?.folded && host.classificationGroup !== host.id
+      ? await options.harness().commit(async tx => (await tx.conversation(host.conversationId))?.parent?.at,context) : undefined;
     const live = await options.harness().snapshot(LiveDoc,conversation.id,context), mask = await options.harness().snapshot(NativeMask,conversation.id,context);
     const runningMask = live?.run && !live.run.afterRun && live.run.inputs.length > 0 ? existing?.frozenMask ?? mask?.owned ?? [] : undefined;
     preparing.add(conversation.id);
     queueMicrotask(() => void refreshChips());
-    try {await optimizer.sessionStarted(host,{event,visibleHistory:view ? view.entries.some(entry => (entry.model?.length ?? 0) > 0) : true,carriedSections:carried,carriedIds,runningMask});} finally {preparing.delete(conversation.id);}
+    try {await optimizer.sessionStarted(host,{event,visibleHistory:view ? view.entries.some(entry => (entry.model?.length ?? 0) > 0) : true,carriedSections:carried,carriedIds,runningMask,learningAfter:inheritedAt !== undefined ? String(inheritedAt) : event === "fork" ? String(latest ?? 0) : undefined});} finally {preparing.delete(conversation.id);}
     return host;
   }
   async function end(id:ConversationId) {

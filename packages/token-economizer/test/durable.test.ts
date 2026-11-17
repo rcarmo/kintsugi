@@ -58,7 +58,7 @@ for (const kind of ["memory","sqlite","jsonl"] as const) test(`portable ${kind}:
   f.trajectories.set("two","ready");
   await f.lifecycle.sessionStarted(f.host("three"),f.start); await f.settleFolds();
   expect(f.folds).toEqual(["one","two"]);
-  expect((await f.lifecycle.sessionStarted(f.host("one"),{...f.start,event:"resume"}))!.section).toBe("");
+  expect((await f.lifecycle.sessionStarted(f.host("one"),{...f.start,event:"resume"}))!.initialSection).toBe("");
   await f.lifecycle.sessionEnded(f.host("one")); await f.settleFolds(); expect(f.folds).toEqual(["one","two"]);
   expect((await f.harness.snapshot(SessionsDoc,context))!.sessions[sessionKey(f.host("one").scope,"one")].folded).toBe(true);
   expect((await f.harness.snapshot(KnowledgeDoc,JSON.stringify(["portable-fixture","repo","v1"]),context))!.foldOrder).toHaveLength(2);
@@ -167,4 +167,28 @@ test("expired prompt preparation never reserves budget or extends its absolute q
   expect(admitted.job!.deadline).toBe(expiresAt);
   await Bun.sleep(210);await f.harness.waitForTask(admitted.job!.taskId!,context);
   expect(calls).toBe(0);expect((await f.harness.snapshot(JobsDoc,context))!.jobs.bounded.status).toBe("cancelled");
+});
+
+test("malformed fact replies are failed jobs with their original usage and cost, never implicit retries",async()=>{
+ let calls=0;const f=await setup("sqlite",async()=>{calls++;return{...reply,text:'{"facts":['};});
+ const queued=await f.queue.enqueue(f.root.id,{id:"invalid-fact",purpose:"proposer",model:reply.model,prompt:"bounded",maxOutputTokens:1024,deadlineMs:1000},{sessionKey:"session",account:"account",runId:null,revision:"1",digest:"digest",estimatedMaximumCost:null});
+ await f.harness.waitForTask(queued.job!.taskId!,context);const saved=(await f.harness.snapshot(JobsDoc,context))!;
+ expect(saved.jobs["invalid-fact"].status).toBe("failed");expect(saved.jobs["invalid-fact"].error).toContain("Invalid fact proposal");expect(saved.budget.ledger.at(-1)).toMatchObject({status:"failed",usage:reply.usage,cost:reply.cost});expect(calls).toBe(1);
+});
+
+for(const kind of ["memory","sqlite"] as const)test(`automatic ${kind} publication reaches other open On sessions without changing their initial prefix`,async()=>{
+ const f=await setup(kind);f.domain.incrementalLearning=true;
+ await f.lifecycle.sessionStarted(f.host("learner"),f.start);await f.lifecycle.sessionStarted(f.host("peer"),f.start);await f.lifecycle.sessionStarted(f.host("suppressed"),f.start);
+ const other={...f.host("other"),scope:{...f.host("other").scope,repository:"elsewhere"}};await f.lifecycle.sessionStarted(other,f.start);
+ await f.harness.commit(async tx=>{(await tx.doc(SessionsDoc)).sessions[sessionKey(f.host("suppressed").scope,"suppressed")].factsSuppressed=true;},context);
+ await f.lifecycle.runCompleted(f.host("learner"),"one-user-request");await f.settleFolds();const sessions=(await f.harness.snapshot(SessionsDoc,context))!.sessions;
+ expect(sessions[sessionKey(f.host("peer").scope,"peer")].section).toContain("prefix-learner");expect(sessions[sessionKey(f.host("peer").scope,"peer")].initialSection).toBe("");
+ expect(sessions[sessionKey(f.host("suppressed").scope,"suppressed")].section).toBe("");expect(sessions[sessionKey(other.scope,"other")].section).toBe("");
+});
+
+test("reconciled uncertain proposer replies get the same validation, redaction and accounting as live replies",async()=>{
+ const f=await setup("sqlite",async()=>{throw Error("reply lost");});const queued=await f.queue.enqueue(f.root.id,{id:"reconcile-facts",purpose:"proposer",model:reply.model,prompt:"bounded",maxOutputTokens:1024,deadlineMs:1000},{sessionKey:"session",account:"account",runId:null,revision:"1",digest:"digest",estimatedMaximumCost:null});
+ await f.harness.waitForTask(queued.job!.taskId!,context);expect((await f.harness.snapshot(JobsDoc,context))!.jobs["reconcile-facts"].status).toBe("unknown");
+ await f.queue.reconcile("reconcile-facts",{...reply,text:"password=synthetic-sensitive-value"});const state=(await f.harness.snapshot(JobsDoc,context))!;
+ expect(state.jobs["reconcile-facts"].status).toBe("failed");expect(state.jobs["reconcile-facts"].result!.text).toContain("[REDACTED]");expect(JSON.stringify(state)).not.toContain("synthetic-sensitive-value");expect(state.budget.ledger.filter(r=>r.id==="reconcile-facts")).toHaveLength(1);expect(state.budget.ledger.at(-1)?.cost).toBe(reply.cost);
 });

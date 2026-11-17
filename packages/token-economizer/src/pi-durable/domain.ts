@@ -29,6 +29,8 @@ export type SessionStart = {
   visibleHistory: boolean; carriedSections: Record<string, string>;
   /** A resumed in-flight run keeps its already prepared mask until an idle start. */
   runningMask?:string[];
+  /** Exclusive committed boundary: inherited fork history must not earn new fact votes. */
+  learningAfter?:string;
 };
 /** A host may expose its own committed receipts without leaking their document type. */
 export type ReceiptAdapter = {

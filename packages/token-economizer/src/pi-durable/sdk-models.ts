@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { Models, Usage as SdkUsage, AnyModel } from "@earendil-works/pi-ai";
+import {getSupportedThinkingLevels, type ThinkingLevel, type Models, type Usage as SdkUsage, type AnyModel} from "@earendil-works/pi-ai";
 import {fingerprint} from "../core/identity.ts";
 import { cacheBuckets } from "../core/accounting.ts";
 import type { DecisionClassifier, SideCall, Usage, InferenceRequest } from "../core/types.ts";
@@ -20,8 +20,17 @@ export function createSdkModelTransport(models:Models) {
   const sideCall:SideCall = async (request,signal) => {
     const model = models.getModel(request.model.provider,request.model.id), start = Date.now();
     if (!model) return {text:"",model:request.model,usage:null,cost:0,durationMs:0,authUnavailable:false,error:"Selected generation model is unavailable"};
-    const message = await models.completeSimple(model,{messages:[{role:"user",content:request.prompt,timestamp:Date.now()}]},{signal,maxTokens:request.maxOutputTokens,maxRetries:0,cacheRetention:"short",sessionId:`token-economizer:${fingerprint(JSON.stringify([request.cacheScope ?? request.id,request.purpose,request.auditFor ?? request.classification?.purpose ?? null,request.model.provider,request.model.id])).slice(0,40)}`});
-    return {text:message.content.filter(part => part.type === "text").map(part => part.text).join("\n"),model:{provider:message.provider,id:message.model},usage:usage(message.usage),cost:cost(message.usage,model),durationMs:Date.now()-start,authUnavailable:message.stopReason === "error" && /auth|api.?key|unauthori[sz]ed|sign.?in|credential|oauth|\b40[13]\b/i.test(message.errorMessage ?? ""),error:["error","aborted"].includes(message.stopReason) ? message.errorMessage ?? message.stopReason : null};
+    // Effort-based adapters must not default to an expensive reasoning level.
+    // Budget-based adapters add thinking tokens to maxTokens, so do not request
+    // an extra thinking budget there or silently raise the user's response cap.
+    const reasoning = model.reasoning && !["anthropic-messages","bedrock-converse-stream"].includes(model.api)
+      ? getSupportedThinkingLevels(model).find((level):level is ThinkingLevel => level !== "off") : undefined;
+    const message = await models.completeSimple(model,{messages:[{role:"user",content:request.prompt,timestamp:Date.now()}]},{signal,maxTokens:request.maxOutputTokens,reasoning,maxRetries:0,cacheRetention:"short",sessionId:`token-economizer:${fingerprint(JSON.stringify([request.cacheScope ?? request.id,request.purpose,request.auditFor ?? request.classification?.purpose ?? null,request.model.provider,request.model.id])).slice(0,40)}`});
+    const text = message.content.filter(part => part.type === "text").map(part => part.text).join("\n");
+    const error = message.stopReason === "length" ? `Optimizer response reached its ${request.maxOutputTokens}-token limit. Use a lower-reasoning model or adjust the output limit; no automatic retry was made.`
+      : message.stopReason !== "stop" ? message.errorMessage ?? `Unexpected optimizer stop: ${message.stopReason}`
+      : !text.trim() ? "Optimizer model returned no text" : null;
+    return {text,model:{provider:message.provider,id:message.model},usage:usage(message.usage),cost:cost(message.usage,model),durationMs:Date.now()-start,authUnavailable:message.stopReason === "error" && /auth|api.?key|unauthori[sz]ed|sign.?in|credential|oauth|\b40[13]\b/i.test(message.errorMessage ?? ""),error};
   };
   const decisionClassifier:DecisionClassifier = async (request,signal) => {
     const model = models.getModelsOfType("classifier",request.model.provider).find(model => model.id === request.model.id), start = Date.now();

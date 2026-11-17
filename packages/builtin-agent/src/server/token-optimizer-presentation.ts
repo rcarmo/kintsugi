@@ -32,10 +32,10 @@ const modelPurposes = new Map([
   ["optimizer.audit",{asked:"to double-check a local decision",doing:"Double-checking"}],
   ["optimizer.output-summary",{asked:"to summarise a long tool output",doing:"Summarising output"}],
 ]);
-const factStates = new Map([["CANDIDATE","still learning"],["ACTIVE","active evidence; review status not recorded"],["RETIRED","retired"]]);
+const factStates = new Map([["CANDIDATE","still learning"],["ACTIVE","active evidence"],["RETIRED","retired"]]);
 const learningChangesSchema = Type.Object({facts:Type.Array(Type.Object({id:Type.String(),state:Type.String(),claim:Type.String()})),suggestedTools:Type.Array(Type.String()),withdrawnTools:Type.Array(Type.String())});
 const learningChanges = (output:JsonObject|undefined) => read(learningChangesSchema,output?.changes);
-const factSummarySchema = Type.Object({id:Type.String(),claim:Type.String(),source:Type.Enum(["environment","distilled"]),status:Type.Enum(["in-use","quiet","checking","needs-review","rejected","stale","retired"]),confirmations:Type.Number(),contradictions:Type.Number(),evidence:Type.Array(Type.String()),claimRevision:Type.String(),review:Type.Union([Type.Null(),Type.Object({decision:Type.Enum(["approved","rejected","stale"]),claim:Type.String(),at:Type.Number(),note:Type.String()})])});
+const factSummarySchema = Type.Object({id:Type.String(),claim:Type.String(),source:Type.Enum(["environment","distilled"]),status:Type.Enum(["in-use","quiet","checking","needs-review","rejected","stale","retired"]),confirmations:Type.Number(),contradictions:Type.Number(),evidence:Type.Array(Type.String()),claimRevision:Type.String(),independentConfirmations:Type.Optional(Type.Number()),exercises:Type.Optional(Type.Number()),blockingReasons:Type.Optional(Type.Array(Type.String())),review:Type.Union([Type.Null(),Type.Object({decision:Type.Enum(["approved","rejected","stale"]),claim:Type.String(),at:Type.Number(),note:Type.String()})])});
 
 export function operationFacts(operation:OptimizerOperation) {return list(object(operation.output)?.facts).flatMap(value=>read(factSummarySchema,value) ?? []);}
 export function optimizerNeedsReview(operation:OptimizerOperation) {return list(object(object(operation.output)?.changes)?.facts).some(value=>read(factSummarySchema,value)?.status === "needs-review");}
@@ -52,7 +52,9 @@ export function withCurrentFactReviews(operation:OptimizerOperation,current:Map<
 /** Completed checks without a visible change stay in the journal, not the timeline. */
 export function optimizerHasChanges(operation:OptimizerOperation):boolean {
   if (operation.status !== "complete" || !["optimizer.learn","optimizer.fold"].includes(operation.name)) return true;
-  const changes = learningChanges(object(operation.output));
+  const output = object(operation.output), learning = object(output?.learning);
+  if (names(learning?.notes).length || ["failed","unknown","cancelled"].includes(text(learning?.proposer) ?? "")) return true;
+  const changes = learningChanges(output);
   return !changes || changes.facts.length > 0 || changes.suggestedTools.length > 0 || changes.withdrawnTools.length > 0;
 }
 
@@ -93,8 +95,9 @@ export function optimizerSummary(operation:OptimizerOperation):string {
     const learned = newFacts(output).length, updated = learningChanges(output)?.facts.filter(fact => !names(output?.newFacts).includes(fact.id)).length ?? 0;
     const changes = [learned ? plural(learned,"new fact") : "",updated ? plural(updated,"updated fact") : ""].filter(Boolean).join(" · ");
     what = done ? changes ? `Learned from ${label} · ${changes}` : (learningChanges(output)?.suggestedTools.length || learningChanges(output)?.withdrawnTools.length) ? "Updated tool suggestions" : `Checked ${label} · nothing new` : `Learning from ${label}`;
+    if (done && ["failed","unknown"].includes(text(object(output?.learning)?.proposer) ?? "")) what = "Fact proposal failed";
   } else if (operation.name === "optimizer.fact-review") {
-    what = "Fact review saved · next request when On";
+    what = "Fact feedback saved";
   } else if (purpose) {
     const model = modelName(input);
     what = operation.status === "queued" || operation.status === "running" ? `${purpose.doing} with ${model}` : `Asked ${model} ${purpose.asked}`;
@@ -118,7 +121,7 @@ export function optimizerSummary(operation:OptimizerOperation):string {
   } else if (operation.name === "optimizer.fit") {
     what = done ? "Retrained local classifiers" : "Retraining local classifiers";
   } else what = operation.name.replace(/^optimizer\./,"").replaceAll("-"," ");
-  if (done && optimizerNeedsReview(operation)) what += " · review proposals here";
+  if (done && optimizerNeedsReview(operation)) what += " · check held facts";
   const status = {queued:"waiting",running:"",complete:"",failed:"failed",cancelled:"cancelled",unknown:"interrupted"}[operation.status];
   const active = operation.status === "queued" || operation.status === "running";
   const cost = count(output?.cost);
@@ -145,6 +148,8 @@ function learningRows(operation:OptimizerOperation,input:JsonObject|undefined,ou
   });
   if (evidence.length) rows.push({label:"Evidence",html:folded(`Tool results (${evidence.length})`,bullets(evidence))});
   if (operation.status !== "complete") return rows;
+  const diagnostic = object(output?.learning);
+  if (diagnostic && (names(diagnostic.notes).length || ["failed","unknown"].includes(text(diagnostic.proposer) ?? ""))) rows.push({label:"Fact proposer",html:para(text(diagnostic.proposer) ?? "No result")+bullets(names(diagnostic.notes).map(escapeHtml))});
   const changes = learningChanges(output), changed = changes?.facts ?? newFacts(output);
   if (changed.length) rows.push({label:"Facts",html:changed.map(fact => {
     const reviewed = read(factSummarySchema,fact);

@@ -385,7 +385,7 @@ test("the footer chip follows mode, facts, hidden tools and suggestions, and ope
   await settle();expect(f.native.chip(f.conversation.id)).toBeUndefined();
 },30_000);
 
-for (const kind of ["memory","sqlite","jsonl"] as const) test(`native ${kind}: learns between runs with loop guard off, without closing, re-counting evidence or changing its prefix`,async () => {
+for (const kind of ["memory","sqlite","jsonl"] as const) test(`native ${kind}: learns between runs with loop guard off, with independent run evidence and automatic publication`,async () => {
   const f = await setup(kind), config = f.configuration.snapshot();
   Object.assign(config.policy,{enabled:true,microSkills:"envfacts",loop:"off",pruning:"propose"});
   await f.configuration.configure(config);const active = f.configuration.snapshot();active.policy.mode = "active";await f.configuration.configure(active);
@@ -398,17 +398,17 @@ for (const kind of ["memory","sqlite","jsonl"] as const) test(`native ${kind}: l
     expect((await f.native.optimizer.status(f.host)).session!.learning?.processed).toBe(i+1);
     const status = await f.native.optimizer.status(f.host);
     expect(status.session!.ended).toBeNull();expect(status.session!.folded).toBe(false);
-    expect(status.session!.section).toBe(original);
+    if(i<3)expect(status.session!.section).toBe(original);else expect(status.session!.section).toContain("pytest");
     expect(status.knowledge!.tools.sessions).toBe(1);
-    expect(status.knowledge!.environment.facts.find(fact => fact.id === "absent_tool:pytest")!.life.confirms).toHaveLength(1);
-    expect(status.knowledge!.environment.facts.find(fact => fact.id === "absent_tool:pytest")!.life.fire_den).toBe(1);
+    expect(status.knowledge!.environment.facts.find(fact => fact.id === "absent_tool:pytest")!.life.confirms).toHaveLength(i+1);
+    expect(status.knowledge!.environment.facts.find(fact => fact.id === "absent_tool:pytest")!.life.fire_den).toBe(i+1);
     const entries = (await f.conversation.entries({order:"ascending"},500,undefined,context)).items;
     const checkpoint = entries.filter(OptimizerOperationEntry.is).findLast(entry => entry.data.name === "optimizer.learn" && entry.data.status === "complete")!;
-    expect(checkpoint.data.output).toMatchObject({changes:{facts:i === 0 ? [{id:"absent_tool:pytest",state:"CANDIDATE"}] : []}});
+    expect(checkpoint.data.output).toMatchObject({changes:{facts:i === 1 ? [] : [{id:"absent_tool:pytest",state:i === 0 ? "CANDIDATE" : "ACTIVE"}]}});
   }
   expect(f.faux.state.callCount).toBe(8); // Only the Agent's own requests: Basic makes no learning calls.
   const before = (await f.native.optimizer.status(f.host)).knowledge!.environment.now;
-  f.faux.setResponses([fauxAssistantMessage("A text-only answer")]);
+  f.faux.setResponses([input=>{expect(JSON.stringify(input.messages)).toContain("pytest");return fauxAssistantMessage("A text-only answer");}]);
   await (await f.conversation.submit({type:"input",content:"Thanks",requestId:"empty-evidence"},context)).wait(context);
   for (let wait = 0;wait < 200 && ((await f.native.optimizer.status(f.host)).session!.learning?.processed ?? 0) < 5;wait++) {await settleLearning(f.harness);await Bun.sleep(5);}
   expect((await f.native.optimizer.status(f.host)).session!.learning?.processed).toBe(5);
@@ -416,7 +416,7 @@ for (const kind of ["memory","sqlite","jsonl"] as const) test(`native ${kind}: l
   await f.native.end(f.conversation.id);await settleLearning(f.harness);
   const ended = await f.native.optimizer.status(f.host);
   expect(ended.session!.folded).toBe(true);expect(ended.knowledge!.tools.sessions).toBe(1);expect(ended.knowledge!.tools.prompts).toBe(5);
-  expect(ended.knowledge!.environment.facts.find(fact => fact.id === "absent_tool:pytest")!.life.confirms).toHaveLength(1);
+  expect(ended.knowledge!.environment.facts.find(fact => fact.id === "absent_tool:pytest")!.life.confirms).toHaveLength(4);
   await f.native.start(f.conversation,{agentId:"agent"},"resume");
   f.fail("ruff: command not found");
   f.faux.setResponses([fauxAssistantMessage([fauxToolCall("codemode",{code:"await tools.bash({command:'ruff'});"})],{stopReason:"toolUse"}),fauxAssistantMessage("Done")]);
@@ -662,3 +662,27 @@ test("a tool-pick deadline is rechecked inside the schema-change transaction",as
   await expect(f.native.domain.setTools(f.host,["rare"],Date.now()+5)).rejects.toThrow("expired before tool changes committed");
   expect((await f.conversation.agent(context)).callable.some(tool=>tool.name==="rare")).toBe(true);
 });
+
+for(const kind of ["memory","sqlite"] as const)test(`native ${kind}: inherited fork history cannot earn another fact vote`,async()=>{
+ const f=await setup(kind),config=f.configuration.snapshot();Object.assign(config.policy,{enabled:true,microSkills:"envfacts",loop:"off",pruning:"off"});await f.configuration.configure(config);const on=f.configuration.snapshot();on.policy.mode="active";await f.configuration.configure(on);f.fail("pytest: command not found");
+ f.faux.setResponses([fauxAssistantMessage([fauxToolCall("codemode",{code:"await tools.bash({command:'pytest'});"})],{stopReason:"toolUse"}),fauxAssistantMessage("Done")]);await(await f.conversation.submit({type:"input",content:"Observe",requestId:"fork-evidence"},context)).wait(context);
+ for(let i=0;i<200&&((await f.native.optimizer.status(f.host)).session?.learning?.processed??0)<1;i++){await settleLearning(f.harness);await Bun.sleep(5);}
+ const boundary=(await f.conversation.entries({},200,undefined,context)).items.find(AssistantEntry.is)!;const created=await f.harness.commit(tx=>tx.forkConversation(f.conversation.id,boundary.id,{ownership:{kind:"ownerless"}}),context),child=(await f.harness.conversation(created.id,context))!;
+ const host=(await f.native.start(child,{agentId:"fork-evidence-child"},"fork",f.host.classificationGroup))!;
+ expect((await f.native.optimizer.status(host)).session!.learning!.cutoff).toBe(String(boundary.id));
+ // An unprocessed legacy fork must also start learning after its actual inherited boundary.
+ await f.harness.commit(async tx=>{delete (await tx.doc(SessionsDoc)).sessions[sessionKey(host.scope,host.id)].learning;},context);
+ await f.native.start(child,{agentId:"fork-evidence-child"},"resume",f.host.classificationGroup);
+ expect((await f.native.optimizer.status(host)).session!.learning!.cutoff).toBe(String(boundary.id));
+ f.faux.setResponses([fauxAssistantMessage("No new tool observations")]);await(await child.submit({type:"input",content:"Continue without tools"},context)).wait(context);
+ for(let i=0;i<200&&((await f.native.optimizer.status(host)).session?.learning?.processed??0)<1;i++){await settleLearning(f.harness);await Bun.sleep(5);}
+ expect((await f.native.optimizer.status(host)).knowledge!.environment.facts.find(f=>f.id==="absent_tool:pytest")!.life.confirms).toHaveLength(1);
+ await f.native.end(child.id);await settleLearning(f.harness);
+ expect((await f.native.optimizer.status(host)).session!.folded).toBe(true);
+ // A previously folded legacy fork instead retains its processed cutoff and conservative credits.
+ await f.harness.commit(async tx=>{delete (await tx.doc(SessionsDoc)).sessions[sessionKey(host.scope,host.id)].learning;},context);
+ await f.native.start(child,{agentId:"fork-evidence-child"},"resume",f.host.classificationGroup);
+ f.faux.setResponses([fauxAssistantMessage("No old evidence replay")]);await(await child.submit({type:"input",content:"Resume without tools"},context)).wait(context);
+ for(let i=0;i<200&&((await f.native.optimizer.status(host)).session?.learning?.processed??0)<1;i++){await settleLearning(f.harness);await Bun.sleep(5);}
+ expect((await f.native.optimizer.status(host)).knowledge!.environment.facts.find(f=>f.id==="absent_tool:pytest")!.life.confirms).toHaveLength(1);
+},20000);

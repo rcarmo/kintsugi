@@ -84,8 +84,15 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
           // Re-render against CURRENT feedback, not the snapshot taken before the async fold.
           const selected = renderFacts(knowledge.environment,knowledge.distiller,host.scope.repository,options.policy(key),knowledge.factReviews);
           knowledge.render = selected.text;knowledge.renders = {environment:selected.environment,distilled:selected.distilled,ids:selected.ids};knowledge.injectedIds = selected.ids;
-          const learnedPrefixChanged = before && renderFacts(before.environment,before.distiller,host.scope.repository,options.policy(key),knowledge.factReviews).text !== selected.text;
-          if (incremental && row.ended === null && learnedPrefixChanged && emitting(options.policy(key)) && !row.factsSuppressed) {row.section = options.renderCached ? options.renderCached(selected.text) : selected.text;row.injectedIds = selected.ids;}
+          // Knowledge is workspace-scoped: all attached On sessions receive the
+          // current eligible set, while their initial provider prefix stays frozen.
+          for (const [peerKey,peer] of Object.entries(sessions.sessions)) {
+            if (scopeKey(peer.scope) !== scopeKey(host.scope) || peer.ended !== null || peer.factsSuppressed || !emitting(options.policy(peerKey))) continue;
+            const published = renderFacts(knowledge.environment,knowledge.distiller,host.scope.repository,options.policy(peerKey),knowledge.factReviews);
+            const previous = before && renderFacts(before.environment,before.distiller,host.scope.repository,options.policy(peerKey),knowledge.factReviews);
+            if (previous?.text === published.text) continue;
+            peer.section = options.renderCached ? options.renderCached(published.text) : published.text;peer.injectedIds = published.ids;
+          }
           if (incremental) {
             row.claim = null;row.cutoff = null;row.recordActivity = runtime.now();
             const checkpoint = result?.learning ?? session.learning;
@@ -175,10 +182,13 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
         const state = await tx.doc(SessionsDoc), knowledge = await tx.doc(KnowledgeDoc,scopeKey(host.scope),host.scope), policy = options.policy(key);
         const mode = policy.enabled ? policy.mode : "off";
         const selected = renderFacts(knowledge.environment,knowledge.distiller,host.scope.repository,policy,knowledge.factReviews), cached = selected.text;
+        const refresh = state.sessions[key] !== undefined && emitting(policy);
         const row = prepareSession(state.sessions[key] ?? null,{id:host.id,scope:host.scope,conversation:String(host.conversationId),group:host.classificationGroup,now,
           ...start,cachedSection:policy.microSkills === "off" ? "" : options.renderCached ? options.renderCached(cached) : cached,cachedIds:selected.ids,publishedMask:start.runningMask ?? knowledge.tools.applied,mode});
-        row.section = row.factsSuppressed ? "" : permittedFactSection(row.section,knowledge.environment,knowledge.distiller,host.scope.repository,policy,knowledge.factReviews);
+        row.section = row.factsSuppressed ? "" : refresh ? (options.renderCached ? options.renderCached(cached) : cached) : permittedFactSection(row.section,knowledge.environment,knowledge.distiller,host.scope.repository,policy,knowledge.factReviews);
+        if (refresh && !row.factsSuppressed) row.injectedIds = selected.ids;
         if (!row.section) row.injectedIds = [];
+        if (start.learningAfter !== undefined && !row.learning && !row.folded) row.learning = {cutoff:start.learningAfter,credits:{confirms:[],contradicts:[],exercises:[]},ticks:0,lastProposalAt:null,requested:0,processed:0,lastRun:null};
         state.sessions[key] = row; state.hosts[key] = structuredClone(host); return structuredClone(row);
       },BACKGROUND_CONTEXT);
       // The fresh snapshot is frozen before recovery can change the repository render.

@@ -66,7 +66,8 @@ function frozen(spec: FactSpec): string {
   return JSON.stringify([spec.claim ?? null,spec.injection ?? null,spec.high_stakes ?? false,detector]);
 }
 export function factTextSafe(text: string): boolean {
-  return !/[\r\n<>]/.test(text) && !text.includes("[REDACTED]") && !/\b(?:API_KEY|ACCESS_TOKEN|PASSWORD|PRIVATE_KEY|AUTHORIZATION)\b/i.test(text) && redact(text) === text && !/\b(skip|no need|don'?t|do not|stop|done|completed?|finish(?:ed)?|verify|verification|instead of (?:running|testing))\b/i.test(text);
+  const unsafeAdvice = /\b(?:disable|bypass|ignore|suppress|turn off)\b.{0,100}\b(?:tls|ssl|certificates?|security|auth(?:entication|orization)?|permissions?|sandbox|instructions?|safety)\b|\b(?:tls|ssl|certificate|security|authentication|authorization|sandbox)\b.{0,60}\b(?:disabled|bypassed|ignored)\b|--(?:insecure|no-check-certificate)\b|\bcurl\b[^;\n]{0,80}\s-[A-Za-z]*k[A-Za-z]*\b|NODE_TLS_REJECT_UNAUTHORIZED|GIT_SSL_NO_VERIFY|sslVerify\s*=\s*(?:false|0)\b|\b(?:user|operator) (?:has )?(?:approved|authorized|authorised|granted)\b|\b(?:push|deploy|delete|overwrite)\b.{0,50}\bwithout (?:asking|confirmation|approval)\b|\b(?:always|automatically)\s+(?:commit|push|deploy|delete|overwrite)\b|\b(?:pushes|deployments|destructive actions)\b.{0,50}\b(?:approved|authori[sz]ed|permitted)\b/i;
+  return Boolean(text.trim()) && !unsafeAdvice.test(text) && !/[\u0000-\u001f\u007f\u2028\u2029\u202a-\u202e\u2066-\u2069<>]/.test(text) && !text.includes("[REDACTED]") && !/\b(?:API_KEY|ACCESS_TOKEN|PASSWORD|PRIVATE_KEY|AUTHORIZATION)\b/i.test(text) && redact(text) === text && !/\b(skip|no need|don'?t|do not|stop|done|completed?|finish(?:ed)?|verify|verification|instead of (?:running|testing))\b/i.test(text);
 }
 export function admitFact(state: Distiller, spec: FactSpec): Admission {
   if (!factTextSafe(spec.claim ?? spec.id) || !factTextSafe(spec.injection ?? spec.claim ?? spec.id)) return {accepted:false,reason:"unsafe-fact-text"};
@@ -80,22 +81,30 @@ export function admitFact(state: Distiller, spec: FactSpec): Admission {
     old.spec.rev = (old.spec.rev ?? 1)+1;
     return {accepted:true,reason:"revised-contradict"};
   }
+  const line = spec.injection ?? spec.claim ?? spec.id;
+  if (state.facts.some(fact => (fact.spec.injection ?? fact.spec.claim ?? fact.spec.id) === line)) return {accepted:false,reason:"duplicate-claim"};
   const hits = [...new Set(spec.cite ?? [])].filter(iid => {const digest = state.window.find(row => row.iid === iid);return digest && detectorVerdict(spec.detector,digest).verdict === "confirm";}).length;
   if (hits < 2) return {accepted:false,reason:`grounding-fail(${hits}/2)`};
   let fact: LearnedFact = {spec:{...structuredClone(spec),rev:spec.rev ?? 1},life:createLifecycle(spec.id,spec.high_stakes ?? false)};
   state.window.forEach((digest,index) => {fact = observeFact(fact,state.now-state.window.length+index,digest);});
   state.facts.push(fact); return {accepted:true,reason:"admitted"};
 }
+const proposalSchema = Type.Object({extractors:Type.Array(ExtractorSchema),facts:Type.Array(FactSchema)},{additionalProperties:false});
+function parseProposal(reply:string|null):{payload:Static<typeof proposalSchema>;error:null}|{payload:null;error:string} {
+  const object = reply?.match(/\{[\s\S]*\}/)?.[0];
+  if (!object) return {payload:null,error:"missing-proposal-object"};
+  try {const parsed:unknown=JSON.parse(object);Value.Assert(proposalSchema,parsed);return {payload:parsed,error:null};}
+  catch {return {payload:null,error:"invalid-proposal-object"};}
+}
+/** Validate the response contract before a paid job can be recorded as successful. */
+export function proposalError(reply:string):string|null {return parseProposal(reply).error;}
 export type ProposalCompletion = {state:Distiller;diagnostics:string[]};
 /** Call after an actual attempt, including a failed/empty reply. No runner makes no cadence change. */
 export function completeProposal(prior: Distiller, reply: string | null): ProposalCompletion {
   const state = structuredClone(prior), diagnostics: string[] = []; state.last_propose = state.now;
-  const object = reply?.match(/\{[\s\S]*\}/)?.[0];
-  if (!object) return {state,diagnostics:["missing-proposal-object"]};
-  const schema = Type.Object({extractors:Type.Array(ExtractorSchema),facts:Type.Array(FactSchema)},{additionalProperties:false});
-  let payload: Static<typeof schema>;
-  try {const parsed: unknown = JSON.parse(object);Value.Assert(schema,parsed);payload = parsed;}
-  catch {return {state,diagnostics:["invalid-proposal-object"]};}
+  const parsed = parseProposal(reply);
+  if (parsed.error !== null) return {state,diagnostics:[parsed.error]};
+  const payload = parsed.payload;
   for (const spec of payload.extractors) {
     if (state.extractors.length >= 12 || state.extractors.some(prior => prior.name === spec.name)) continue;
     const compiled = compilePattern(spec.pattern);
@@ -107,7 +116,7 @@ export function completeProposal(prior: Distiller, reply: string | null): Propos
   return {state,diagnostics};
 }
 export function renderDistiller(state: Distiller, repository: string, maxFacts = 4, maxTokens = 150, reviews:FactReviews = {}): string {
-  const header = `# reviewed operating facts (${repository.split("/").at(-1)})\n`;
+  const header = `# grounded operating facts (${repository.split("/").at(-1)})\n`;
   let text = "", count = 0;
   for (const fact of state.facts) {
     const line = fact.spec.injection ?? fact.spec.claim ?? fact.spec.id;
