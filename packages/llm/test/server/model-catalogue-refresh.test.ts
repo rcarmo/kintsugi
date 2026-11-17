@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, expect, spyOn, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { updateJsonSettings } from "@kintsugi/core/json-settings";
 import { createPiModelRuntime, getEnabledModels, readPiModelCatalogue, refreshPiModelCatalogue, setCustomModelsJson, setEnabledModels } from "../../src/server/pi-config-models.ts";
@@ -142,7 +143,7 @@ test("the shared refresh publishes new definitions for key providers and applies
         : { type: "api_key", key: `fixture-${provider}` };
     }
   });
-  const definitions = new Map(keyProviders.map(provider => {
+  const definitions = new Map<string, Model<Api>>(keyProviders.map(provider => {
     const base = runtime.getModels(provider)[0];
     if (!base) throw new Error(`No bundled fixture model for ${provider}`);
     return [provider, { ...base, id: `${provider}-refreshed-fixture`, name: `New ${provider} model` }] as const;
