@@ -51,6 +51,9 @@ test("offline settings catalogue includes stored OAuth and API-key providers wit
       expect(catalogue.getModels().filter(model => catalogue.configuredProviderIds.has(model.provider)).some(model => model.provider === provider)).toBe(true);
     }
     expect(catalogue.configuredProviderIds.has("not-connected")).toBe(false);
+    expect(catalogue.credentialTypes.get("openai")).toBe("api_key");
+    expect(catalogue.credentialTypes.get("anthropic")).toBe("oauth");
+    expect(catalogue.credentialTypes.has("not-connected")).toBe(false);
     expect(requests).toBe(0);
     expect(await readFile(path, "utf8")).toBe(before);
   } finally {
@@ -223,4 +226,17 @@ test("Copilot usage reads the token and enterprise host from one stored credenti
 test("malformed Copilot enterprise metadata is a safe reconnect error", async () => {
   await updateJsonSettings(join(dataDir, "pi-config", "auth.json"), settings => { settings["github-copilot"] = { type: "oauth", refresh: "fixture-secret", enterpriseUrl: 42 }; });
   await expect(readGitHubCopilotUsageCredentials()).rejects.toThrow("enterprise sign-in metadata is invalid");
+});
+
+test("offline classifier catalogue distinguishes direct OpenAI OAuth metadata from an API key without resolving it",async()=>{
+  const path=join(dataDir,"pi-config/auth.json");
+  await updateJsonSettings(path,stored=>{stored.openai={type:"oauth",access:"expired-synthetic-access",refresh:"synthetic-refresh",expires:0};});
+  const before=await readFile(path,"utf8"),realFetch=globalThis.fetch;let requests=0;
+  globalThis.fetch=Object.assign(async()=>{requests++;throw new Error("No network in offline catalogue");},{preconnect:realFetch.preconnect});
+  try {
+    const catalogue=await readPiModelCatalogue();
+    expect(catalogue.credentialTypes.get("openai")).toBe("oauth");
+    expect(catalogue.getModelsOfType("classifier","openai").some(model=>model.api==="openai-decisions")).toBe(true);
+    expect(requests).toBe(0);expect(await readFile(path,"utf8")).toBe(before);
+  }finally{globalThis.fetch=realFetch;}
 });

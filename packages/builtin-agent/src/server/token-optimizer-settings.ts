@@ -78,8 +78,15 @@ const disclosure = (label: string, body: string, open = false) => disclosureHtml
 const feedback = (view: View) => view.message ? `<p class="${view.error ? "settings-error" : "settings-help"}" role="${view.error ? "alert" : "status"}">${h(view.message)}</p>` : "";
 
 function modelOptions(catalogue: Catalogue, classifier: boolean, selected: ModelRef | null, none: string): Option[] {
-  const models = (classifier ? catalogue.getModelsOfType("classifier") : catalogue.getModels()).filter(model => catalogue.configuredProviderIds.has(model.provider));
-  const options: Option[] = [["", none], ...models.map((model): Option => [JSON.stringify({ provider: model.provider, id: model.id }), `${model.name || model.id} · ${model.provider}`])];
+  // Classifiers have their own catalogue: show them before connection so the
+  // choice and its credential requirement are discoverable, not an empty picker.
+  const models = classifier ? catalogue.getModelsOfType("classifier") : catalogue.getModels().filter(model => catalogue.configuredProviderIds.has(model.provider));
+  const options: Option[] = [["", none], ...models.map((model): Option => {
+    const connected = catalogue.configuredProviderIds.has(model.provider);
+    const requirement = model.api === "openai-decisions" && (!connected || catalogue.credentialTypes.get(model.provider) === "oauth")
+      ? " (OpenAI API key required)" : !connected ? " (not connected)" : "";
+    return [JSON.stringify({ provider: model.provider, id: model.id }), `${model.name || model.id} · ${model.provider}${requirement}`];
+  })];
   const value = selected ? JSON.stringify(selected) : "";
   if (selected && !options.some(([option]) => option === value)) options.push([value, `${selected.id} · ${selected.provider} (not connected)`]);
   return options;
@@ -130,8 +137,7 @@ function advancedHtml(policy: Policy, catalogue: Catalogue) {
     ${numberRow("evidenceSessions", "Or after this many sessions", policy.evidenceSessions)}
     ${numberRow("quietMinutes", "Quiet time before hiding automatically (minutes)", policy.quietMinutes, { min: 0, hint: "Waits until the repository is idle this long, or 24 hours at most." })}`);
   const same = "Same as the main model";
-  const perTask = disclosure("Models for each task", `${selectRow("classifierModel", "Classifier model", policy.classifierModel ? JSON.stringify(policy.classifierModel) : "", modelOptions(catalogue, true, policy.classifierModel, "None"))}
-    ${([["proposer", "Writing facts", false], ["loopJudge", "Judging stuck runs", false], ["writer", "Writing nudges", false], ["toolJudge", "Picking tools", false], ["loopClassifier", "Classifying stuck runs", true], ["toolClassifier", "Classifying tools", true]] as const).map(([name, label, classifier]) => selectRow(`models.${name}`, label, policy.models[name] ? JSON.stringify(policy.models[name]) : "", modelOptions(catalogue, classifier, policy.models[name], classifier ? "Same as the classifier model" : same))).join("")}`);
+  const perTask = disclosure("Models for each task", `${([["proposer", "Writing facts", false], ["loopJudge", "Judging stuck runs", false], ["writer", "Writing nudges", false], ["toolJudge", "Picking tools", false], ["loopClassifier", "Classifying stuck runs", true], ["toolClassifier", "Classifying tools", true]] as const).map(([name, label, classifier]) => selectRow(`models.${name}`, label, policy.models[name] ? JSON.stringify(policy.models[name]) : "", modelOptions(catalogue, classifier, policy.models[name], classifier ? "Same as the classifier model" : same))).join("")}`);
   const expert = disclosure("Loop guard thresholds", `<label class="token-optimizer__stacked">Overrides as JSON<textarea class="textarea token-optimizer__json" name="thresholds" rows="3" spellcheck="false">${h(JSON.stringify(policy.thresholds))}</textarea></label><p class="settings-help">For example <code>{"min_turns": 30}</code>. Leave <code>{}</code> to use learned values.</p>`);
   return `${features}${limits}${stored}${tuning}${perTask}${expert}`;
 }
@@ -140,7 +146,11 @@ function settingsForm(config: OptimizerConfig, catalogue: Catalogue, view: View)
   const policy = config.policy, mode: Mode = policy.enabled ? policy.mode : "off", preset = presetOf(policy), budget = policy.budget;
   const models = modelOptions(catalogue, false, policy.generativeModel, "Choose a model…");
   const modelBlock = `<div class="token-optimizer__model form-stack">
-    ${selectRow("model", "Model for optimizer calls", policy.generativeModel ? JSON.stringify(policy.generativeModel) : "", models, models.length > 1 ? "A small, fast model is plenty." : "Connect a model provider under Models first.")}
+    ${selectRow("model", "Text-generation model", policy.generativeModel ? JSON.stringify(policy.generativeModel) : "", models, models.length > 1 ? "Writes facts, nudges and summaries. A small, fast model is plenty." : "Connect a text-generation model under Models first.")}
+    <div class="token-optimizer__custom form-stack">
+      ${selectRow("classifierModel", "Classifier / decision model", policy.classifierModel ? JSON.stringify(policy.classifierModel) : "", modelOptions(catalogue, true, policy.classifierModel, "None"), "Default for classifier judges in Advanced; per-task choices override it. Classifier actions need validated safety thresholds.")}
+      <p class="settings-help">GPT-6 Luna Decisions requires an OpenAI API key under Models, not ChatGPT/Codex sign-in. You can select it before connecting.</p>
+    </div>
     ${checkboxRow("autoToolPicks", "Pick tools before each new prompt", policy.autoToolPicks ?? false, "Adds a model call before the Agent starts. After 20 seconds it is cancelled and the prompt goes ahead. Tool changes can invalidate the prompt cache.")}
     ${checkboxRow("outputSummaries", "Summarise stored outputs", policy.outputSummaries ?? false, "Adds a model call for each stored output. After 15 seconds the Agent gets a preview instead. Output text goes to this model.")}
     ${checkboxRow("inferenceInObserve", "Use the model while watching", policy.inferenceInObserve, "Off means Watch only never costs anything.")}

@@ -24,3 +24,15 @@ test("optimizer settings reject unvalidated inputs and latent Active overrides o
   const service = new TokenOptimizerConfiguration(path), config = await service.load();config.policy.enabled = true;config.workspaces.workspace = "active";
   await expect(service.configure(config)).rejects.toThrow("Observe");expect(service.snapshot().policy.enabled).toBe(false);
 });
+
+test("classifier-only optimizer configuration preserves the Decisions reference without substituting a text model",async()=>{
+  const path=await mkdtemp(join(tmpdir(),"optimizer-classifier-config-"));paths.push(path);
+  const service=new TokenOptimizerConfiguration(path),config=await service.load();
+  config.policy.enabled=true;config.policy.mode="observe";config.policy.loop="judge";config.policy.judge="classifier";
+  config.policy.classifierModel={provider:"openai",id:"gpt-6-luna"};config.policy.generativeModel=null;
+  await service.configure(config);
+  const reopened=new TokenOptimizerConfiguration(path),saved=await reopened.load();
+  expect(saved.policy.classifierModel).toEqual({provider:"openai",id:"gpt-6-luna"});
+  expect(saved.policy.generativeModel).toBeNull();expect(saved.policy.judge).toBe("classifier");
+  expect(saved.policy.mode).toBe("observe");expect(saved.policy.inferenceInObserve).toBe(false);
+});
