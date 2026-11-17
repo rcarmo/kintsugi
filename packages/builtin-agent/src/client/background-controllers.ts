@@ -1,4 +1,5 @@
 import { CableTopics, isWorkspacePaneVisible, type CableSubscription, type WorkspaceClientControllerConstructor } from "@kintsugi/shared";
+import { TranscriptNavigation } from "@kintsugi/agent/client/transcript-navigation";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 
@@ -28,7 +29,7 @@ export function createBackgroundController(Controller: WorkspaceClientController
 /** A message a link revealed on a child agent's page; reopening the page doesn't reveal it again. */
 const revealedMessages = new Set<string>();
 
-/** A child agent's page follows its live transcript while it shows, and reveals what links into that transcript point at. */
+/** A child agent's page owns its scrolling and live subscription, independently of the parent Agent pane. */
 export function createChildTranscriptController(Controller: WorkspaceClientControllerConstructor) {
   return class extends Controller {
     static values = { workspaceId: String, agentId: String };
@@ -36,11 +37,27 @@ export function createChildTranscriptController(Controller: WorkspaceClientContr
     declare readonly workspaceIdValue: string;
     declare readonly agentIdValue: string;
     private subscription?: CableSubscription;
+    private navigation!: TranscriptNavigation;
+    private readonly turnRevealed = (event: Event): void => {
+      event.stopPropagation();
+      // SAFETY: agent:turn-reveal is emitted by the owned turn controller with its target element.
+      this.navigation.reveal((event as CustomEvent<{ target: HTMLElement }>).detail.target);
+    };
 
-    connect(): void { this.sync(); }
-    disconnect(): void { this.stop(); }
+    connect(): void {
+      this.navigation = new TranscriptNavigation(this.element.closest<HTMLElement>(".agent-background-page-body")!, this.element);
+      this.element.addEventListener("agent:turn-reveal", this.turnRevealed);
+      this.sync();
+    }
+    disconnect(): void {
+      this.element.removeEventListener("agent:turn-reveal", this.turnRevealed);
+      this.navigation.disconnect();
+      this.stop();
+    }
     sync(): void {
-      if (document.hidden || !this.element.checkVisibility()) { this.stop(); return; }
+      const visible = !document.hidden && this.element.checkVisibility();
+      this.navigation.setVisible(visible);
+      if (!visible) { this.stop(); return; }
       this.subscription ??= window.KintsugiCable!.subscribe(CableTopics.agent(this.workspaceIdValue, this.agentIdValue), { onReady: () => this.revealFromUrl() });
     }
     private stop(): void {
@@ -71,7 +88,8 @@ export function createChildTranscriptController(Controller: WorkspaceClientContr
       const turn = turnId === null ? null : this.element.querySelector<HTMLDetailsElement>(`[data-agent-turn-turn-id-value="${CSS.escape(turnId)}"]`);
       if (turn) { turn.dataset.agentTurnRevealValue = target; turn.open = true; return; }
       const value = CSS.escape(target);
-      this.element.querySelector(`[data-transcript-anchor="${value}"], [data-transcript-key="${value}"], [data-tool-call-id="${value}"]`)?.scrollIntoView({ block: "center" });
+      const element = this.element.querySelector<HTMLElement>(`[data-transcript-anchor="${value}"], [data-transcript-key="${value}"], [data-tool-call-id="${value}"]`);
+      if (element) this.navigation.reveal(element);
     }
   };
 }

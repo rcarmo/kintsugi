@@ -35,9 +35,10 @@ export function createAgentTurnController(Controller: WorkspaceClientControllerC
     };
 
     connect(): void {
-      const agentPane = this.element.closest<HTMLElement>('[data-controller~="agent-pane"]');
+      const childTranscript = this.element.closest<HTMLElement>('[data-controller~="builtin-child-transcript"]');
+      const agentPane = childTranscript ? null : this.element.closest<HTMLElement>('[data-controller~="agent-pane"]');
       this.agentPane = agentPane !== null;
-      this.pane = agentPane ?? this.element.closest<HTMLElement>(".agent-transcript")!;
+      this.pane = agentPane ?? childTranscript ?? this.element.closest<HTMLElement>(".agent-transcript")!;
       this.items = this.itemsTarget;
       if (!this.agentPane) {
         // Subagent transcripts have no agent-pane controller. Observe changes to

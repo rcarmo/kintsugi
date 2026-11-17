@@ -29,6 +29,7 @@ type LiveConnection = {
   pendingCommands: CableClientMessage[];
   connectionId?: string;
   openingTimer?: ReturnType<typeof setTimeout>;
+  stabilityTimer?: ReturnType<typeof setTimeout>;
   startedAt: number;
   /** Welcome frames from older app servers use the original 30s cadence. */
   heartbeatIntervalMs?: number;
@@ -115,12 +116,27 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
   }
 
   function scheduleReconnect(): void {
-    if (closingForPageHide || reconnectTimer || desired.size === 0) return;
-    const delay = delays[Math.min(attempts++, delays.length - 1)]!;
+    if (closingForPageHide || reconnectTimer || desired.size === 0 || !navigator.onLine) return;
+    const base = delays[Math.min(attempts++, delays.length - 1)]!;
+    // Spread simultaneous reconnects without exceeding the configured delay cap.
+    const delay = Math.round(base * (0.8 + Math.random() * 0.2));
     reconnectTimer = setTimeout(() => {
       reconnectTimer = undefined;
       connect();
     }, delay);
+  }
+
+  function settled(source: LiveConnection): void {
+    if (connection !== source || [...desired.values()].some(item => item.status === "pending")) return;
+    recovering = false;
+    if (source.stabilityTimer !== undefined) return;
+    // Welcome/confirmation alone cannot establish recovery: a flapping server
+    // can deliver either and immediately disconnect. Retain its retry history
+    // until the subscriptions have remained settled on a stable connection.
+    source.stabilityTimer = setTimeout(() => {
+      source.stabilityTimer = undefined;
+      if (connection === source && ![...desired.values()].some(item => item.status === "pending")) attempts = 0;
+    }, 10_000);
   }
 
   function matchingSubscription(identifier: CableIdentifier, subscriptionId: string): DesiredSubscription | undefined {
@@ -149,7 +165,6 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
         clearTimeout(source.openingTimer);
         source.connectionId = message.connectionId;
         source.heartbeatIntervalMs = message.heartbeatIntervalMs;
-        attempts = 0;
         sendRaw({ command: "visibility", visibility });
         resubscribeAll();
         break;
@@ -164,7 +179,7 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
           subscription.status = "ready";
           subscription.shownIn?.removeAttribute(liveShownAttribute);
           subscription.shownIn = undefined;
-          if ([...desired.values()].every(item => item.status !== "pending")) recovering = false;
+          settled(source);
           changed();
           for (const lease of subscription.leases) lease.options?.onReady?.();
         };
@@ -181,7 +196,7 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
           rejected.subscriptionId = undefined;
           console.error("Cable subscription rejected", message);
           for (const lease of rejected.leases) lease.options?.onRejected?.(message.reason);
-          if ([...desired.values()].every(item => item.status !== "pending")) recovering = false;
+          settled(source);
           changed();
         }
         break;
@@ -203,6 +218,7 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
     if (connection !== source) return;
     connection = undefined;
     clearTimeout(source.openingTimer);
+    clearTimeout(source.stabilityTimer);
     if (source.transport === "websocket") source.socket.close();
     else {
       source.controller.abort();
@@ -250,8 +266,10 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
     }
   }
 
-  function connect(): void {
-    if (connection || closingForPageHide || document.hidden || desired.size === 0) return;
+  function connect(probe = false): void {
+    // Offline hints pause background retries, but a local/tailnet app can still
+    // be reachable: allow the initial subscription and explicit wake probe.
+    if (connection || closingForPageHide || document.hidden || desired.size === 0 || !probe && !navigator.onLine) return;
     lastMessageAt = Date.now();
     let source: LiveConnection;
     if (browserTransportFromCookies(document.cookie) === "sse") {
@@ -291,18 +309,22 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
   function resume(replace = false): void {
     if (document.hidden) return;
     closingForPageHide = false;
-    attempts = 0;
     // A frozen iPad page can return without delivering its earlier hide event.
     // Do not trust the pre-suspension reader. Coalesce the cluster of wake events
     // by retaining a connection we have only just started.
     if (replace && connection && Date.now() - connection.startedAt > 1000) disconnect(connection);
     clearTimeout(reconnectTimer);
     reconnectTimer = undefined;
-    connect();
+    connect(true);
   }
   window.addEventListener("pagehide", pause);
   window.addEventListener("pageshow", event => resume(event.persisted));
   window.addEventListener("online", () => resume(true));
+  window.addEventListener("offline", () => {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = undefined;
+    if (connection) disconnect(connection);
+  });
   window.addEventListener("focus", () => resume(Date.now() - lastMessageAt > (connection?.heartbeatIntervalMs ?? 30_000)));
   document.addEventListener("visibilitychange", () => document.hidden ? pause() : resume(true));
 
@@ -319,7 +341,7 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
       if (!subscription) {
         subscription = { identifier, leases: new Set(), status: "pending", shownIn: options?.shownIn };
         desired.set(key, subscription);
-        connect();
+        connect(true);
         if (connection?.connectionId !== undefined) subscribeOnWire(subscription);
       } else if (subscription.status === "rejected" && connection?.connectionId !== undefined) {
         subscribeOnWire(subscription);
@@ -333,7 +355,7 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
           clearTimeout(subscription.confirmationTimer);
           subscription.confirmationTimer = undefined;
           desired.delete(key);
-          if ([...desired.values()].every(item => item.status !== "pending")) recovering = false;
+          if (connection) settled(connection);
           changed();
           if (subscription.subscriptionId) {
             sendRaw({ command: "unsubscribe", identifier: subscription.identifier, subscriptionId: subscription.subscriptionId });

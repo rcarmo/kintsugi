@@ -1,13 +1,25 @@
 import { afterEach, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { openBunDurableStorage } from "../../src/server/durable-sqlite.ts";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai";
 import { CompactionEntry, createRegistry, Harness, MemoryStorage, UserEntry, type Conversation, type EntryId, type EntryRecord } from "@earendil-works/pi-durable";
 import { readScrollbackPage, scrollbackPageSize } from "../../src/server/durable-scrollback.ts";
 
 const opened: Harness[] = [];
-afterEach(async () => { for (const harness of opened.splice(0)) await harness.close(context); });
-async function setup() {
-  const harness = await Harness.open(new MemoryStorage(), { models: createModels(), registry: createRegistry() }, context);
+const paths: string[] = [];
+const backends = ["memory", "sqlite"] as const;
+afterEach(async () => {
+  for (const harness of opened.splice(0)) await harness.close(context);
+  for (const path of paths.splice(0)) await rm(path, { recursive: true, force: true });
+});
+async function setup(backend: typeof backends[number]) {
+  const directory = backend === "sqlite" ? await mkdtemp(join(tmpdir(), "kintsugi-scrollback-")) : undefined;
+  if (directory) paths.push(directory);
+  const storage = directory ? await openBunDurableStorage(join(directory, "agent.sqlite")) : new MemoryStorage();
+  const harness = await Harness.open(storage, { models: createModels(), registry: createRegistry() }, context);
   opened.push(harness);
   const conversation = await harness.root(context);
   async function append(target: Conversation, count: number, label: string) {
@@ -21,8 +33,8 @@ async function setup() {
 }
 const history = (conversation: Conversation): Conversation["entries"] => (...args) => conversation.entries(...args);
 
-test("scrollback pages are bounded, ordered, exhaustive and retryable across compaction/reset without changing context", async () => {
-  const { conversation, append } = await setup();
+test.each(backends)("%s: scrollback pages are bounded, ordered, exhaustive and retryable across compaction/reset without changing context", async backend => {
+  const { conversation, append } = await setup(backend);
   const old = await append(conversation, scrollbackPageSize * 2 + 17, "old");
   await conversation.commit(tx => tx.appendEntry(CompactionEntry, conversation.id, { head: "self", data: { reason: "manual" }, model: [{ role: "user", content: "Compacted summary", timestamp: 500 }] }), context);
   await append(conversation, 5, "middle");
@@ -34,20 +46,22 @@ test("scrollback pages are bounded, ordered, exhaustive and retryable across com
     const expected = (await conversation.entries({}, 1000, undefined, context)).items.filter(entry => entry.id < watch.value.entries[0]!.id).reverse();
     const loaded: EntryRecord[] = [];
     let before = watch.value.before;
-    let reads = 0;
+    let reads = 0, pages = 0;
     const bounded: Conversation["entries"] = async (query, limit, cursor, ctx) => {
-      expect(limit).toBeLessThanOrEqual(scrollbackPageSize + 1);
+      expect(limit).toBe(1);
       reads++;
       return conversation.entries(query, limit, cursor, ctx);
     };
     while (before !== undefined) {
       const page = await readScrollbackPage(bounded, before, context);
+      pages++;
       expect(page.entries.length).toBeLessThanOrEqual(scrollbackPageSize);
       expect(await readScrollbackPage(history(conversation), before, context)).toEqual(page);
       loaded.unshift(...page.entries);
       before = page.before;
     }
-    expect(reads).toBe(3);
+    expect(pages).toBe(3);
+    expect(reads).toBeGreaterThanOrEqual(expected.length);
     expect(loaded.map(entry => entry.id)).toEqual(expected.map(entry => entry.id));
     expect(new Set(loaded.map(entry => entry.id)).size).toBe(loaded.length);
     expect(loaded[0]!.id).toBe(old[0]!.id);
@@ -56,8 +70,8 @@ test("scrollback pages are bounded, ordered, exhaustive and retryable across com
   } finally { await watch.stop(); }
 });
 
-test("history reads respect fork cutoffs and never include a sibling or another root", async () => {
-  const { harness, conversation, append } = await setup();
+test.each(backends)("%s: history reads respect fork cutoffs and never include a sibling or another root", async backend => {
+  const { harness, conversation, append } = await setup(backend);
   const shared = await append(conversation, 6, "shared");
   const fork = await conversation.fork(shared[3]!.id, { ownership: { kind: "ownerless" } }, context);
   await append(conversation, 3, "parent-only");
@@ -71,8 +85,8 @@ test("history reads respect fork cutoffs and never include a sibling or another 
   expect(JSON.stringify(page)).not.toContain("parent-only");
 });
 
-test("short storage pages are followed without skipping entries; read failures propagate", async () => {
-  const { conversation, append } = await setup();
+test.each(backends)("%s: short storage pages are followed without skipping entries; read failures propagate", async backend => {
+  const { conversation, append } = await setup(backend);
   const entries = await append(conversation, 12, "sample");
   const short: Conversation["entries"] = (query, limit, cursor, ctx) => conversation.entries(query, Math.min(3, limit), cursor, ctx);
   expect((await readScrollbackPage(short, entries.at(-1)!.id, context)).entries).toEqual(entries);
@@ -80,10 +94,32 @@ test("short storage pages are followed without skipping entries; read failures p
   await expect(readScrollbackPage(failure, entries[0]!.id, context)).rejects.toThrow("History unavailable");
 });
 
-test("empty history and exact page boundaries terminate without repeating the last page", async () => {
-  const { conversation, append } = await setup();
+test.each(backends)("%s: empty history and exact page boundaries terminate without repeating the last page", async backend => {
+  const { conversation, append } = await setup(backend);
   // SAFETY: a positive boundary in a new empty conversation; no entry is assumed to exist.
   expect(await readScrollbackPage(history(conversation), 1 as EntryId, context)).toEqual({ entries: [], before: undefined });
   const entries = await append(conversation, scrollbackPageSize, "exact");
   expect(await readScrollbackPage(history(conversation), entries.at(-1)!.id, context)).toEqual({ entries, before: undefined });
+});
+
+test.each(backends)("%s: scrollback pages bound serialised UTF-8 bytes and keep the first omitted entry as the next boundary", async backend => {
+  const { conversation, append } = await setup(backend);
+  const entries = await append(conversation, 7, "界".repeat(300_000));
+  const first = await readScrollbackPage(history(conversation), entries.at(-1)!.id, context);
+  expect(first.entries).toHaveLength(2);
+  expect(first.entries.reduce((bytes, entry) => bytes + Buffer.byteLength(JSON.stringify(entry)), 0)).toBeLessThanOrEqual(2 * 1024 * 1024);
+  expect(first.before).toBe(entries.at(-3)!.id);
+  const loaded = [...first.entries];let before = first.before;
+  while (before !== undefined) {const page = await readScrollbackPage(history(conversation), before, context);loaded.unshift(...page.entries);before = page.before;}
+  expect(loaded.map(entry => entry.id)).toEqual(entries.map(entry => entry.id));
+});
+
+test.each(backends)("%s: an individually oversized entry remains readable and does not skip the preceding entry", async backend => {
+  const { conversation, append } = await setup(backend);
+  const older = await append(conversation, 1, "older");
+  const oversized = await append(conversation, 1, "界".repeat(800_000));
+  const page = await readScrollbackPage(history(conversation), oversized[0]!.id, context);
+  expect(page.entries.map(entry => entry.id)).toEqual([oversized[0]!.id]);
+  expect(page.before).toBe(older[0]!.id);
+  expect((await readScrollbackPage(history(conversation), page.before!, context)).entries).toEqual(older);
 });

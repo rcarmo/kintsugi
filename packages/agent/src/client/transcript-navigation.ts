@@ -61,8 +61,8 @@ export class TranscriptNavigation {
   private readonly composerOpener: HTMLElement | null;
   private layoutBottom?: number;
 
-  constructor(private readonly transcript: HTMLElement, private readonly content: HTMLElement, private readonly latestButton: HTMLElement) {
-    this.composerOpener = transcript.closest(".agent-composer-pane")!.querySelector<HTMLElement>(".agent-composer-opener > button");
+  constructor(private readonly transcript: HTMLElement, private readonly content: HTMLElement, private readonly latestButton?: HTMLElement) {
+    this.composerOpener = transcript.closest(".agent-composer-pane")?.querySelector<HTMLElement>(".agent-composer-opener > button") ?? null;
     this.resizeObserver = new ResizeObserver(this.layoutChanged);
     this.resizeObserver.observe(transcript);
     this.resizeObserver.observe(content);
@@ -154,9 +154,16 @@ export class TranscriptNavigation {
 
   reveal(target: HTMLElement): void {
     this.pause();
-    target.scrollIntoView({ block: "center" });
+    // Native scrollIntoView can ignore content clipped by an opening disclosure.
+    // Move this transcript directly; subsequent reflow keeps the revealed passage.
+    const bounds = target.getBoundingClientRect();
+    this.scrollTo(this.transcript.scrollTop + bounds.top - this.transcript.getBoundingClientRect().top
+      - (this.transcript.clientHeight - bounds.height) / 2);
     // Revealing a target near the end isn't the reader scrolling there.
     this.rememberPosition();
+    // Lazy turn content can arrive in this same frame. Keep the newly revealed
+    // passage through its resize, instead of restoring the pre-reveal anchor.
+    this.rememberReadingPosition();
   }
 
   private pause(): void {
@@ -171,6 +178,9 @@ export class TranscriptNavigation {
     this.following = false;
     this.renderMode();
     this.rememberPosition();
+    // A fast history response can prepend rows before the next animation frame.
+    // Anchor the passage being expanded now, not the one from the last layout.
+    this.rememberReadingPosition();
     this.transcript.dispatchEvent(new Event(transcriptReadingEvent));
     this.layoutChanged();
   }
@@ -182,7 +192,7 @@ export class TranscriptNavigation {
   }
 
   private renderMode(): void {
-    this.latestButton.hidden = this.following;
+    if (this.latestButton) this.latestButton.hidden = this.following;
     this.transcript.dataset.following = String(this.following);
   }
 

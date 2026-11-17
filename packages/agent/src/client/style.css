@@ -61,7 +61,7 @@
    during reflow; navigation releases excess minimum height as it becomes unused. */
 .agent-transcript-surface { display: flow-root; min-height: var(--agent-follow-floor, 0px); }
 .agent-transcript-content { display: flow-root; }
-.agent-transcript[data-following="true"] { overflow-anchor: none; }
+.agent-transcript[data-following="true"], .agent-background-page-body[data-following="true"] { overflow-anchor: none; }
 /* The scroll region accepts keyboard navigation without outlining the entire pane. */
 .agent-transcript:focus { outline: none; }
 

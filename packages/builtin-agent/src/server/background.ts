@@ -55,8 +55,8 @@ export async function subscribeBackground(workspaceId: string, rootId: string, l
 /** A child agent's page follows its live transcript; it is an Agent of its own. */
 export function childAgentTranscriptHtml(workspaceId: string, agentId: string): string {
   // Kept as the page reloads its header: the transcript fills it live.
-  return `<div class="agent-transcript-content" id="${ids.transcript({ workspaceId, agentId })}" data-turbo-permanent data-controller="builtin-child-transcript" data-builtin-child-transcript-workspace-id-value="${escapeHtml(workspaceId)}" data-builtin-child-transcript-agent-id-value="${escapeHtml(agentId)}"
-    data-action="click->builtin-child-transcript#follow kintsugi:workspace-agent-selected@document->builtin-child-transcript#sync kintsugi:workspace-pane-visible@document->builtin-child-transcript#sync kintsugi:workspace-pane-hidden@document->builtin-child-transcript#sync visibilitychange@document->builtin-child-transcript#sync"></div>`;
+  return `<div class="agent-transcript-surface"><div class="agent-transcript-content" id="${ids.transcript({ workspaceId, agentId })}" data-turbo-permanent data-controller="builtin-child-transcript" data-builtin-child-transcript-workspace-id-value="${escapeHtml(workspaceId)}" data-builtin-child-transcript-agent-id-value="${escapeHtml(agentId)}"
+    data-action="click->builtin-child-transcript#follow kintsugi:workspace-agent-selected@document->builtin-child-transcript#sync kintsugi:workspace-pane-visible@document->builtin-child-transcript#sync kintsugi:workspace-pane-hidden@document->builtin-child-transcript#sync visibilitychange@document->builtin-child-transcript#sync"></div></div>`;
 }
 
 /** Stops a child agent's running work, as Stop does in its own pane: saved first, then ended. */
