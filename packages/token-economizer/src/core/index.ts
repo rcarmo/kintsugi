@@ -38,6 +38,7 @@ export * from "./classify/routing.ts";
 export * from "./classify/artifacts.ts";
 export * from "./savers.ts";
 export * from "./output/reduce.ts";
+export * from "./output/offload.ts";
 export * from "./goals.ts";
 export * from "./output/mcp.ts";
 export * from "./output/mcp-recall/privacy.ts";

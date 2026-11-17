@@ -36,6 +36,11 @@ export const handleSessionRequest: AgentRouteHandler = async (request, url, opti
     const controller = await existingDurableController(agent, options);
     return controller ? await controller.image(params[2], Number(params[3])) : new Response("not found", { status: 404 });
   }
+  if ((params = matchRoute(url, /^\/workspaces\/([^/]+)\/agents\/([^/]+)\/session-attachments\/([^/]+)\/(\d+)$/)) && request.method === "GET") {
+    const agent = await resolveAgent(params[0],params[1]);
+    const controller = await existingDurableController(agent,options);
+    return controller ? await controller.attachment(params[2],Number(params[3])) : new Response("not found",{status:404});
+  }
   if ((params = matchRoute(url, /^\/workspaces\/([^/]+)\/agents\/([^/]+)\/tree(\/summary|\/label|)$/))) {
     const [workspaceId, agentId, suffix] = params;
     const treeResponse = await handleAgentTreeRequest(request, url, suffix, async () => await requireAgentPresentation(workspaceId, agentId, options), async () => await requireAgentController(workspaceId, agentId, options));

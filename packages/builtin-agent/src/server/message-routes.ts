@@ -37,6 +37,10 @@ async function submitMessage(workspaceId: string, agentId: string, request: Requ
     const message = "Mode must be send, steer, or followUp";
     return json ? Response.json({ error: { code: "invalid_arguments", message } }, { status: 422 }) : turboStreamResponse("", { status: 422 });
   }
+  if (text.trim() === "/tree") {
+    const treeUrl = `/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/tree`;
+    return json ? Response.json({command:"tree",treeUrl}) : new Response(null,{status:303,headers:{Location:treeUrl}});
+  }
   const optimizerCommand = parseOptimizerCommand(text);
   if (optimizerCommand) {
     await resolveAgentController(agent,options);
@@ -84,9 +88,9 @@ async function submitMessage(workspaceId: string, agentId: string, request: Requ
     return json ? Response.json({ agent: { agentId, state: "accepted" } }, { status: 202, headers }) : turboStreamResponse("", { headers });
   }
   const attachmentIds = form?.getAll("attachment").map(String) ?? [];
-  const { images, attachmentNotes } = attachmentIds.length > 0
-    ? await deliverAttachmentDraft(workspaceId, attachmentDraft, attachmentIds)
-    : { images: [], attachmentNotes: [] };
+  const { images, attachmentNotes, files } = attachmentIds.length > 0
+    ? await deliverAttachmentDraft(workspaceId, attachmentDraft, attachmentIds,{retainFiles:true})
+    : { images: [], attachmentNotes: [], files: [] };
   const expandedText = await expandSlashCommand(workspaceId, text);
   const trimmed = expandedText.trim();
   if (!trimmed && images.length === 0 && attachmentNotes.length === 0) {
@@ -97,7 +101,7 @@ async function submitMessage(workspaceId: string, agentId: string, request: Requ
   const model = (await runtime.settings()).model;
   const namingContext = trimmed ? { messages: [...await runtime.userMessages(), trimmed], agentModel: model && { provider: model.provider, id: model.modelId } } : undefined;
   // A new prompt that finds the agent busy waits its turn; only explicit steering joins the running turn.
-  const submission = await runtime.submit({ text: expandedText, requestId, whenBusy: mode === "steer" ? "steer" : "followUp", images: images.map(image => ({ type: "image", data: image.data, mimeType: image.mimeType })), attachmentNotes });
+  const submission = await runtime.submit({ text: expandedText, requestId, whenBusy: mode === "steer" ? "steer" : "followUp", images: images.map(image => ({ type: "image", data: image.data, mimeType: image.mimeType })), attachmentNotes, files });
   if (namingContext) {
     await options.events?.emit("workspace_user_activity", { workspaceId });
     (options.suggestTitleFromPrompt ?? maybeNameAgentFromPrompt)(agent, namingContext.messages, { events: options.events, agentModel: namingContext.agentModel });

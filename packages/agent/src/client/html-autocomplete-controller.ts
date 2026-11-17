@@ -1,6 +1,6 @@
 import { PopupPosition } from "@kintsugi/design-system/popup/position";
 import { notifyInputListeners, setTextInputValue, type WorkspaceClientControllerConstructor as StimulusControllerConstructor } from "@kintsugi/shared";
-import { agentTreeOwnsMenu } from "./session-tree.ts";
+import { agentTreeOwnsMenu, fitAgentTreeMenu, agentTreeMenuIsUpdating, clearAgentTreeMenu } from "./session-tree.ts";
 
 type HtmlAutocompleteRequest = { query: string; params?: Record<string, string>; debounceMs?: number };
 
@@ -43,8 +43,11 @@ export function createHtmlAutocompleteController(Controller: StimulusControllerC
     private optionId = 0;
     private debounceTimer: number | undefined;
     private form: HTMLFormElement | null = null;
+    private readonly treeResize = new ResizeObserver(()=>fitAgentTreeMenu(this.menuTarget));
 
     connect(): void {
+      this.treeResize.observe(this.inputTarget);
+      const pane = this.inputTarget.closest(".agent-pane");if (pane) this.treeResize.observe(pane);
       this.form = this.inputTarget.closest("form");
       if (this.menuTarget.hasAttribute("popover")) this.position = new PopupPosition(this.inputTarget, this.menuTarget);
       this.menuTarget.addEventListener("click", this.click);
@@ -58,6 +61,7 @@ export function createHtmlAutocompleteController(Controller: StimulusControllerC
     }
 
     disconnect(): void {
+      this.treeResize.disconnect();
       this.close();
       this.position?.disconnect();
       this.menuTarget.removeEventListener("click", this.click);
@@ -81,7 +85,7 @@ export function createHtmlAutocompleteController(Controller: StimulusControllerC
     }
 
     keydown(event: KeyboardEvent): void {
-      if (event.defaultPrevented) return;
+      if (event.defaultPrevented || event.isComposing) return;
       if (autocomplete.keydown?.(event, this.inputTarget, this.urlValue, {
         open: !this.menuTarget.hidden,
         hasOptions: this.options().length > 0,
@@ -202,6 +206,7 @@ export function createHtmlAutocompleteController(Controller: StimulusControllerC
 
     // A focusable menu (tabindex="-1") keeps focus while its text is selected, so it stays open until focus leaves both.
     private readonly menuFocusout = (event: FocusEvent): void => {
+      if (agentTreeMenuIsUpdating(this.menuTarget)) return;
       const relatedTarget = event.relatedTarget;
       if (relatedTarget instanceof Node && (relatedTarget === this.inputTarget || this.menuTarget.contains(relatedTarget))) return;
       this.close();
@@ -238,13 +243,13 @@ export function createHtmlAutocompleteController(Controller: StimulusControllerC
       if (this.position) this.menuTarget.showPopover();
     }
 
-    private close(): void {
+    protected close(): void {
       this.requestId++;
       window.clearTimeout(this.debounceTimer);
       if (this.position) this.menuTarget.hidePopover();
       this.menuTarget.hidden = true;
       this.inputTarget.removeAttribute("aria-activedescendant");
-      this.menuTarget.replaceChildren();
+      clearAgentTreeMenu(this.menuTarget);
     }
 
     private options(): HTMLElement[] {

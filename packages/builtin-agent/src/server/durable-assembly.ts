@@ -1,3 +1,4 @@
+import { createGrepHistoryTool } from "./grep-history.ts";
 import { mcpConnections } from "./mcp-connections.ts";
 import { createWorkspaceMcpRuntime } from "./mcp-runtime.ts";
 import { nativeOptimizerOptions, type createNativeTokenOptimizer } from "./token-optimizer.ts";
@@ -40,7 +41,7 @@ export type DurableHarnessOptions = HarnessOptions & { models: Models; tokenOpti
 export async function createDurableHarnessOptions(workspaceId: string, options: WorkspaceAgentToolOptions, writeTiming: WriteDurableTiming, harness: () => Harness): Promise<DurableHarnessOptions> {
   const models = await createPiModelRuntime();
   const registry = createDurableWorkspaceRegistry(workspaceId, options, createNativeAgentIdentityResolver(workspaceId, harness));
-  registry.install(defineExtension({ name: "kintsugi.history-search", tools: [createHistorySearchTool(workspaceId, harness)] }));
+  registry.install(defineExtension({ name: "kintsugi.history-search", tools: [createHistorySearchTool(workspaceId, harness), createGrepHistoryTool(workspaceId, harness)] }));
   registry.install(durablePromptCache);
   registry.install(createNativePlanExtension(workspaceId, harness));
   const delegation = agentDelegation?.create(models, harness);

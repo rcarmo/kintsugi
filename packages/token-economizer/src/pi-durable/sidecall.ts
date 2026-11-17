@@ -33,7 +33,7 @@ export function createInferenceQueue(options: { harness: () => Harness; backgrou
             await report(tx,job,runtime.now());
             return { status: "terminal", outcome: { status: "completed", result: null } };
           }
-          const priority = (row:InferenceJob) => ["loop-judge","writer"].includes(row.request.purpose) || row.request.classification?.purpose === "loop";
+          const priority = (row:InferenceJob) => ["loop-judge","writer","output-summary"].includes(row.request.purpose) || row.request.classification?.purpose === "loop";
           const guardWaiting = Object.values(state.jobs).some(row => row.status === "queued" && priority(row));
           if (state.worker !== null || guardWaiting && !priority(job)) return { status: "sleeping", until: runtime.now()+50, checkpoint: { phase: "queued" } };
           state.worker = job.id; job.status = "running";

@@ -5,24 +5,6 @@ import { agentCompletionRequest, insertFileCompletion, insertSlashCommand } from
 import { createHtmlAutocompleteController } from "./html-autocomplete-controller.ts";
 import { handleAgentTreeKeydown, handleAgentTreeMenuEvent, selectAgentTreeOption } from "./session-tree.ts";
 
-const treeComingSoonMessage = "/tree feature is coming soon!";
-
-function showBuiltinSlashCommandNotice(input: HTMLInputElement | HTMLTextAreaElement, message: string): void {
-  const notices = input.closest(".agent-pane")!.querySelector<HTMLElement>(".agent-notices")!;
-  const notice = document.createElement("div");
-  notice.className = "agent-noticeline info";
-  notice.dataset.controller = "agent-notice";
-  notice.setAttribute("role", "status");
-  notice.textContent = message;
-  notices.append(notice);
-}
-
-function runBuiltinSlashCommand(option: HTMLElement, input: HTMLInputElement | HTMLTextAreaElement): boolean {
-  if (option.dataset.commandAction !== "notice") return false;
-  input.value = "";
-  showBuiltinSlashCommandNotice(input, option.dataset.commandMessage!);
-  return true;
-}
 
 type ShortcutCommand = Pick<WorkspaceClientCommand, "label" | "binding">;
 
@@ -180,7 +162,6 @@ export function createAgentCompletionsController(Controller: StimulusControllerC
       return html === undefined ? undefined : labelPromptTemplateShortcuts(html, hooks);
     },
     select(option, input, url) {
-      if (runBuiltinSlashCommand(option, input)) return;
       if (selectAgentTreeOption(option, input)) return false;
       if (option.dataset.commandTrigger) insertSlashCommand(option, input);
       else if (option.dataset.completionKind === "file") insertFileCompletion(option, input);
@@ -192,15 +173,6 @@ export function createAgentCompletionsController(Controller: StimulusControllerC
       }
       const send = composerSubmitKey(event);
       const expand = event.key === "Enter" && event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey;
-      const treeCommand = input.closest(".composer")?.querySelector('[data-agent-completions-target="catalog"] [data-completion-kind="builtin"][data-command-trigger="/tree"]');
-      if (event.key === "Enter" && input.value.trim() === "/tree" && treeCommand) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        actions.setInputValue("");
-        actions.close();
-        showBuiltinSlashCommandNotice(input, treeComingSoonMessage);
-        return true;
-      }
       if (handleAgentTreeKeydown(event, input, actions)) return true;
       if (send || expand) {
         const active = actions.open ? actions.activeOption() : undefined;
@@ -231,6 +203,7 @@ export function createAgentCompletionsController(Controller: StimulusControllerC
 
     connect(): void {
       super.connect();
+      this.inputTarget.closest("form")?.addEventListener("submit",this.treeSubmit,true);
       this.catalogObserver = new MutationObserver(() => { this.renderPromptTemplateButtons(); this.input(); });
       this.catalogObserver.observe(this.catalogTarget, { childList: true });
       if (this.hasPromptTemplateButtonsTarget) this.promptTemplateButtonsTarget.addEventListener("click", this.promptTemplateButton);
@@ -239,11 +212,18 @@ export function createAgentCompletionsController(Controller: StimulusControllerC
     }
 
     disconnect(): void {
+      this.inputTarget.closest("form")?.removeEventListener("submit",this.treeSubmit,true);
       this.catalogObserver?.disconnect();
       if (this.hasPromptTemplateButtonsTarget) this.promptTemplateButtonsTarget.removeEventListener("click", this.promptTemplateButton);
       super.disconnect();
     }
 
+    private readonly treeSubmit = (event:Event):void => {
+      if (this.inputTarget.value.trim() !== "/tree") return;
+      const option = this.catalogTarget.querySelector<HTMLElement>('[data-command-action="tree"]');
+      if (!option) return;
+      event.preventDefault();event.stopImmediatePropagation();this.close();selectAgentTreeOption(option,this.inputTarget);
+    };
     /** Prompt template buttons always sit in the composer, so its height never changes late. */
     private renderPromptTemplateButtons(): void {
       if (!this.hasPromptTemplateButtonsTarget) return;

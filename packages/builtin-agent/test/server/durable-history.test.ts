@@ -1,3 +1,4 @@
+import { timelineSnapshot } from "./fixtures/sqlite-timeline.ts";
 import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -5,14 +6,17 @@ import { tmpdir } from "node:os";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { createRegistry } from "@earendil-works/pi-durable";
-import { retainedDurableHistories } from "../../src/server/durable-history.ts";
+import { retainedDurableHistories as readHistories } from "../../src/server/durable-history.ts";
 import { retainedDurableWorkspaceOwner, suspendAllDurableWorkspaceOwners } from "../../src/server/runtime.ts";
 import { durableJournalDirectory } from "../../src/server/durable-storage.ts";
 import { ensureDefaultWorkspaceAgent, listWorkspaceAgents } from "../../src/server/agent-store.ts";
 
 const original = process.env.KINTSUGI_DATA_DIR;
 let directory: string;
+const readers:(()=>Promise<void>)[]=[];
+async function retainedDurableHistories(id:string){const result=await readHistories(id);readers.push(...result.map(row=>row.dispose));return result;}
 afterEach(async () => {
+  await Promise.all(readers.splice(0).map(close=>close()));
   await suspendAllDurableWorkspaceOwners();
   if (original === undefined) delete process.env.KINTSUGI_DATA_DIR;
   else process.env.KINTSUGI_DATA_DIR = original;
@@ -55,16 +59,16 @@ test("retained discovery is share-scoped and reads closed/deleted native history
   await foreign.agent({ agentId: "foreign-tab", title: "Private", label: "Agent 1" });
   load.ready = async () => { throw new Error("Read-only discovery must not probe execution"); };
   load.prepare = async () => { throw new Error("Read-only discovery must not prepare prompts"); };
-  const before = await readFile(join(path, "main.jsonl"), "utf8");
+  const before = await timelineSnapshot(path);
   const histories = await retainedDurableHistories("viewer");
   expect(histories.map(item => item.workspaceId)).toEqual(["deleted"]);
   const found = histories[0]!;
-  expect(found.owner).toBe(owner);
+  expect(found.owner).not.toBe(owner);
   expect((await found.owner.catalog())[0]?.title).toBe("Retained title");
   expect((await found.owner.admission())?.deleted).toBe(true);
   const view = await controller.historyView();
   expect(JSON.stringify(view)).toContain("Retained answer");
-  expect(await readFile(join(path, "main.jsonl"), "utf8")).toBe(before);
+  expect(await timelineSnapshot(path)).toBe(before);
   expect(faux.state.callCount).toBe(1);
 });
 
@@ -94,6 +98,28 @@ test("committed catalog title reconciles stale tab metadata without reopening a 
   await controller.close();
   await writeFile(metadata, JSON.stringify({ version: 2, agents: [] }));
   expect(await listWorkspaceAgents("workspace")).toEqual([]);
-  expect((await retainedDurableHistories("workspace"))[0]?.owner).toBe(owner);
+  expect((await retainedDurableHistories("workspace"))[0]?.owner).not.toBe(owner);
   expect((await owner.catalog())[0]?.title).toBe("Committed rename");
+});
+
+test("an unopened retained SQLite history is genuinely read-only and does not acquire a writer lease", async () => {
+  const { faux, load, workspaceTemplate } = await setup();
+  await workspaceTemplate("viewer", "team");
+  const path = durableJournalDirectory("team", "closed");
+  faux.setResponses([fauxAssistantMessage("Read-only answer")]);
+  const live = await retainedDurableWorkspaceOwner(path, "closed", {}, load);
+  const controller = await live.agent({ agentId: "saved", title: "Saved", label: "Agent 1" });
+  await (await controller.submit({ requestId: "one", text: "Read-only prompt" })).wait(BACKGROUND_CONTEXT);
+  await suspendAllDurableWorkspaceOwners();
+  const before = await readFile(join(path, "agent.sqlite"));
+  const histories = await retainedDurableHistories("viewer");
+  try {
+    expect(histories.map(item => item.workspaceId)).toEqual(["closed"]);
+    const history = histories[0]!;
+    const record = (await history.owner.catalog())[0]!;
+    expect(JSON.stringify(await (await history.owner.agent(record)).historyView())).toContain("Read-only answer");
+    expect(await Bun.file(path + ".lock").exists()).toBe(false);
+    expect(faux.state.callCount).toBe(1);
+  } finally {await Promise.all(histories.map(item => item.dispose()));}
+  expect(await readFile(join(path, "agent.sqlite"))).toEqual(before);
 });

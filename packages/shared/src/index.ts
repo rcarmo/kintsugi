@@ -314,6 +314,8 @@ export interface WorkspaceAgentInput {
   text: string;
   images: { mimeType: string; data: string }[];
   attachmentNotes: string[];
+  /** Optional host-retained uploads for backends that persist attachments with their timeline. */
+  files?: {type:"attachment";filename:string;mimeType:string;data:string}[];
 }
 
 export interface AgentWorkspaceParameters {

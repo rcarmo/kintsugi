@@ -128,6 +128,7 @@
         "@kintsugi/workspace": "workspace:*",
         "@kintsugi/workspace-templates": "workspace:*",
         "proper-lockfile": "4.1.2",
+        "re2js": "2.10.0",
         "typebox": "^1.0.57",
         "web-push": "3.6.7",
       },
@@ -243,6 +244,7 @@
     "packages/core": {
       "name": "@kintsugi/core",
       "dependencies": {
+        "@earendil-works/chord": "catalog:",
         "typebox": "^1.0.57",
       },
     },

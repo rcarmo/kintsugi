@@ -1,4 +1,4 @@
-import { extensionOf, imageMimeByExtension } from "@kintsugi/shared/file-metadata";
+import { extensionOf, imageMimeByExtension, mediaMimeByExtension } from "@kintsugi/shared/file-metadata";
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -18,6 +18,7 @@ export interface StagedAttachment {
 export interface DeliveredAttachments {
   images: ImageRef[];
   attachmentNotes: string[];
+  files?: WorkspaceAgentInput["files"];
 }
 
 export function attachmentDraftsDir(): string {
@@ -111,7 +112,7 @@ export async function moveAttachmentDraft(sourceDraftId: string, targetDraftId: 
   await rename(attachmentDraftDir(sourceDraftId), attachmentDraftDir(targetDraftId));
 }
 
-export async function deliverAttachmentDraft(workspaceId: string, draftId: string, attachmentIds?: string[]): Promise<DeliveredAttachments> {
+export async function deliverAttachmentDraft(workspaceId: string, draftId: string, attachmentIds?: string[], options: {retainFiles?:boolean} = {}): Promise<DeliveredAttachments> {
   const staged = attachmentIds
     ? await Promise.all(attachmentIds.map(async (attachmentId) => {
       const attachment = await findStagedAttachment(draftId, attachmentId);
@@ -122,15 +123,21 @@ export async function deliverAttachmentDraft(workspaceId: string, draftId: strin
 
   const images: ImageRef[] = [];
   const attachmentNotes: string[] = [];
+  const files: NonNullable<WorkspaceAgentInput["files"]> = [];
   for (const attachment of staged) {
     if (attachment.isImage) {
       const data = await readFile(attachment.path);
-      images.push({ mimeType: imageMimeByExtension[extensionOf(attachment.name)]!, data: data.toString("base64") });
+      const mimeType = imageMimeByExtension[extensionOf(attachment.name)]!,base64 = data.toString("base64");
+      images.push({ mimeType, data: base64 });
+      if (options.retainFiles) files.push({type:"attachment",filename:attachment.name,mimeType,data:base64});
     } else {
       attachmentNotes.push(await deliverFileAttachment(workspaceId, attachment));
+      if (options.retainFiles) files.push({type:"attachment",filename:attachment.name,mimeType:mediaMimeByExtension[extensionOf(attachment.name)] ?? "application/octet-stream",data:(await readFile(attachment.path)).toString("base64")});
     }
   }
-  return { images, attachmentNotes };
+  const delivered: DeliveredAttachments = { images, attachmentNotes };
+  if (options.retainFiles) delivered.files = files;
+  return delivered;
 }
 
 async function deliverFileAttachment(workspaceId: string, staged: StagedAttachment): Promise<string> {

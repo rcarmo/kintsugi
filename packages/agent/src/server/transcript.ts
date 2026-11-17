@@ -1,3 +1,4 @@
+export type SessionAttachmentRef = {entryId:string;index:number;filename:string};
 import type { AgentRenderContext } from "./render-context.ts";
 /** Renderer-friendly transcript model for the pi-backed runtime. */
 
@@ -37,7 +38,7 @@ export type TranscriptRecord =
   | { kind: "runStart"; turnEntryId: string; startedAt: number; timestamp: number }
   | { kind: "timing"; timing: TurnTimingSummary; turnEntryId?: string; outcome?: "completed" | "stopped"; timestamp: number }
   | { kind: "taskStart"; id: string; timestamp: number }
-  | { kind: "user"; id: string; text: string; images: SessionImageRef[]; timestamp: number; rewindable?: boolean }
+  | { kind: "user"; id: string; text: string; images: SessionImageRef[]; attachments?: SessionAttachmentRef[]; timestamp: number; rewindable?: boolean }
   | { kind: "assistant"; id: string; parts: AssistantPart[]; stopReason: StopReason; partial?: boolean; errorMessage?: string; timestamp: number }
   | { kind: "toolResult"; callId: string; text: string; images: SessionImageRef[]; isError: boolean; timestamp: number; details?: ToolViewDetails }
   | { kind: "note"; id?: string; text: string; tone: NoteTone; timestamp?: number };
@@ -126,7 +127,7 @@ export type QueuedInput = { submissionId: string; mode: "steer" | "followUp"; st
 
 export type TranscriptItem =
   | (TranscriptItemBase & { type: "extension"; render(ctx: AgentRenderContext): string })
-  | (TranscriptItemBase & { type: "user"; text: string; images: SessionImageRef[]; queued?: QueuedInput })
+  | (TranscriptItemBase & { type: "user"; text: string; images: SessionImageRef[]; attachments?: SessionAttachmentRef[]; queued?: QueuedInput })
   | (TranscriptItemBase & { type: "inherited-context"; source: string; messageCount: number; items: TranscriptItem[] })
   | WorkingTranscriptItem
   | (TranscriptItemBase & { type: "thinking"; text: string; live?: boolean })
@@ -233,6 +234,7 @@ export function buildTranscript(records: TranscriptRecord[], options: { openEnde
         rewindEntryId: record.rewindable === false ? undefined : record.id,
         text: record.text,
         images: record.images,
+        attachments: record.attachments,
       } : undefined;
       // Input read together with the previous one, before any activity, joins its block.
       if (user && working && follows === "user" && !runStarts.has(record.id)) {

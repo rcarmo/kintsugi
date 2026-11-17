@@ -1,3 +1,4 @@
+import { actionLinkHtml } from "@kintsugi/design-system/action-link";
 import { disclosureHtml, type DisclosureSummary } from "@kintsugi/design-system/disclosure";
 import { buttonHtml } from "@kintsugi/design-system/button";
 import { destructiveConfirmationHtml } from "@kintsugi/design-system/destructive-confirmation";
@@ -66,11 +67,12 @@ export function renderModelContextDetailFrame(ctx: AgentRenderContext, modelCont
 
 function renderUserMessage(ctx: AgentRenderContext, user: Extract<TranscriptItem, { type: "user" }>): string {
   const images = user.images.length ? `<div class="agent-user-attachments">${user.images.map((image) => `<img${fullscreenAttributes("attachment", "media")} src="${escapeHtml(sessionImageUrl(ctx, image))}" alt="attachment" loading="lazy">`).join("")}</div>` : "";
+  const files = user.attachments?.map(file => actionLinkHtml({href:agentPath(ctx,`/session-attachments/${encodeURIComponent(file.entryId)}/${file.index}`),variant:"secondary",content:{kind:"caption",caption:file.filename}})).join(" ") ?? "";
   const label = user.queued?.stranded ? "Not sent · the turn ended early"
     : user.queued?.mode === "followUp" ? "Follow-up · after this turn"
     : user.queued ? "Steering · after this step" : "";
   const actions = user.queued && !ctx.readOnly ? renderQueuedInputActions(ctx, user.key, user.queued) : "";
-  return transcriptRow(`<div class="agent-user" data-agent-user-text="${escapeHtml(user.text)}"><div class="agent-user-bubble markdown">${label ? `<div class="agent-user-label"><span>${label}</span>${actions}</div>` : ""}${markdown(ctx, user.text)}${images}</div></div>`);
+  return transcriptRow(`<div class="agent-user" data-agent-user-text="${escapeHtml(user.text)}"><div class="agent-user-bubble markdown">${label ? `<div class="agent-user-label"><span>${label}</span>${actions}</div>` : ""}${markdown(ctx, user.text)}${images}${files}</div></div>`);
 }
 
 /**

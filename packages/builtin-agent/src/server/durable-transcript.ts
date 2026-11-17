@@ -1,3 +1,5 @@
+import { durableAttachmentRefs } from "./durable-attachments.ts";
+import type { SessionAttachmentRef } from "@kintsugi/agent/server/transcript";
 import { agentDelegation } from "./delegation.ts";
 import { integrationTranscript } from "./integrations.ts";
 import { applyTranscriptContributions } from "@kintsugi/agent/server/transcript-contributions";
@@ -104,7 +106,7 @@ export function projectDurableTranscript(view: ConversationView): TranscriptItem
   const runEndingCalls = new Set<string>();
   const optimizerNudges = new Set(view.entries.flatMap(entry => OptimizerOperationEntry.is(entry) && entry.data.name === "optimizer.nudge" ? [entry.data.id] : []));
 
-  function appendMessage(message: Message, key: string, imageEntryId: string, offset: number, partial = false, diagnostics: readonly ToolDiagnostic[] = []) {
+  function appendMessage(message: Message, key: string, imageEntryId: string, offset: number, partial = false, diagnostics: readonly ToolDiagnostic[] = [], attachments: SessionAttachmentRef[] = []) {
     if (message.role === "system") return;
     if (message.role === "user") {
       const startsRun = pendingBoundary || !turn;
@@ -113,7 +115,7 @@ export function projectDurableTranscript(view: ConversationView): TranscriptItem
       // Steering read mid-run ends the block it interrupted and starts its own, within the same run.
       if (!startsRun && !readTogether) turnEnds.set(turn!, { timestamp: message.timestamp, completed: true });
       if (startsRun || !readTogether) { turn = key; pendingBoundary = false; timings.set(key, new DurableTurnTiming()); }
-      records.push({ kind: "user", id: key, text: contentText(message.content), images: images(message.content, imageEntryId, offset), timestamp: message.timestamp, rewindable: false });
+      records.push({ kind: "user", id: key, text: contentText(message.content), images: images(message.content, imageEntryId, offset), timestamp: message.timestamp, rewindable: false, attachments: attachments.length ? attachments : undefined });
       if (startsRun) records.push({ kind: "runStart", turnEntryId: key, timestamp: message.timestamp, startedAt: message.timestamp });
     } else if (message.role === "assistant") {
       records.push({ kind: "assistant", id: key, timestamp: message.timestamp,
@@ -199,7 +201,7 @@ export function projectDurableTranscript(view: ConversationView): TranscriptItem
     // Imported legacy tool results can contain only model messages, without native diagnostics.
     const diagnostics = ToolResultEntry.is(entry) ? entry.data?.diagnostics ?? [] : [];
     for (const [index, message] of (entry.model ?? []).entries()) {
-      appendMessage(message, index === 0 ? String(entry.id) : `${entry.id}:message:${index}`, String(entry.id), offset, false, diagnostics);
+      appendMessage(message, index === 0 ? String(entry.id) : `${entry.id}:message:${index}`, String(entry.id), offset, false, diagnostics, index === 0 ? durableAttachmentRefs(entry.data,String(entry.id)) : []);
       offset += Array.isArray(message.content) ? message.content.length : 1;
     }
   }
@@ -290,7 +292,7 @@ export function projectDurableTranscript(view: ConversationView): TranscriptItem
   for (const input of inbox.items) {
     if (input.mode === "write" || input.entry?.kind === SteeringEntry.kind) continue;
     const key = `queued-${input.id}`;
-    items.push({ type: "user", key, text: contentText(input.content), images: images(input.content, key), queued: { submissionId: String(input.id), mode: input.mode, stranded: !live.run } });
+    items.push({ type: "user", key, text: contentText(input.content), images: images(input.content, key), attachments:durableAttachmentRefs(input.entry?.data,key), queued: { submissionId: String(input.id), mode: input.mode, stranded: !live.run } });
   }
   return contribution ? applyTranscriptContributions(items, contribution) : items;
 }

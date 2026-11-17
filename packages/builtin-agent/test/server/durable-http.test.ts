@@ -170,3 +170,14 @@ test("thinking level HTTP configuration uses canonical fields and validates nati
   await expect(configure("unsupported")).rejects.toMatchObject({ code: "invalid_arguments" });
   expect((await controller.settings()).thinkingLevel).toBe("off");
 });
+
+test("tree submissions return a navigation directive and never prepare or submit a model request",async()=>{
+  directory=await mkdtemp(join(tmpdir(),"tree-http-"));process.env.KINTSUGI_DATA_DIR=directory;
+  const agent=await ensureDefaultWorkspaceAgent("http-workspace"),url=`http://kintsugi.test/workspaces/${agent.workspaceId}/agents/${agent.agentId}/messages`;
+  const options={getController:async()=>{throw new Error("Tree must not acquire an execution controller");}};
+  const request=new Request(url,{method:"POST",headers:{Accept:"application/json","Content-Type":"application/json"},body:JSON.stringify({text:"/tree",requestId:"tree"})});
+  const response=await handleAgentRequest(request,new URL(url),options);
+  expect(await response!.json()).toEqual({command:"tree",treeUrl:`/workspaces/${agent.workspaceId}/agents/${agent.agentId}/tree`});
+  const form=new Request(url,{method:"POST",body:new URLSearchParams({text:"/tree",requestId:"tree-form"})});
+  const redirected=await handleAgentRequest(form,new URL(url),options);expect(redirected!.status).toBe(303);
+});

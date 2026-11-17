@@ -1,3 +1,11 @@
+import { readDurableHistoryPage } from "./durable-history-page.ts";
+import { storeDurableAttachments,readDurableAttachmentBytes } from "./durable-upload-store.ts";
+import { join } from "node:path";
+import { agentDatabaseName } from "./agent-database.ts";
+import type { TreeFilterMode } from "./session-tree.ts";
+import { durableAttachmentEndpoint } from "./durable-attachments.ts";
+import { isDurableUserEntry } from "./durable-input.ts";
+import { forgetAgentCopies, workspaceAgentDatabase } from "./agent-database.ts";
 import { collectDescendantUsage } from "./durable-usage.ts";
 import { registerDurableTelemetry } from "./durable-telemetry.ts";
 import { enabledModelOptionViews } from "@kintsugi/agent/server/model-state";
@@ -10,7 +18,7 @@ import { KintsugiCoreError } from "@kintsugi/core";
 import { prepareWorkspaceRuntime } from "@kintsugi/workspace";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { contentText, getSupportedThinkingLevels, type SimpleStreamOptions } from "@earendil-works/pi-ai";
-import { UserEntry, LiveDoc, InboxDoc, AgentDoc, UsageDoc, ProviderDoc, defineDoc, type Cursor, type EntryId, type EntryRecord, type EntryDraft, type AgentChange, type Conversation, type ConversationId, type ConversationView, type HarnessOptions, type LiveState } from "@earendil-works/pi-durable";
+import { LiveDoc, InboxDoc, AgentDoc, UsageDoc, ProviderDoc, defineDoc, type Cursor, type EntryId, type EntryRecord, type EntryDraft, type AgentChange, type Conversation, type ConversationId, type ConversationView, type HarnessOptions, type LiveState } from "@earendil-works/pi-durable";
 import { createDurableHarnessOptions, prepareDurableAgent, type DurableHarnessOptions } from "./durable-assembly.ts";
 import { durableQueueResumeEntry, durableStopScope, commitDurableStop, markGatedDurableWork, settleStoppedDurableWork, WorkspaceAdmission, WorkspaceStops } from "./durable-lifecycle.ts";
 import { durableImageEndpoint } from "./durable-images.ts";
@@ -188,26 +196,48 @@ export async function openDurableAgentRuntime(
       const current = await record();
       return current.branches ?? [current.durableId];
     }
-    async function tree() {
-      assertOpen();
-      const nodes = new Map<EntryId, { entry: EntryRecord; parentId?: EntryId; branch: ConversationId }>();
+    async function visibleNode(value: string) {
+      const numeric = Number(value);
+      if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(numeric)) return undefined;
+      // SAFETY: validated positive entry bound; each scan below establishes fork visibility before use.
+      const entryId = numeric as EntryId;
       for (const id of await branches()) {
-        const branch = (await harness.conversation(id, context))!;
-        const entries: EntryRecord[] = [];
-        let cursor: Cursor | undefined;
-        do {
-          const page = await branch.entries({}, 500, cursor, context);
-          entries.push(...page.items);
-          cursor = page.next;
-        } while (cursor);
-        entries.reverse();
-        entries.forEach((entry, index) => {
-          if (!nodes.has(entry.id)) nodes.set(entry.id, { entry, parentId: entries[index - 1]?.id, branch: id });
-        });
+        const branch = (await harness.conversation(id,context))!;
+        const page = await branch.entries({maxEntryId:entryId},2,undefined,context);
+        if (page.items[0]?.id === entryId) return {entry:page.items[0],parentId:page.items[1]?.id,branch:id};
       }
-      const active = (await conversation.entries({}, 1, undefined, context)).items[0]?.id;
-      const labels = (await harness.snapshot(DurableHistoryLabels, context))?.labels ?? {};
-      return { nodes: [...nodes.values()].sort((a, b) => a.entry.id - b.entry.id), active, labels: Object.fromEntries([...nodes.keys()].flatMap(id => labels[String(id)] ? [[String(id), labels[String(id)]!]] : [])) };
+      return undefined;
+    }
+    async function tree(options?: {filter:TreeFilterMode;query:string;limit:number}) {
+      assertOpen();
+      const labels = (await harness.snapshot(DurableHistoryLabels,context))?.labels ?? {};
+      type TreeEntry = EntryRecord | (Pick<EntryRecord,"id"|"kind"|"conversationId"> & {model?:{role:NonNullable<EntryRecord["model"]>[number]["role"];content:string}[]});
+      const nodes = new Map<EntryId,{entry:TreeEntry;parentId?:EntryId;branch:ConversationId}>(),seen = new Set<EntryId>();
+      const tokens = options?.query.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
+      let totalMatches = 0;
+      for (const id of await branches()) {
+        const branch = (await harness.conversation(id,context))!;let cursor:Cursor|undefined,parentId:EntryId|undefined;
+        do {
+          const page = await branch.entries({order:"ascending"},options ? 8 : 32,cursor,context);cursor = page.next;
+          for (const source of page.items) {
+            const previous = parentId;parentId = source.id;
+            if (seen.has(source.id)) continue;seen.add(source.id);
+            let entry:TreeEntry = source;
+            if (options) {
+              const role = source.model?.[0]?.role,text = source.model?.map(message=>contentText(message.content)).join("\n") || source.kind;
+              if (options.filter === "user-only" && role !== "user" || options.filter === "labeled-only" && !labels[String(source.id)]?.length || ["default","no-tools"].includes(options.filter) && role === "system" || options.filter === "no-tools" && role === "toolResult") continue;
+              if (!tokens.every(token=>`${role} ${text} ${(labels[String(source.id)] ?? []).join(" ")}`.toLowerCase().includes(token))) continue;
+              // UI navigation needs only a short text/role projection, never file bytes, tool details or reasoning.
+              const first = source.model?.[0],preview = text.replace(/\s+/g," ").slice(0,240);
+              entry = {id:source.id,kind:source.kind,conversationId:source.conversationId,model:first ? [{role:first.role,content:preview}] : undefined};
+            }
+            totalMatches++;nodes.set(entry.id,{entry,parentId:previous,branch:id});
+            if (options && nodes.size > options.limit) nodes.delete([...nodes.keys()].reduce((a,b)=>a<b?a:b));
+          }
+        } while (cursor);
+      }
+      const active = (await conversation.entries({},1,undefined,context)).items[0]?.id;
+      return {nodes:[...nodes.values()].sort((a,b)=>a.entry.id-b.entry.id),active,labels:Object.fromEntries([...nodes.keys()].flatMap(id=>labels[String(id)] ? [[String(id),labels[String(id)]!]] : [])),filtered:!!options,totalMatches};
     }
     async function assertIdle() {
       const live = await harness.snapshot(LiveDoc, conversation.id, context);
@@ -221,10 +251,9 @@ export async function openDurableAgentRuntime(
     }
     async function navigate(entryId: string, before: boolean) {
       await assertIdle();
-      const history = await tree();
-      const selected = history.nodes.find(node => String(node.entry.id) === entryId);
+      const selected = await visibleNode(entryId);
       if (!selected) throw new Error("History entry no longer exists.");
-      const target = before ? history.nodes.find(node => node.entry.id === selected.parentId) : selected;
+      const target = before ? selected.parentId ? await visibleNode(String(selected.parentId)) : undefined : selected;
       if (!target) throw new Error("Cannot rewind past the first history entry.");
       const next = await harness.commit(async tx => {
         assertAdmission();
@@ -306,31 +335,27 @@ export async function openDurableAgentRuntime(
       },
       async userMessages() {
         const { entries } = await conversation.context(context);
-        return entries.filter(UserEntry.is).flatMap(entry => (entry.model ?? []).flatMap(message => message.role === "user" ? [contentText(message.content)] : []));
+        return entries.filter(isDurableUserEntry).flatMap(entry => (entry.model ?? []).flatMap(message => message.role === "user" ? [contentText(message.content)] : []));
       },
       get id() { return conversation.id; },
       readOnly: Boolean(identity.readOnly),
       tree,
-      async historyView(branchId?: string) {
+      async historyView(branchId?: string,before?:number) {
         const ids = await branches();
         const id = branchId === undefined ? conversation.id : ids.find(id => String(id) === branchId);
         if (id === undefined) throw new Error("History branch no longer exists.");
         return harness.commit(async tx => {
-          const entries: EntryRecord[] = [];
-          let cursor: Cursor | undefined;
-          do {
-            const page = await tx.scanEntries({ conversationId: id }, 500, cursor);
-            entries.push(...page.items);
-            cursor = page.next;
-          } while (cursor);
+          // SAFETY: the HTTP boundary validates this positive cursor; it is the excluded overflow entry from the prior page.
+          const maxEntryId = before as EntryId | undefined;
+          const page = await readDurableHistoryPage(cursor=>tx.scanEntries({conversationId:id,maxEntryId},1,cursor));
           // SAFETY: These native JSON documents are typed by Harness. Detach transaction
           // overlays before commit settles; returning their proxies would invalidate the view.
           return JSON.parse(JSON.stringify({
-            conversation: (await tx.conversation(id))!, entries: entries.reverse(),
+            conversation: (await tx.conversation(id))!, entries: page.entries,before:page.before,
             docs: {
               [AgentDoc.definition.kind]: await tx.doc(AgentDoc, id),
-              [LiveDoc.definition.kind]: await tx.doc(LiveDoc, id),
-              [InboxDoc.definition.kind]: await tx.doc(InboxDoc, id),
+              [LiveDoc.definition.kind]: before ? {} : await tx.doc(LiveDoc, id),
+              [InboxDoc.definition.kind]: before ? {} : await tx.doc(InboxDoc, id),
               [UsageDoc.definition.kind]: await tx.doc(UsageDoc, id),
             },
           })) as ConversationView;
@@ -339,7 +364,7 @@ export async function openDurableAgentRuntime(
       navigate(entryId: string, before = false) { return command(() => navigate(entryId, before)); },
       label(entryId: string, label: string, operation: "add" | "remove") {
         return command(async () => {
-          const node = (await tree()).nodes.find(node => String(node.entry.id) === entryId);
+          const node = await visibleNode(entryId);
           if (!node) throw new Error("History entry no longer exists.");
           await harness.commit(async tx => {
             const doc = await tx.doc(DurableHistoryLabels);
@@ -367,6 +392,14 @@ export async function openDurableAgentRuntime(
       watch: (...args: Parameters<Conversation["watch"]>) => conversation.watch(...args),
       history: (...args: Parameters<Conversation["entries"]>) => conversation.entries(...args),
       context: (...args: Parameters<Conversation["context"]>) => conversation.context(...args),
+      async attachment(entryId: string, index: number) {
+        if (entryId.startsWith("queued-")) return durableAttachmentEndpoint(conversation,entryId,index,context,id=>readDurableAttachmentBytes(join(directory,agentDatabaseName),id));
+        for (const id of await branches()) {
+          const response = await durableAttachmentEndpoint((await harness.conversation(id,context))!,entryId,index,context,id=>readDurableAttachmentBytes(join(directory,agentDatabaseName),id));
+          if (response.status !== 404) return response;
+        }
+        return new Response("not found",{status:404});
+      },
       image(entryId: string, contentIndex: number) {
         return (async () => {
           if (entryId.startsWith("queued-")) return durableImageEndpoint(conversation, entryId, contentIndex, context);
@@ -408,7 +441,7 @@ export async function openDurableAgentRuntime(
             const expanded = await load.expand(id, text);
             assertAdmission();
             return expanded;
-          }, assertAdmission);
+          }, assertAdmission,files=>storeDurableAttachments(directory,files));
         });
       },
       configure(change: SettingsChange) {
@@ -589,6 +622,8 @@ export async function openDurableAgentRuntime(
         await Promise.all([...commandDrains].map((drain) => drain()));
         await persistGates();
         await settleTasks();
+        // The journal is retained; bounded copies of tool and MCP results are not.
+        await forgetAgentCopies(workspaceAgentDatabase(workspaceId));
       })().catch((error) => {
         deleting = undefined;
         throw error;

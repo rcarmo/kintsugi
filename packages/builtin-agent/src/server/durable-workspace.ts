@@ -12,7 +12,8 @@ import {
   type HarnessOptions,
 } from "@earendil-works/pi-durable";
 import { markGatedDurableWork, WorkspaceAdmission } from "./durable-lifecycle.ts";
-import { openNodeJsonlStorage } from "@earendil-works/pi-durable/storage/jsonl/node";
+import { openBunDurableStorage } from "./durable-sqlite.ts";
+import { prepareDurableSqlite } from "./durable-migration.ts";
 
 export type DurableAgentRecord = {
   agentId: string;
@@ -71,7 +72,7 @@ export const WorkspaceAgents = defineDoc<WorkspaceAgentCatalog>({
  */
 export async function openDurableWorkspace(directory: string, workspaceId: string, options: HarnessOptions) {
   await mkdir(directory, { recursive: true });
-  // Pi's JSONL backend has no writer exclusion. A compromised lease is fatal (the
+  // The lease covers migration and the workspace scheduler. A compromised lease is fatal (the
   // lock library's default), rather than allowing two writers to corrupt history.
   // An immediate host restart must allow the previous writer's heartbeat to
   // expire. Wait a bounded 12 seconds (past the 10-second lease plus timestamp
@@ -82,7 +83,7 @@ export async function openDurableWorkspace(directory: string, workspaceId: strin
     retries: { retries: 24, factor: 1, minTimeout: 500, maxTimeout: 500, randomize: false },
   });
   try {
-    const storage = await openNodeJsonlStorage(directory, BACKGROUND_CONTEXT, { fsync: true });
+    const storage = await openBunDurableStorage(await prepareDurableSqlite(directory));
     let harness: Harness;
     try {
       harness = await Harness.open(storage, options, BACKGROUND_CONTEXT);

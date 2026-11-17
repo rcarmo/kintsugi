@@ -9,7 +9,7 @@
 .agent-tree-row { position: relative; border-radius: var(--radius-control); }
 .agent-tree-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: var(--radius-round); padding: 1px 4px; background: var(--accent-soft); color: var(--accent); text-transform: none; letter-spacing: 0; }
 .agent-tree-label { display: inline-flex; align-items: center; gap: 2px; }
-.agent-tree-label-editor { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; padding: 6px 8px 8px calc((var(--tree-lane) + 1) * 16px + 16px); }
+.agent-tree-label-editor { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; padding: 6px 8px 8px; }
 .agent-tree-label-editor[hidden] { display: none; }
 .agent-tree-summary-menu { max-height: min(470px, 58vh); }
 .agent-tree-summary-menu .agent-tree-header { gap: 2px; }
@@ -21,3 +21,5 @@
 .agent-tree-row { display: grid; grid-template-columns: calc((var(--tree-lane) + 1) * 18px) minmax(0, 1fr); gap: 0 8px; }
 .agent-tree-labels, .agent-tree-label-editor { grid-column: 2; }
 .agent-tree-labels { display: flex; gap: 6px; flex-wrap: wrap; padding-inline: 8px; }
+/* Native rows have no lane graphic; keep their action in the full-width content column. */
+.agent-tree-row > .content-row { grid-column: 2; }

@@ -1,10 +1,9 @@
+import { retireDurableHistorySnapshots } from "./durable-history-snapshot.ts";
 import { KintsugiCoreError } from "@kintsugi/core";
 import { resolveNewWorkspaceAgentModel } from "@kintsugi/agent/server/model-state";
 import { AgentPresentation } from "./agent-presentation.ts";
 import { openDurableAgentRuntime, type DurableAgentRuntime, type DurableAgentController } from "./durable-runtime.ts";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
-import { workspaceDurableJournalDirectory } from "./durable-storage.ts";
+import { workspaceDurableJournalDirectory, durableJournalExists } from "./durable-storage.ts";
 import { listWorkspaceAgents } from "./agent-store.ts";
 import type { WorkspaceAgentOptions } from "./runtime-types.ts";
 import type { WorkspaceAgentInfo } from "./agent-store.ts";
@@ -62,7 +61,7 @@ async function removeRuntimes(workspaceId: string): Promise<void> {
   await drainControllerAcquisitions(workspaceId);
   const pending = [...presentations.entries()].filter(([key]) => key.startsWith(`${workspaceId}\u0000`));
   await Promise.allSettled(pending.map(([, runtime]) => runtime));
-  const native = existsSync(join(await workspaceDurableJournalDirectory(workspaceId), "main.jsonl"));
+  const native = durableJournalExists(await workspaceDurableJournalDirectory(workspaceId));
   if (native) await (await durableWorkspaceOwner(workspaceId)).delete();
   const matching = [...presentations.entries()].filter(([key]) => key.startsWith(`${workspaceId}\u0000`));
   for (const [key] of matching) presentations.delete(key);
@@ -145,6 +144,7 @@ export function allowWorkspaceAgentResume(workspaceId: string): void {
 }
 export async function stopWorkspaceAgentRuntimes(): Promise<void> {
   stopping = true;
+  retireDurableHistorySnapshots();
   const workspaces = new Set([
     ...[...presentations.keys(), ...controllerAcquisitions.keys()].map(key => key.split("\u0000")[0]!),
     ...[...owners.values()].map(owner => owner.workspaceId),
@@ -225,7 +225,7 @@ export async function suspendAllDurableWorkspaceOwners() {
 
 /** Lookup must not create a new root or prepare prompts just to reject bad input. */
 export async function existingDurableController(agent: WorkspaceAgentInfo, options: WorkspaceAgentOptions = {}) {
-  if (!existsSync(join(await workspaceDurableJournalDirectory(agent.workspaceId), "main.jsonl"))) return undefined;
+  if (!durableJournalExists(await workspaceDurableJournalDirectory(agent.workspaceId))) return undefined;
   const owner = await durableWorkspaceOwner(agent.workspaceId, options);
   if (!(await owner.catalog()).some(record => record.agentId === agent.agentId)) return undefined;
   return owner.agent(agent);

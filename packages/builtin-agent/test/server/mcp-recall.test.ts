@@ -12,9 +12,12 @@ import {defaultMcpRecallSettings} from "@kintsugi/token-economizer/core";
 import {createWorkspaceCodemodeExtension} from "../../../codemode/src/server/extension.ts";
 import {createWorkspaceMcpRuntime} from "../../src/server/mcp-runtime.ts";
 import {mcpConnections} from "../../src/server/mcp-connections.ts";
-import {createMcpRecallStore,McpRecallDoc,mcpAccessEpoch} from "../../src/server/mcp-recall-store.ts";
+import {createMcpRecallStore,mcpAccessEpoch} from "../../src/server/mcp-recall-store.ts";
+import {closeAgentDatabase,workspaceAgentDatabase} from "../../src/server/agent-database.ts";
 import {WorkspaceAgents} from "../../src/server/durable-workspace.ts";
 const cleanup:(()=>Promise<void>)[]=[];
+// Finalise the table-valued pragma so it cannot hold a read open on the shared connection.
+const columns=(db:import("bun:sqlite").Database,table:string)=>{const statement=db.prepare<{name:string},[string]>("SELECT name FROM pragma_table_info(?)");try{return statement.all(table).map(row=>row.name);}finally{statement.finalize();}};
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
 const items=Array.from({length:100},(_,id)=>({id,title:`Issue ${id}`,body:`needle-${id} `+"Long description ".repeat(40)}));
 async function setup(mode:"off"|"observe"|"active"="active",persistent=false){
@@ -33,7 +36,7 @@ async function setup(mode:"off"|"observe"|"active"="active",persistent=false){
   const models=createModels(),faux=fauxProvider({tokensPerSecond:100000});models.setProvider(faux.provider);let harness:Harness;
   const open=async()=>Harness.open(persistent?await openNodeJsonlStorage(join(directory,"journal"),context):new MemoryStorage(),{registry,models},context);harness=await open();
   const conversation=await harness.root(context);await conversation.configure({model:{provider:"faux",modelId:"faux-1"}},context);await harness.commit(async tx=>{const catalog=await tx.doc(WorkspaceAgents);catalog.workspaceId="workspace";catalog.agents.push({agentId:"agent",durableId:conversation.id,label:"Agent",title:"Agent"});},context);
-  const runtime=createWorkspaceMcpRuntime("workspace",registry,()=>harness,connections);await runtime.attach();await runtime.ready();cleanup.push(async()=>{await runtime.close();await harness.close(context);});
+  const runtime=createWorkspaceMcpRuntime("workspace",registry,()=>harness,connections);await runtime.attach();await runtime.ready();cleanup.push(async()=>{await runtime.close();await harness.close(context);await closeAgentDatabase("workspace");});
   let now=Date.now();const store=createMcpRecallStore("workspace",()=>harness,connections,()=>now);
   async function run(code:string,check?:(text:string)=>void){faux.setResponses([fauxAssistantMessage([fauxToolCall("codemode",{code})],{stopReason:"toolUse"}),request=>{check?.(request.messages.filter(message=>message.role==="toolResult").map(message=>contentText(message.content)).at(-1)??"");return fauxAssistantMessage("Done");}]);expect((await(await conversation.submit({type:"input",content:"Use MCP"},context)).wait(context)).status).toBe("done");}
   return {directory,registry,connections,faux,conversation,store,run,runtime,get harness(){return harness;},get calls(){return calls;},advance:(ms:number)=>{now+=ms;},setItems:(value:typeof items)=>{responseItems=value;},failure:()=>{isError=true;},multimodal:()=>{image=true;},async reopen(){await harness.close(context);harness=await open();}};
@@ -41,7 +44,7 @@ async function setup(mode:"off"|"observe"|"active"="active",persistent=false){
 for(const mode of ["off","observe","active"] as const)test(`MCP recall ${mode}: full script values, model-only overview, no extra RPCs`,async()=>{
   const f=await setup(mode);let id="";
   await f.run("const r=await tools.mcp__fixture__items({});if(r.items.length!==100||!r.items[99].body.includes('needle-99'))throw Error('modified script result');return r;",text=>{expect(text.includes("[MCP recall")).toBe(mode==="active");if(mode==="active"){id=text.match(/mcp_[a-f0-9]{64}/)![0];expect(text).not.toContain("needle-99");}});
-  expect(f.calls).toBe(1);expect(f.faux.state.callCount).toBe(2);const rows=await f.store.read(f.conversation.id,context);expect(rows.length).toBe(mode==="off"?0:2);
+  expect(f.calls).toBe(1);expect(f.faux.state.callCount).toBe(2);const rows=await f.store.list(f.conversation.id,context);expect(rows.length).toBe(mode==="off"?0:2);
   if(mode!=="off"){
     const tool=(await f.conversation.entries({order:"ascending"},100,undefined,context)).items.filter(ToolResultEntry.is).at(-1)!;const message=tool.model![0]!;if(message.role!=="toolResult")throw Error("Expected result");expect(JSON.stringify(message.details)).toContain("needle-99");
     if(mode==="active"){
@@ -51,96 +54,126 @@ for(const mode of ["off","observe","active"] as const)test(`MCP recall ${mode}: 
   }
 });
 test("MCP recall survives JSONL reopen and deduplicates content without caching remote effects",async()=>{
-  const f=await setup("active",true);await f.run("return await tools.mcp__fixture__items({});");const before=await f.store.read(f.conversation.id,context);expect(before).toHaveLength(2);
-  await f.reopen();expect((await f.store.read(f.conversation.id,context)).map(row=>row.id).sort()).toEqual(before.map(row=>row.id).sort());
+  const f=await setup("active",true);await f.run("return await tools.mcp__fixture__items({});");const before=await f.store.list(f.conversation.id,context);expect(before).toHaveLength(2);
+  await f.reopen();expect((await f.store.list(f.conversation.id,context)).map(row=>row.id).sort()).toEqual(before.map(row=>row.id).sort());
   const conversation=(await f.harness.conversation(f.conversation.id,context))!;f.faux.setResponses([fauxAssistantMessage([fauxToolCall("codemode",{code:"return await tools.mcp__fixture__items({});"})],{stopReason:"toolUse"}),fauxAssistantMessage("Done")]);await(await conversation.submit({type:"input",content:"Again"},context)).wait(context);
-  const after=await f.store.read(conversation.id,context);expect(after).toHaveLength(2);expect(after.every(row=>row.hits===2)).toBe(true);expect(f.calls).toBe(2);
+  const after=await f.store.list(conversation.id,context);expect(after).toHaveLength(2);expect(after.every(row=>row.hits===2)).toBe(true);expect(f.calls).toBe(2);
 });
 test("retention, paging, pins and forgetting are bounded and leave source journal evidence intact",async()=>{
-  const f=await setup();await f.run("return await tools.mcp__fixture__items({});");const rows=await f.store.read(f.conversation.id,context),row=rows.find(row=>row.kind==="emitted-text")!;
+  const f=await setup();await f.run("return await tools.mcp__fixture__items({});");const rows=await f.store.list(f.conversation.id,context),row=rows.find(row=>row.kind==="emitted-text")!;
   await f.run(`return await tools.mcp_recall_retrieve({id:'${row.id}',mode:'full',maxChars:512});`,text=>{expect(text).toMatch(/"nextOffset"\s*:\s*512/);expect(text.length).toBeLessThan(1600);});
-  await f.store.change(f.conversation.id,"pin",row.id,false,true,context);f.advance(8*86_400_000);expect((await f.store.read(f.conversation.id,context)).map(row=>row.id)).toEqual([row.id]);
-  await f.store.change(f.conversation.id,"forget",row.id,false,false,context);expect(await f.store.read(f.conversation.id,context)).toHaveLength(0);
+  await f.store.change(f.conversation.id,"pin",row.id,false,true,context);f.advance(8*86_400_000);expect((await f.store.list(f.conversation.id,context)).map(row=>row.id)).toEqual([row.id]);
+  await f.store.change(f.conversation.id,"forget",row.id,false,false,context);expect(await f.store.list(f.conversation.id,context)).toHaveLength(0);
   expect(JSON.stringify((await f.conversation.entries({order:"ascending"},100,undefined,context)).items)).toContain("needle-99");
 });
 test("Agent/branch scope and current connection grants protect archived results",async()=>{
-  const f=await setup();await f.run("return await tools.mcp__fixture__items({});");const rows=await f.store.read(f.conversation.id,context),boundary=(await f.conversation.entries({order:"ascending"},100,undefined,context)).items.filter(AssistantEntry.is).at(-1)!;
-  const fork=await f.conversation.fork(boundary.id,{ownership:{kind:"ownerless"}},context);await f.harness.commit(async tx=>{(await tx.doc(WorkspaceAgents)).agents[0]!.branches=[f.conversation.id,fork.id];},context);expect((await f.store.read(fork.id,context)).map(row=>row.id).sort()).toEqual(rows.map(row=>row.id).sort());
-  const other=await f.harness.commit(async tx=>{const record=await tx.createConversation({ownership:{kind:"ownerless"}});(await tx.doc(WorkspaceAgents)).agents.push({agentId:"other",durableId:record.id,label:"Other",title:"Other"});return record;},context);expect(await f.store.read(other.id,context)).toHaveLength(0);
-  const config=f.connections.credential("fixture")!,epoch=mcpAccessEpoch(config);await f.connections.save({...config,recall:{...config.recall!,maxItems:1}});expect(mcpAccessEpoch(f.connections.credential("fixture")!)).toBe(epoch);expect(await f.store.read(f.conversation.id,context)).toHaveLength(1);
-  await f.connections.save({...f.connections.credential("fixture")!,enabled:false});expect(await f.store.read(f.conversation.id,context)).toHaveLength(0);
-  await f.connections.save({...f.connections.credential("fixture")!,enabled:true,bearer:"different-principal"});expect(mcpAccessEpoch(f.connections.credential("fixture")!)).not.toBe(epoch);expect(await f.store.read(f.conversation.id,context)).toHaveLength(0);
+  const f=await setup();await f.run("return await tools.mcp__fixture__items({});");const rows=await f.store.list(f.conversation.id,context),boundary=(await f.conversation.entries({order:"ascending"},100,undefined,context)).items.filter(AssistantEntry.is).at(-1)!;
+  const fork=await f.conversation.fork(boundary.id,{ownership:{kind:"ownerless"}},context);await f.harness.commit(async tx=>{(await tx.doc(WorkspaceAgents)).agents[0]!.branches=[f.conversation.id,fork.id];},context);expect((await f.store.list(fork.id,context)).map(row=>row.id).sort()).toEqual(rows.map(row=>row.id).sort());
+  const other=await f.harness.commit(async tx=>{const record=await tx.createConversation({ownership:{kind:"ownerless"}});(await tx.doc(WorkspaceAgents)).agents.push({agentId:"other",durableId:record.id,label:"Other",title:"Other"});return record;},context);expect(await f.store.list(other.id,context)).toHaveLength(0);
+  const config=f.connections.credential("fixture")!,epoch=mcpAccessEpoch(config);await f.connections.save({...config,recall:{...config.recall!,maxItems:1}});expect(mcpAccessEpoch(f.connections.credential("fixture")!)).toBe(epoch);expect(await f.store.list(f.conversation.id,context)).toHaveLength(1);
+  await f.connections.save({...f.connections.credential("fixture")!,enabled:false});expect(await f.store.list(f.conversation.id,context)).toHaveLength(0);
+  await f.connections.save({...f.connections.credential("fixture")!,enabled:true,bearer:"different-principal"});expect(mcpAccessEpoch(f.connections.credential("fixture")!)).not.toBe(epoch);expect(await f.store.list(f.conversation.id,context)).toHaveLength(0);
 });
 test("MCP error results and multimodal responses do not become model summaries",async()=>{
-  const f=await setup();f.failure();await f.run("return await tools.mcp__fixture__items({});",text=>{expect(text).not.toContain("[MCP recall");});expect((await f.store.read(f.conversation.id,context)).every(row=>row.kind==="mcp-envelope")).toBe(true);
-  const g=await setup();g.multimodal();await g.run("const r=await tools.mcp__fixture__items({});return {count:r.items.length};",text=>{expect(text).not.toContain("[MCP recall");});expect(await g.store.read(g.conversation.id,context)).toHaveLength(0);
+  const f=await setup();f.failure();await f.run("return await tools.mcp__fixture__items({});",text=>{expect(text).not.toContain("[MCP recall");});expect((await f.store.list(f.conversation.id,context)).every(row=>row.kind==="mcp-envelope")).toBe(true);
+  const g=await setup();g.multimodal();await g.run("const r=await tools.mcp__fixture__items({});return {count:r.items.length};",text=>{expect(text).not.toContain("[MCP recall");});expect(await g.store.list(g.conversation.id,context)).toHaveLength(0);
 });
 
 test("small filtered values stay verbatim; profiles affect only the final overview",async()=>{
-  const f=await setup();await f.run("const r=await tools.mcp__fixture__items({});return {title:r.items[99].title};",text=>{expect(text).toContain("Issue 99");expect(text).not.toContain("[MCP recall");});expect(await f.store.read(f.conversation.id,context)).toHaveLength(1);
+  const f=await setup();await f.run("const r=await tools.mcp__fixture__items({});return {title:r.items[99].title};",text=>{expect(text).toContain("Issue 99");expect(text).not.toContain("[MCP recall");});expect(await f.store.list(f.conversation.id,context)).toHaveLength(1);
   await f.connections.save({...f.connections.credential("fixture")!,recall:{...defaultMcpRecallSettings(),mode:"active",profiles:[{name:"titles",tool:"mcp__*__items",kind:"json-list",fields:["title"],maxItems:2}]}});await f.runtime.ready();
   await f.run("return await tools.mcp__fixture__items({});",text=>{expect(text).toContain("Issue 1");expect(text).not.toContain("Issue 2");});
-  expect((await f.store.read(f.conversation.id,context)).find(row=>row.kind==="emitted-text")?.handler).toBe("profile:titles");expect(f.calls).toBe(2);
+  expect((await f.store.list(f.conversation.id,context)).find(row=>row.kind==="emitted-text")?.handler).toBe("profile:titles");expect(f.calls).toBe(2);
 });
 test("oversize values pass through without a retained partial substitute",async()=>{
-  const f=await setup();f.setItems([{id:0,title:"Large",body:"x".repeat(1100000)}]);await f.run("const r=await tools.mcp__fixture__items({});if(r.items[0].body.length!==1100000)throw Error('clipped script value');return r;",text=>{expect(text).not.toContain("[MCP recall");});expect(await f.store.read(f.conversation.id,context)).toHaveLength(0);expect(f.calls).toBe(1);
+  const f=await setup();f.setItems([{id:0,title:"Large",body:"x".repeat(1100000)}]);await f.run("const r=await tools.mcp__fixture__items({});if(r.items[0].body.length!==1100000)throw Error('clipped script value');return r;",text=>{expect(text).not.toContain("[MCP recall");});expect(await f.store.list(f.conversation.id,context)).toHaveLength(0);expect(f.calls).toBe(1);
 });
 test("hard payload caps respect pins and invalid profiles cannot enter the connection store",async()=>{
   const f=await setup();const config=f.connections.credential("fixture")!;
   await f.connections.save({...config,recall:{...defaultMcpRecallSettings(),mode:"active",maxBytes:4096}});
   const capture=(raw:string)=>f.store.capture(f.conversation.id,{grants:[{connectionId:config.id,epoch:mcpAccessEpoch(config)}],tool:"fixture",kind:"emitted-text",raw,summary:"",handler:"passthrough",sources:[],isError:false},context);
-  const first=(await capture("a".repeat(3000)))!;await f.store.change(f.conversation.id,"pin",first.id,false,true,context);expect(await capture("b".repeat(5000))).toBeNull();expect((await f.store.read(f.conversation.id,context)).map(row=>row.id)).toEqual([first.id]);
+  const first=(await capture("a".repeat(3000)))!;await f.store.change(f.conversation.id,"pin",first.id,false,true,context);expect(await capture("b".repeat(5000))).toBeNull();expect((await f.store.list(f.conversation.id,context)).map(row=>row.id)).toEqual([first.id]);
   await f.connections.save({...f.connections.credential("fixture")!,recall:{...defaultMcpRecallSettings(),mode:"active",maxBytes:4096,maxItems:1}});expect(await capture("c".repeat(3000))).toBeNull();
   await expect(f.connections.save({...config,recall:{...defaultMcpRecallSettings(),profiles:[{name:"bad",tool:"*",kind:"text",maxItems:21}]}})).rejects.toThrow();
 });
 
 test("mixed-source scripts are not reduced and a fork before capture has no future data",async()=>{
-  const f=await setup();await f.run("const r=await tools.mcp__fixture__items({});await tools.local_probe({});return r;",text=>{expect(text).not.toContain("[MCP recall");});expect(await f.store.read(f.conversation.id,context)).toHaveLength(1);
+  const f=await setup();await f.run("const r=await tools.mcp__fixture__items({});await tools.local_probe({});return r;",text=>{expect(text).not.toContain("[MCP recall");});expect(await f.store.list(f.conversation.id,context)).toHaveLength(1);
   const boundary=(await f.conversation.entries({order:"ascending"},100,undefined,context)).items.filter(AssistantEntry.is)[0]!;
-  const fork=await f.conversation.fork(boundary.id,{ownership:{kind:"ownerless"}},context);await f.harness.commit(async tx=>{(await tx.doc(WorkspaceAgents)).agents[0]!.branches=[f.conversation.id,fork.id];},context);expect(await f.store.read(fork.id,context)).toHaveLength(0);
+  const fork=await f.conversation.fork(boundary.id,{ownership:{kind:"ownerless"}},context);await f.harness.commit(async tx=>{(await tx.doc(WorkspaceAgents)).agents[0]!.branches=[f.conversation.id,fork.id];},context);expect(await f.store.list(fork.id,context)).toHaveLength(0);
 });
 test("reducing hard caps can evict a pinned retained copy",async()=>{
-  const f=await setup();await f.run("return await tools.mcp__fixture__items({});");const row=(await f.store.read(f.conversation.id,context))[0]!;await f.store.change(f.conversation.id,"pin",row.id,false,true,context);
-  await f.connections.save({...f.connections.credential("fixture")!,recall:{...defaultMcpRecallSettings(),mode:"active",maxBytes:4096}});expect(await f.store.read(f.conversation.id,context)).toHaveLength(0);
+  const f=await setup();await f.run("return await tools.mcp__fixture__items({});");const row=(await f.store.list(f.conversation.id,context))[0]!;await f.store.change(f.conversation.id,"pin",row.id,false,true,context);
+  await f.connections.save({...f.connections.credential("fixture")!,recall:{...defaultMcpRecallSettings(),mode:"active",maxBytes:4096}});expect(await f.store.list(f.conversation.id,context)).toHaveLength(0);
 });
 
 test("recall never expands a deliberately tiny code-mode output budget",async()=>{
   const f=await setup();await f.run('// @options: {"max_output_tokens": 100}\nreturn await tools.mcp__fixture__items({});',text=>{expect(text).not.toContain("[MCP recall");expect(text.length).toBeLessThan(1000);});expect(f.calls).toBe(1);
 });
 test("parallel duplicate MCP calls retain one source and leave script values intact",async()=>{
-  const f=await setup();await f.run("const r=await Promise.all([tools.mcp__fixture__items({}),tools.mcp__fixture__items({})]);if(r[1].items.length!==100)throw Error('modified');return r[0];",text=>{expect(text).toContain("[MCP recall");});const rows=await f.store.read(f.conversation.id,context);expect(rows).toHaveLength(2);expect(rows.find(row=>row.kind==="mcp-envelope")?.hits).toBe(2);expect(f.calls).toBe(2);
+  const f=await setup();await f.run("const r=await Promise.all([tools.mcp__fixture__items({}),tools.mcp__fixture__items({})]);if(r[1].items.length!==100)throw Error('modified');return r[0];",text=>{expect(text).toContain("[MCP recall");});const rows=await f.store.list(f.conversation.id,context);expect(rows).toHaveLength(2);expect(rows.find(row=>row.kind==="mcp-envelope")?.hits).toBe(2);expect(f.calls).toBe(2);
 });
 test("a script mixing On and Off connections is never reduced",async()=>{
-  const f=await setup();await f.connections.save({...f.connections.credential("fixture")!,id:"fixture-off",name:"fixture_off",recall:defaultMcpRecallSettings()});await f.runtime.ready();await f.run("const a=await tools.mcp__fixture__items({});const b=await tools.mcp__fixture_off__items({});return {a,b};",text=>{expect(text).not.toContain("[MCP recall");});const rows=await f.store.read(f.conversation.id,context);expect(rows).toHaveLength(1);expect(rows[0]?.kind).toBe("mcp-envelope");expect(f.calls).toBe(2);
+  const f=await setup();await f.connections.save({...f.connections.credential("fixture")!,id:"fixture-off",name:"fixture_off",recall:defaultMcpRecallSettings()});await f.runtime.ready();await f.run("const a=await tools.mcp__fixture__items({});const b=await tools.mcp__fixture_off__items({});return {a,b};",text=>{expect(text).not.toContain("[MCP recall");});const rows=await f.store.list(f.conversation.id,context);expect(rows).toHaveLength(1);expect(rows[0]?.kind).toBe("mcp-envelope");expect(f.calls).toBe(2);
 });
 
 test("secret-bearing results pass through unchanged and never enter recall or script staging",async()=>{
   const f=await setup(), secret="-----BEGIN PRIVATE KEY-----\nSYNTHETIC FIXTURE\n-----END PRIVATE KEY-----";
   f.setItems([{id:0,title:"Sensitive fixture",body:secret}]);
   await f.run("const r=await tools.mcp__fixture__items({});if(!r.items[0].body.includes('BEGIN PRIVATE KEY'))throw Error('changed value');return r;",text=>{expect(text).toContain("BEGIN PRIVATE KEY");expect(text).not.toContain("[MCP recall");});
-  expect(await f.store.read(f.conversation.id,context)).toHaveLength(0);
+  expect(await f.store.list(f.conversation.id,context)).toHaveLength(0);
 });
 test("Off blocks recall access without changing source history; duplicate captures refresh summaries",async()=>{
-  const f=await setup();await f.run("return await tools.mcp__fixture__items({});");const row=(await f.store.read(f.conversation.id,context))[0]!;
+  const f=await setup();await f.run("return await tools.mcp__fixture__items({});");const row=(await f.store.list(f.conversation.id,context))[0]!;
   await f.connections.save({...f.connections.credential("fixture")!,recall:defaultMcpRecallSettings()});
-  expect(await f.store.read(f.conversation.id,context)).toHaveLength(0);
+  expect(await f.store.list(f.conversation.id,context)).toHaveLength(0);
   await f.connections.save({...f.connections.credential("fixture")!,recall:{...defaultMcpRecallSettings(),mode:"active"}});
-  expect(await f.store.read(f.conversation.id,context)).toHaveLength(2);
-  const next=await f.store.capture(f.conversation.id,{...row,summary:"Updated summary",handler:"updated-profile"},context);
+  expect(await f.store.list(f.conversation.id,context)).toHaveLength(2);
+  const next=await f.store.capture(f.conversation.id,{...(await f.store.get(f.conversation.id,row.id,context))!,summary:"Updated summary",handler:"updated-profile"},context);
   expect(next?.summary).toBe("Updated summary");expect(next?.handler).toBe("updated-profile");expect(next?.createdAt).toBe(row.createdAt);
 });
 test("sensitive tool names are excluded and legacy sensitive copies are removed from the live index",async()=>{
   const f=await setup(),config=f.connections.credential("fixture")!;
   const input={grants:[{connectionId:config.id,epoch:mcpAccessEpoch(config)}],tool:"mcp__vault__get_item",kind:"emitted-text" as const,raw:"ordinary-looking vault data",summary:"",handler:"passthrough",sources:[],isError:false};
   expect(await f.store.capture(f.conversation.id,input,context)).toBeNull();
-  await f.harness.commit(async tx=>{(await tx.doc(McpRecallDoc,f.conversation.id)).records.legacy={...input,id:"legacy",owner:"agent",bytes:input.raw.length,createdAt:1,lastSeen:Date.now(),hits:1,pinned:true};},context);
-  expect(await f.store.read(f.conversation.id,context)).toHaveLength(0);
+  // A copy retained under older rules is re-checked before it leaves the store, then removed.
+  const stored=(await f.store.capture(f.conversation.id,{...input,tool:"mcp__fixture__items"},context))!,db=await workspaceAgentDatabase("workspace")();
+  await db.run("UPDATE mcp_recall SET tool=? WHERE id=?",input.tool,stored.id);
+  expect(await f.store.get(f.conversation.id,stored.id,context)).toBeUndefined();expect(await db.get("SELECT count(*) AS n FROM mcp_recall WHERE id=?",stored.id)).toEqual({n:0});
 });
 test("upstream exact tool filters never broaden search or forgetting to substrings",async()=>{
   const f=await setup();await f.run("return await tools.mcp__fixture__items({});");
   await f.run("return await tools.mcp_recall_search({query:'needle',tool:'fixture'});",text=>expect(text).not.toContain('mcp__fixture__items'));
   await f.run("return await tools.mcp_recall_manage({action:'forget',tool:'fixture'});",text=>expect(text).toMatch(/"changed"\s*:\s*0/));
-  expect(await f.store.read(f.conversation.id,context)).toHaveLength(2);
+  expect(await f.store.list(f.conversation.id,context)).toHaveLength(2);
   await f.run("return await tools.mcp_recall_manage({action:'forget',tool:'mcp__fixture__items'});",text=>expect(text).toMatch(/"changed"\s*:\s*2/));
-  expect(await f.store.read(f.conversation.id,context)).toHaveLength(0);expect(f.calls).toBe(1);
+  expect(await f.store.list(f.conversation.id,context)).toHaveLength(0);expect(f.calls).toBe(1);
+});
+test("recall lives in the workspace Agent database with indexed lookups, and workspace deletion forgets it",async()=>{
+  const f=await setup();await f.run("return await tools.mcp__fixture__items({});");const db=await workspaceAgentDatabase("workspace")();
+  // EXPLAIN of an FTS query keeps a virtual-table cursor until finalised, which would block later checkpoints.
+  await db.withSync(db=>{
+  const plan=(sql:string,...params:(string|number)[])=>{const statement=db.prepare<{detail:string},(string|number)[]>(`EXPLAIN QUERY PLAN ${sql}`);try{return statement.all(...params).map(row=>row.detail).join(" | ");}finally{statement.finalize();}};
+  expect(plan("SELECT * FROM mcp_recall r WHERE r.id=?","x")).toMatch(/SEARCH r USING INDEX sqlite_autoindex_mcp_recall_1 \(id=\?\)/);
+  expect(plan("SELECT * FROM mcp_recall r WHERE r.digest=? AND r.owner=?","x","agent")).toContain("USING INDEX mcp_recall_owner (owner=? AND digest=?)");
+  expect(plan("SELECT r.id FROM mcp_recall_search JOIN mcp_recall r ON r.n=mcp_recall_search.rowid WHERE mcp_recall_search MATCH ?","x")).toMatch(/VIRTUAL TABLE INDEX.*SEARCH r USING INTEGER PRIMARY KEY/);
+  // Metadata scans for pruning stop before the raw value's overflow pages.
+  expect(columns(db,"mcp_recall").at(-1)).toBe("raw");
+  });
+  const {agentDatabasePath,forgetAgentCopies}=await import("../../src/server/agent-database.ts");
+  expect(await agentDatabasePath("workspace")).toEndWith("/builtin-durable/workspace/agent.sqlite");
+  await forgetAgentCopies(workspaceAgentDatabase("workspace"));expect(await f.store.list(f.conversation.id,context)).toHaveLength(0);
+  expect(JSON.stringify((await f.conversation.entries({order:"ascending"},100,undefined,context)).items)).toContain("needle-99");
+});
+
+test("recall capture rechecks grants after waiting for the database connection",async()=>{
+  const f=await setup(),config=f.connections.credential("fixture")!;
+  const {workspaceAgentDatabase}=await import("../../src/server/agent-database.ts");
+  const real=workspaceAgentDatabase("workspace"),entered=Promise.withResolvers<void>(),finish=Promise.withResolvers<void>();let calls=0;
+  const database=async()=>{if(++calls===2){entered.resolve();await finish.promise;}return real();};
+  const store=createMcpRecallStore("workspace",()=>f.harness,f.connections,Date.now,database);
+  const pending=store.capture(f.conversation.id,{grants:[{connectionId:config.id,epoch:mcpAccessEpoch(config)}],tool:"fixture",kind:"emitted-text",raw:"private retained result",summary:"",handler:"passthrough",sources:[],isError:false},context);
+  await entered.promise;
+  try {await f.connections.save({...f.connections.credential("fixture")!,recall:{...defaultMcpRecallSettings(),mode:"off"}});} finally {finish.resolve();}
+  expect(await pending).toBeNull();
 });

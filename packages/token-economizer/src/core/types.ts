@@ -20,7 +20,7 @@ export type Reason = "not_ready" | "insufficient_evidence" | "out_of_domain" | "
 export type Decision<L extends string> = { kind: "label"; label: L; rawScore: number; artifactId: string; reasons: string[] } | { kind: "abstain"; reason: Reason };
 export type LoopLabel = "productive" | "stuck";
 export type ToolLabel = "keep" | "drop_candidate";
-export type InferencePurpose = "proposer" | "loop-judge" | "writer" | "tool-judge" | "classifier" | "audit";
+export type InferencePurpose = "proposer" | "loop-judge" | "writer" | "tool-judge" | "classifier" | "audit" | "output-summary";
 export type InferenceRequest = { id: string; cacheScope?: string; purpose: InferencePurpose; model: ModelRef; prompt: string; maxOutputTokens: number; deadlineMs: number; classification?: ClassifyRequest; auditFor?:"loop"|"tools"|"proposer" };
 export type InferenceResult = { text: string; model: ModelRef; usage: Usage | null; cost: number | null; authUnavailable: boolean; error: string | null; durationMs: number };
 export type SideCall = (request: InferenceRequest, signal: AbortSignal) => Promise<InferenceResult>;

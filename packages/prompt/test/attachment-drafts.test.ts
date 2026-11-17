@@ -44,6 +44,8 @@ describe("Agent attachment drafts", () => {
     const delivered = await deliverAttachmentDraft("workspace-1", draftId, [staged.id]);
 
     expect(delivered.images).toHaveLength(1);
+    const retained = await deliverAttachmentDraft("workspace-1",draftId,[staged.id],{retainFiles:true});
+    expect(retained.files).toEqual([{type:"attachment",filename:"screen.png",mimeType:"image/png",data:Buffer.from([1,2,3]).toString("base64")}]);
     expect((await listStagedAttachments(draftId)).map(({ id }) => id)).toEqual([staged.id]);
 
   });
@@ -72,6 +74,8 @@ describe("Agent attachment drafts", () => {
         "mkdir -p '/tmp/kintsugi-attachments' && base64 -d > '/tmp/kintsugi-attachments/my file.txt'",
         { stdin: Buffer.from("contents").toString("base64") },
       ]]);
+      const retained = await deliverAttachmentDraft("workspace-1",draftId,[staged.id],{retainFiles:true});
+      expect(retained.files).toEqual([{type:"attachment",filename:"my file.txt",mimeType:"application/octet-stream",data:Buffer.from("contents").toString("base64")}]);
     `], { cwd: join(import.meta.dir, ".."), env: process.env, stdout: "pipe", stderr: "pipe" });
     const [code, stdout, stderr] = await Promise.all([
       child.exited, new Response(child.stdout).text(), new Response(child.stderr).text(),

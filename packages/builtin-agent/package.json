@@ -38,7 +38,8 @@
     "@kintsugi/legacy-converter": "workspace:*",
     "@kintsugi/agent": "workspace:*",
     "@kintsugi/token-economizer": "workspace:*",
-    "@earendil-works/pi-mcp": "1.5.2"
+    "@earendil-works/pi-mcp": "1.5.2",
+    "re2js": "2.10.0"
   },
   "devDependencies": {
     "@types/web-push": "3.6.4",

@@ -1,5 +1,6 @@
+import { isDurableUserEntry } from "./durable-input.ts";
 import { contentText, type Message } from "@earendil-works/pi-ai";
-import { CompactionEntry, ResetEntry, UserEntry, GenerationTask, LiveDoc, defineDoc, defineEntry, defineExtension, hook, type ConversationId, type Harness } from "@earendil-works/pi-durable";
+import { CompactionEntry, ResetEntry, GenerationTask, LiveDoc, defineDoc, defineEntry, defineExtension, hook, type ConversationId, type Harness } from "@earendil-works/pi-durable";
 import { emptyGuard, fingerprint, goalAdvice, observing, sessionKey, type GoalPlan, type Policy } from "@kintsugi/token-economizer/core";
 import { ObservationsDoc, RunDoc, detach, runIdentity, type HostSession } from "@kintsugi/token-economizer/pi-durable";
 import { recordOptimizerOperation } from "./token-optimizer-operations.ts";
@@ -20,7 +21,7 @@ export function createOptimizerGoalsExtension(options:{harness:() => Harness;hos
       const entries = (await api.entries({order:"descending"},256,undefined,context)).items;
       const boundary = entries.findIndex(entry => ResetEntry.is(entry));
       const visible = boundary < 0 ? entries : entries.slice(0,boundary);
-      const user = visible.find(UserEntry.is), compact = visible.find(CompactionEntry.is);
+      const user = visible.find(isDurableUserEntry), compact = visible.find(CompactionEntry.is);
       const userText = user?.model?.filter(message => message.role === "user").map(message => contentText(message.content)).join("\n") ?? "";
       const plan = await options.plan(host), calls = (await api.snapshot(ObservationsDoc,sessionKey(host.scope,host.id),context))?.observations.filter(call => call.runId === runId) ?? [];
       const chosen = await options.harness().commit(async tx => {

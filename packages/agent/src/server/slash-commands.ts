@@ -26,8 +26,8 @@ type SlashCommand = BuiltinSlashCommand | {
 export function slashCommands(templates: readonly PromptTemplate[], skills: readonly Pick<Skill, "name" | "description">[], mode: "builtin" | "cli" = "builtin", additionalCommands: readonly BuiltinSlashCommand[] = []): SlashCommand[] {
   const commands: SlashCommand[] = [
     ...builtinSlashCommands.filter((command) => (mode === "builtin" || !["/compact","/tokeneconomizer"].includes(command.trigger)) && !additionalCommands.some(extra => extra.trigger === command.trigger)),
-    ...additionalCommands,
-    ...templates.filter((template) => template.trigger !== "/tree" && !additionalCommands.some(command => command.trigger === template.trigger)).map((template) => ({
+    ...additionalCommands.filter(command=>mode !== "builtin" || command.trigger !== "/tree"),
+    ...templates.filter((template) => (mode !== "builtin" || template.trigger !== "/tree") && !additionalCommands.some(command => command.trigger === template.trigger)).map((template) => ({
       kind: "prompt-template" as const,
       source: "kintsugi" as const,
       trigger: template.trigger,
@@ -38,7 +38,7 @@ export function slashCommands(templates: readonly PromptTemplate[], skills: read
     })),
   ];
   return [
-    ...(mode === "builtin" ? [{ kind: "builtin" as const, source: "kintsugi" as const, name: "tree", trigger: "/tree", description: "Coming soon." }] : []),
+    ...(mode === "builtin" ? [{ kind: "builtin" as const, source: "kintsugi" as const, name: "tree", trigger: "/tree", description: "Browse session history and continue on a new branch." }] : []),
     ...commands.sort((left, right) => left.trigger.localeCompare(right.trigger)),
     ...skills.map((skill) => ({ kind: "skill" as const, source: "kintsugi" as const, trigger: `/skill:${skill.name}`, description: skill.description })),
   ];
@@ -72,7 +72,7 @@ export function renderSlashCommandCatalog(templates: readonly PromptTemplate[], 
       element: {
         tag: "button",
 
-        attributesHtml: `type="button" role="option" aria-selected="${index === 0 ? "true" : "false"}" data-completion-kind="${command.kind}" data-command-trigger="${escapeHtml(command.trigger)}"${command.kind === "prompt-template" && command.shortcut ? ` data-prompt-template-shortcut="${escapeHtml(command.shortcut)}"` : ""}${command.trigger === "/tree" ? ` data-command-action="notice" data-command-message="/tree feature is coming soon!"` : ""}${hasPreview ? ` data-controller="kintsugi-fullscreen" data-kintsugi-fullscreen-mode-value="template" data-kintsugi-fullscreen-title-value="${escapeHtml(command.trigger)}"` : ""}`,
+        attributesHtml: `type="button" role="option" aria-selected="${index === 0 ? "true" : "false"}" data-completion-kind="${command.kind}" data-command-trigger="${escapeHtml(command.trigger)}"${command.kind === "prompt-template" && command.shortcut ? ` data-prompt-template-shortcut="${escapeHtml(command.shortcut)}"` : ""}${mode === "builtin" && command.trigger === "/tree" ? ` data-command-action="tree"` : ""}${hasPreview ? ` data-controller="kintsugi-fullscreen" data-kintsugi-fullscreen-mode-value="template" data-kintsugi-fullscreen-title-value="${escapeHtml(command.trigger)}"` : ""}`,
       },
     });
   }).join("") });

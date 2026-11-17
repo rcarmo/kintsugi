@@ -1,6 +1,8 @@
+import { timelineSnapshot } from "./fixtures/sqlite-timeline.ts";
+import { agentDatabase, agentDatabaseName } from "../../src/server/agent-database.ts";
 import { workspaceDurableJournalDirectory } from "../../src/server/durable-storage.ts";
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile, cp, readdir, copyFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Database } from "bun:sqlite";
@@ -34,12 +36,12 @@ test("FTS searches committed messages and output with scopes, bounded snippets a
   const f = await setup();
   await f.user("We agreed to deploy the amber service");
   await f.output("Build diagnostic: cerulean passed");
-  const before = await readFile(join(f.path, "main.jsonl"), "utf8");
+  const before = await timelineSnapshot(f.path);
   expect((await f.search("amber", "history")).results[0]).toMatchObject({ agentId: "first", branch: Number(f.conversation.id), kind: "history", role: "user", title: "Searchable work", reference: { workspaceId: "workspace" } });
   expect((await f.search("cerulean", "output")).results[0]).toMatchObject({ kind: "output", tool: "bash" });
   expect((await f.search("cerulean", "history")).results).toEqual([]);
   expect((await f.search("amber", "output")).results).toEqual([]);
-  expect(await readFile(join(f.path, "main.jsonl"), "utf8")).toBe(before);
+  expect(await timelineSnapshot(f.path)).toBe(before);
 });
 test("hidden reasoning, system configuration, uncommitted sidecars and the search tool's own output are excluded", async () => {
   const f = await setup();
@@ -123,10 +125,12 @@ test("cancellation stops indexing and search index can be rebuilt without changi
   const abort = new AbortController(); abort.abort(new Error("Search cancelled"));
   await expect(searchCommittedHistory(f.owner.harness, f.path, "workspace", { query: "amethyst" }, undefined, abort.signal)).rejects.toThrow("cancelled");
   expect((await f.search("amethyst")).results).toHaveLength(1);
-  const journal = await readFile(join(f.path, "main.jsonl"), "utf8");
-  await rm(join(f.path, "search-v1.sqlite"));
+  const journal = await timelineSnapshot(f.path);
+  await (await agentDatabase(async () => join(f.path, agentDatabaseName))()).withSync(db => {
+    db.exec("DELETE FROM documents; DELETE FROM pending; DELETE FROM nested_calls; UPDATE branches SET watermark=0,fingerprint='';");
+  });
   expect((await f.search("amethyst")).results).toHaveLength(1);
-  expect(await readFile(join(f.path, "main.jsonl"), "utf8")).toBe(journal);
+  expect(await timelineSnapshot(f.path)).toBe(journal);
 });
 test("index persists across runtime restart and limits result count and excerpt length", async () => {
   const f = await setup(); for (let i = 0; i < 25; i++) await f.user(`spinel ${"word ".repeat(1000)} ${i}`);
@@ -136,7 +140,7 @@ test("index persists across runtime restart and limits result count and excerpt 
   await f.owner.close();
   const reopened = await openDurableWorkspace(f.path, "workspace", f.options); workspaces.push(reopened);
   expect((await searchCommittedHistory(reopened.harness, f.path, "workspace", { query: "spinel", limit: 3 })).coverage.documentCount).toBe(result.coverage.documentCount);
-  const db = new Database(join(f.path, "search-v1.sqlite"));
+  const db = new Database(join(f.path, "agent.sqlite"));
   expect(db.query("SELECT count(*) AS n FROM search").get()).toMatchObject({ n: 25 }); db.close();
 });
 test("terminal escape stripping removes colour and hyperlink controls", () => {
@@ -145,12 +149,20 @@ test("terminal escape stripping removes colour and hyperlink controls", () => {
 test("offline journal rollback invalidates stale indexed entries", async () => {
   const f = await setup(); await f.user("preservedopal");
   const backup = await mkdtemp(join(tmpdir(), "search-rollback-")); directories.push(backup);
-  await cp(f.path, backup, { recursive: true });
+  const source = await agentDatabase(async () => join(f.path, agentDatabaseName))();
+  await writeFile(join(backup, agentDatabaseName), await source.withSync(db => db.serialize()));
   await f.user("rolledbackemerald");
   expect((await f.search("rolledbackemerald")).results).toHaveLength(1);
   await f.owner.close();
-  for (const name of await readdir(f.path)) if (name.endsWith(".jsonl")) await rm(join(f.path, name));
-  for (const name of await readdir(backup)) if (name.endsWith(".jsonl")) await copyFile(join(backup, name), join(f.path, name));
+  const rewind = new Database(join(f.path, agentDatabaseName));
+  try {
+    rewind.run("ATTACH DATABASE ? AS backup", [join(backup, agentDatabaseName)]);
+    rewind.transaction(() => {
+      for (const {name} of rewind.query<{name:string},[]>("SELECT name FROM backup.sqlite_master WHERE type='table' AND name GLOB 'timeline_*'").all()) {
+        rewind.exec(`DELETE FROM main.${name}; INSERT INTO main.${name} SELECT * FROM backup.${name};`);
+      }
+    })();
+  } finally {rewind.close();}
   const reopened = await openDurableWorkspace(f.path, "workspace", f.options); workspaces.push(reopened);
   expect((await searchCommittedHistory(reopened.harness, f.path, "workspace", { query: "rolledbackemerald" })).results).toEqual([]);
   expect((await searchCommittedHistory(reopened.harness, f.path, "workspace", { query: "preservedopal" })).results).toHaveLength(1);
@@ -176,4 +188,19 @@ test("native Harness executes the search tool without deadlock, inference beyond
     expect(JSON.stringify(result.content)).toContain("celestite");
     expect(faux.state.callCount).toBe(2);
   } finally { if (previous === undefined) delete process.env.KINTSUGI_DATA_DIR; else process.env.KINTSUGI_DATA_DIR = previous; }
+});
+
+test("FTS indexing follows commit order when an earlier reserved entry ID is committed later",async()=>{
+  const f=await setup();await f.owner.close();
+  const {openBunDurableStorage}=await import("../../src/server/durable-sqlite.ts");
+  const reservedStorage=await openBunDurableStorage(join(f.path,"agent.sqlite"));
+  const reserved=await reservedStorage.mintId<import("@earendil-works/pi-durable").EntryId>();await reservedStorage.commit([[]],()=>{},context);await reservedStorage.close(context);
+  const active=await openDurableWorkspace(f.path,"workspace",f.options);workspaces.push(active);
+  await active.harness.commit(tx=>tx.appendEntry(UserEntry,f.conversation.id,{model:[{role:"user",content:"newerID quartz",timestamp:1}]}),context);
+  await searchCommittedHistory(active.harness,f.path,"workspace",{query:"quartz"});await active.close();
+  const delayed=await openBunDurableStorage(join(f.path,"agent.sqlite"));
+  const committed=await delayed.commit([[{type:"entry",value:{id:reserved,conversationId:f.conversation.id,kind:"pi.user",model:[{role:"user",content:"delayed lowerID sapphire",timestamp:1}]}}]],()=>{},context);
+  expect(committed.stored).toBe(1);await delayed.close(context);
+  const restored=await openDurableWorkspace(f.path,"workspace",f.options);workspaces.push(restored);
+  expect((await searchCommittedHistory(restored.harness,f.path,"workspace",{query:"sapphire"})).results).toHaveLength(1);
 });

@@ -6,13 +6,12 @@ import { escapeHtml } from "@kintsugi/shared";
 import { response } from "@kintsugi/shared/http";
 import { KintsugiCoreError, getKintsugiRuntimeContext, isNotFoundError } from "@kintsugi/core";
 import { sessionShareDir, workspaceSessionShareKey } from "@kintsugi/agent/server/session-share";
-import { durableJournalDirectory } from "./durable-storage.ts";
-import { retainedDurableWorkspaceOwner } from "./runtime.ts";
+import { durableJournalDirectory, durableJournalExists } from "./durable-storage.ts";
 import { projectDurableTranscript } from "./durable-transcript.ts";
 import { findTranscriptItem } from "@kintsugi/agent/server/transcript";
 import { renderTranscriptItem, renderTranscriptItemDetailFrame } from "@kintsugi/agent/server/render-transcript";
 import { type AgentRouteHandler } from "./route-support.ts";
-import type { DurableAgentRuntime } from "./durable-runtime.ts";
+import { openDurableHistoryReader } from "./durable-history-reader.ts";
 
 /** Enumerate the viewer's existing share, including journals whose workspace was deleted. */
 export async function retainedDurableHistories(workspaceId: string) {
@@ -32,19 +31,22 @@ export async function retainedDurableHistories(workspaceId: string) {
     if (isNotFoundError(error)) return [];
     throw error;
   });
-  const histories: { workspaceId: string; owner: DurableAgentRuntime }[] = [];
+  const histories: { workspaceId: string; owner: Awaited<ReturnType<typeof openDurableHistoryReader>>; dispose: () => Promise<void> }[] = [];
+  try {
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const path = durableJournalDirectory(share, entry.name);
-    if (!await Bun.file(join(path, "main.jsonl")).exists()) continue;
-    histories.push({ workspaceId: entry.name, owner: await retainedDurableWorkspaceOwner(path, entry.name) });
+    if (!durableJournalExists(path)) continue;
+    const reader = await openDurableHistoryReader(path,entry.name);
+    histories.push({workspaceId:entry.name,owner:reader,dispose:reader.dispose});
   }
   return histories;
+  } catch (error) {await Promise.all(histories.map(item => item.dispose()));throw error;}
 }
 
 /** Read-only HTTP surface: never mounts a live runtime, probes readiness, or resumes a scheduler. */
 export const handleDurableHistoryRequest: AgentRouteHandler = async (request, url, options) => {
-  const match = url.pathname.match(/^\/workspaces\/([^/]+)\/agent-history(?:\/([^/]+)\/([^/]+)(?:\/(session-images|transcript-items)\/([^/]+)(?:\/(\d+))?)?)?$/);
+  const match = url.pathname.match(/^\/workspaces\/([^/]+)\/agent-history(?:\/([^/]+)\/([^/]+)(?:\/(session-images|session-attachments|transcript-items)\/([^/]+)(?:\/(\d+))?)?)?$/);
   if (!match || request.method !== "GET") return undefined;
   function page(title: string, content: string) {
     if (!options.renderPage) throw new Error("Native history requires the host page renderer");
@@ -56,6 +58,7 @@ export const handleDurableHistoryRequest: AgentRouteHandler = async (request, ur
   const [source = "", agentId = "", operation = "", item = "", index = ""] = match.slice(2).map(value => value === undefined ? "" : decodeURIComponent(value));
   const base = `/workspaces/${encodeURIComponent(viewer)}/agent-history`;
   const histories = await retainedDurableHistories(viewer);
+  try {
   if (!source) {
     const rows: string[] = [];
     for (const history of histories) {
@@ -71,11 +74,14 @@ export const handleDurableHistoryRequest: AgentRouteHandler = async (request, ur
   const record = history && (await history.owner.catalog()).find(record => record.agentId === agentId);
   if (!history || !record) return response("Not found", { status: 404 });
   const controller = await history.owner.agent(record);
-  if (operation === "session-images") return controller.image(item, Number(index));
+  if (operation === "session-attachments") return await controller.attachment(item,Number(index));
+  if (operation === "session-images") return await controller.image(item, Number(index));
   const branch = url.searchParams.get("branch") ?? String(record.durableId);
   if (!(record.branches ?? [record.durableId]).some(id => String(id) === branch)) return response("Not found", { status: 404 });
-  const ctx = { workspaceId: source, agentId, readOnly: true, transcriptQuery: `branch=${encodeURIComponent(branch)}`, transcriptBasePath: `${base}/${encodeURIComponent(source)}/${encodeURIComponent(agentId)}` };
-  const view = await controller.historyView(branch);
+  const before = url.searchParams.has("before") ? Number(url.searchParams.get("before")) : undefined;
+  if (before !== undefined && (!Number.isSafeInteger(before) || before < 1)) return response("Invalid history boundary",{status:400});
+  const ctx = { workspaceId: source, agentId, readOnly: true, transcriptQuery: `branch=${encodeURIComponent(branch)}${before ? `&before=${before}` : ""}`, transcriptBasePath: `${base}/${encodeURIComponent(source)}/${encodeURIComponent(agentId)}` };
+  const view = await controller.historyView(branch,before);
   const items = projectDurableTranscript(view);
   if (operation === "transcript-items") {
     const selected = findTranscriptItem(items, item);
@@ -83,5 +89,7 @@ export const handleDurableHistoryRequest: AgentRouteHandler = async (request, ur
     return selected ? response(renderTranscriptItemDetailFrame(ctx, selected, { count })) : response("Not found", { status: 404 });
   }
   const branches = (record.branches ?? [record.durableId]).map(id => actionLinkHtml({ href: `${ctx.transcriptBasePath}?branch=${id}`, variant: "secondary", content: { kind: "caption", caption: `Branch ${id}${id === record.durableId ? " (current)" : ""}` } })).join(" ");
-  return page(record.title, `${actionLinkHtml({ href: base, variant: "secondary", content: { kind: "caption", caption: "All history" } })}<nav>${branches}</nav><p>Full branch history, including earlier sessions. This view is read-only.</p><div class="agent-transcript"><div class="agent-transcript-content">${items.map(item => renderTranscriptItem(ctx, item)).join("")}</div></div>`);
+  const pager = `${view.before ? actionLinkHtml({href:`${ctx.transcriptBasePath}?branch=${encodeURIComponent(branch)}&before=${view.before}`,variant:"secondary",content:{kind:"caption",caption:"Earlier messages"}}) : ""} ${before ? actionLinkHtml({href:`${ctx.transcriptBasePath}?branch=${encodeURIComponent(branch)}`,variant:"secondary",content:{kind:"caption",caption:"Latest messages"}}) : ""}`;
+  return page(record.title, `${actionLinkHtml({ href: base, variant: "secondary", content: { kind: "caption", caption: "All history" } })}<nav>${branches}</nav><p>Read-only branch history, including earlier sessions.</p>${pager}<div class="agent-transcript"><div class="agent-transcript-content">${items.map(item => renderTranscriptItem(ctx, item)).join("")}</div></div>`);
+  } finally {await Promise.all(histories.map(item => item.dispose()));}
 };

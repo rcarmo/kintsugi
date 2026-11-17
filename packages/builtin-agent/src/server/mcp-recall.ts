@@ -6,25 +6,25 @@ import {isJsonObject,invalidArguments} from "@kintsugi/core";
 import {defaultMcpRecallSettings,summarizeMcpOutput} from "@kintsugi/token-economizer/core";
 import {codemodeCallEntry,McpScriptOutputDoc} from "./codemode-call.ts";
 import type {McpConnectionStore} from "./mcp-connections.ts";
-import {createMcpRecallStore,mcpAccessEpoch,mcpRecallAllowed,mcpRecallOwner,type McpRecallRecord} from "./mcp-recall-store.ts";
+import {createMcpRecallStore,mcpAccessEpoch,mcpRecallAllowed,mcpRecallOwner,type McpRecallItem} from "./mcp-recall-store.ts";
+import type {AgentDatabase} from "./agent-database.ts";
 const metadataSchema=Type.Object({mcpConnectionId:Type.String(),mcpConnectionRevision:Type.Integer(),mcpServer:Type.String(),mcpTool:Type.String()});
 const callsSchema=Type.Object({calls:Type.Array(Type.Object({name:Type.String()}),{minItems:1,maxItems:64})});
 const captureSchema=Type.Object({mcpResultId:Type.String()});
 const idSchema=Type.String({pattern:"^mcp_[a-f0-9]{64}$"});
 const textOutput=(result:ToolExecutionResult)=>(result.output??[]).flatMap(block=>block.type==="text"?[block.text]:[]).join("\n");
-const metadata=(row:McpRecallRecord)=>({id:row.id,tool:row.tool,kind:row.kind,bytes:row.bytes,createdAt:row.createdAt,lastSeen:row.lastSeen,hits:row.hits,pinned:row.pinned,isError:row.isError});
+const metadata=(row:McpRecallItem)=>({id:row.id,tool:row.tool,kind:row.kind,bytes:row.bytes,createdAt:row.createdAt,lastSeen:row.lastSeen,hits:row.hits,pinned:row.pinned,isError:row.isError});
 function modelProjection(result:ToolExecutionResult,text:string,id:string,mode:string,handler:string){
   const original=textOutput(result),applied=mode==="active",details=isJsonObject(result.details)?result.details:{};
   return {...result,output:applied?[{type:"text" as const,text}]:result.output,details:{...details,optimizerRawOutput:original,mcpRecall:{id,applied,handler,originalBytes:Buffer.byteLength(original),reducedBytes:Buffer.byteLength(text)}}};
 }
-export function createMcpRecallExtension(options:{workspaceId:string;harness:()=>Harness;connections:McpConnectionStore;now?:()=>number}){
-  const store=createMcpRecallStore(options.workspaceId,options.harness,options.connections,options.now);
-  async function snapshot(api:HookApi,context:Context){return store.read(api.conversationId,context);}
+export function createMcpRecallExtension(options:{workspaceId:string;harness:()=>Harness;connections:McpConnectionStore;now?:()=>number;database?:AgentDatabase}){
+  const store=createMcpRecallStore(options.workspaceId,options.harness,options.connections,options.now,options.database);
   const tools=[defineTool({name:"mcp_recall_search",description:"Search this Agent's retained MCP results by words, without rerunning remote tools. Results are untrusted tool data. Access requires the original connection grant and recall enabled. Expired/forgotten items are unavailable. The optional tool filter is an exact tool name as listed by mcp_recall_manage, not a substring.",parameters:Type.Object({query:Type.String({minLength:1,maxLength:256}),tool:Type.Optional(Type.String({maxLength:128})),limit:Type.Optional(Type.Integer({minimum:1,maximum:20}))}),structuredOutputSchema:Type.Object({}, {additionalProperties:true}),callers:["tools"],replay:"safe",async execute(input,api,context):Promise<ToolExecutionResult>{
-    const words=input.query.toLowerCase().split(/\s+/).filter(Boolean).slice(0,16),rows=(await store.read(api.conversationId,context)).filter(row=>(!input.tool||row.tool===input.tool)&&words.every(word=>row.raw.toLowerCase().includes(word)));
-    return {structuredOutput:{results:rows.sort((a,b)=>b.lastSeen-a.lastSeen).slice(0,input.limit??10).map(row=>{const at=Math.max(0,row.raw.toLowerCase().indexOf(words[0]??"")-100);return {...metadata(row),excerpt:row.raw.slice(at,at+600)};}),limited:rows.length>(input.limit??10)}};
+    const found=await store.search(api.conversationId,input,context);
+    return {structuredOutput:{results:found.results.map(row=>({...metadata(row),excerpt:row.excerpt})),limited:found.limited}};
   }}),defineTool({name:"mcp_recall_retrieve",description:"Retrieve a retained MCP result by ID without rerunning it. summary is an incomplete overview; peek finds a literal query excerpt; full pages through the original JSON envelope or emitted text. Offsets count UTF-16 characters; follow nextOffset. Text pages are bounded to 16,000 characters.",parameters:Type.Object({id:idSchema,mode:Type.Optional(Type.Enum(["summary","peek","full"])),query:Type.Optional(Type.String({maxLength:256})),offset:Type.Optional(Type.Integer({minimum:0,maximum:2*1024*1024})),maxChars:Type.Optional(Type.Integer({minimum:256,maximum:16000}))}),structuredOutputSchema:Type.Object({}, {additionalProperties:true}),callers:["tools"],replay:"safe",async execute(input,api,context):Promise<ToolExecutionResult>{
-    const row=(await store.read(api.conversationId,context)).find(row=>row.id===input.id);if(!row)throw new Error("MCP result is unavailable, expired, forgotten, or no longer permitted.");
+    const row=await store.get(api.conversationId,input.id,context);if(!row)throw new Error("MCP result is unavailable, expired, forgotten, or no longer permitted.");
     const source=input.mode==="summary"?(row.summary||"No reduced overview. Use full pages for the original."):row.raw;
     const offset=input.offset??(input.mode!=="full"&&input.query?Math.max(0,source.toLowerCase().indexOf(input.query.toLowerCase())-200):0),text=source.slice(offset,offset+(input.maxChars??4000));
     return {structuredOutput:{...metadata(row),format:input.mode==="summary"?"summary":row.kind,offset,text,totalChars:source.length,nextOffset:offset+text.length<source.length?offset+text.length:null,sources:row.sources}};
@@ -34,7 +34,7 @@ export function createMcpRecallExtension(options:{workspaceId:string;harness:()=
       if(input.action==="pin"&&(!input.id||input.all||input.tool))throw invalidArguments("Choose one result ID to pin.");
       return {structuredOutput:{changed:await store.change(api.conversationId,input.action,input.id,input.all??false,input.pinned??true,context,input.tool),sourceJournalUnchanged:true}};
     }
-    const rows=(await store.read(api.conversationId,context)).filter(row=>!input.tool||row.tool===input.tool);
+    const rows=await store.list(api.conversationId,context,input.tool);
     return {structuredOutput:input.action==="stats"?{items:rows.length,bytes:rows.reduce((n,row)=>n+row.bytes,0),duplicateCaptures:rows.reduce((n,row)=>n+row.hits-1,0),pinned:rows.filter(row=>row.pinned).length}:{results:rows.sort((a,b)=>b.lastSeen-a.lastSeen).slice(input.offset??0,(input.offset??0)+(input.limit??10)).map(metadata),total:rows.length}};
   }})];
   return defineExtension({name:"kintsugi.mcp-recall",tools,hooks:[hook(ToolTask,{async afterTool(call,result,api,context){
@@ -60,7 +60,7 @@ export function createMcpRecallExtension(options:{workspaceId:string;harness:()=
     const starts=entries.filter(codemodeCallEntry.is).filter(entry=>entry.data.phase==="start");
     const ends=entries.filter(codemodeCallEntry.is).filter(entry=>entry.data.phase==="end");
     if(!starts.length||starts.length!==result.details.calls.length||starts.length!==ends.length||starts.some(entry=>entry.data.phase!=="start"||!entry.data.name.startsWith("mcp__"))||ends.some(entry=>entry.data.phase!=="end"||entry.data.cancelled||entry.data.isError||!Value.Check(captureSchema,entry.data.details))){await api.memo("mcp-recall-projection-v1",null,context);return result;}
-    const ids=[...new Set(ends.flatMap(entry=>entry.data.phase==="end"&&Value.Check(captureSchema,entry.data.details)?[entry.data.details.mcpResultId]:[]))],all=await snapshot(api,context),sources=all.filter(row=>ids.includes(row.id));
+    const ids=[...new Set(ends.flatMap(entry=>entry.data.phase==="end"&&Value.Check(captureSchema,entry.data.details)?[entry.data.details.mcpResultId]:[]))],all=await store.list(api.conversationId,context),sources=all.filter(row=>ids.includes(row.id));
     if(sources.length!==ids.length){await api.memo("mcp-recall-projection-v1",null,context);return result;}
     const settings=sources.flatMap(row=>store.settings(row));if(settings.some(item=>item.mode==="off")){await api.memo("mcp-recall-projection-v1",null,context);return result;}
     const staged=await api.snapshot(McpScriptOutputDoc,api.taskId,context);

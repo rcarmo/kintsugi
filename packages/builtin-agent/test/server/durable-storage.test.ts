@@ -1,5 +1,6 @@
+import { persistedTimelineText } from "./fixtures/sqlite-timeline.ts";
 import { afterEach, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -70,7 +71,7 @@ test("workspace journal retains the original searchable journal and deletion gat
   // A retained-history listing knows its share; never resolve a deleted
   // workspace through its now-absent metadata (which would mean projectless).
   const directory = durableJournalDirectory("Product Suite", "retained", root);
-  expect(await readFile(join(directory, "main.jsonl"), "utf8")).toContain("Searchable retained input");
+  expect(persistedTimelineText(directory)).toContain("Searchable retained input");
   load.ready = async () => { throw new Error("Deleted workspace is unavailable"); };
   const restored = await openDurableAgentRuntime(directory, "retained", {}, load);
   runtimes.push(restored);

@@ -36,6 +36,7 @@ export class TokenOptimizerConfiguration {
         if (policy.loop === "judge") {if (["generative","cascade"].includes(policy.judge)) {required.push("loopJudge");if (!policy.savers.templates) required.push("writer");}if (["classifier","cascade"].includes(policy.judge)) required.push("loopClassifier");}
         if (policy.pruning !== "off") {if (["generative","cascade"].includes(policy.toolJudge)) required.push("toolJudge");if (["classifier","cascade"].includes(policy.toolJudge)) required.push("toolClassifier");}
         for (const purpose of required) if (!modelFor(policy,purpose)) throw new Error(`Pick a model for ${purposeLabels[purpose]}, or turn that feature off`);
+        if (policy.offloadOutputs && policy.outputSummaries && !policy.generativeModel) throw new Error("Pick a model for optimizer calls to summarise stored outputs, or turn summaries off");
       }
       next.hasEnabled = this.state!.hasEnabled || next.policy.enabled;
       await writeJsonAtomic(join(this.dataDir,"token-optimizer/config.json"),next,{mode:0o600});this.state = next;

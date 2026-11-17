@@ -1,3 +1,4 @@
+import { persistedTimelineText } from "./fixtures/sqlite-timeline.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { appendFile, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -91,11 +92,8 @@ describe("Durable workspace journal", () => {
     const reopened = await open(path, options);
     expect((await reopened.agent(record)).id).toBe(one.id);
     expect((await reopened.harness.inspect(context)).scheduling).toBe("paused");
-    // Raw journals remain searchable without a separate transcript export.
-    const main = await readFile(join(path, "main.jsonl"), "utf8");
-    const files = await Array.fromAsync(new Bun.Glob("*.jsonl").scan(path));
-    const journal = (await Promise.all(files.map((file) => readFile(join(path, file), "utf8")))).join("\n");
-    expect(main).toContain("kintsugi.workspace");
+    const journal = persistedTimelineText(path);
+    expect(journal).toContain("kintsugi.workspace");
     expect(journal).toContain(record.title);
     expect(journal).toContain(record.agentId);
   });
@@ -116,7 +114,7 @@ describe("Durable workspace journal", () => {
     expect(same.id).toBe(submission.id);
     expect((await same.wait(context)).status).toBe("done");
     expect(options.faux.state.callCount).toBe(1);
-    const journal = await readFile(join(path, "main.jsonl"), "utf8");
+    const journal = persistedTimelineText(path);
     expect(journal).toContain(input.content);
     expect(journal).toContain("The committed answer.");
   });

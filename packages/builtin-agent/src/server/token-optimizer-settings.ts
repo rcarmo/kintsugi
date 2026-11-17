@@ -10,7 +10,7 @@ import { warningBannerHtml } from "@kintsugi/design-system/warning-banner";
 import { escapeHtml as h, errorMessage, turboStream, turboStreamResponse, type SettingsContribution } from "@kintsugi/shared";
 import type { JsonObject } from "@kintsugi/core";
 import { readPiModelCatalogue } from "@kintsugi/llm/server";
-import { modelFor, parsePolicy, type Policy } from "@kintsugi/token-economizer/core";
+import { modelFor, outputOffload, parsePolicy, type Policy } from "@kintsugi/token-economizer/core";
 import type { ModelRef } from "@kintsugi/token-economizer/core";
 import type { HostSession } from "@kintsugi/token-economizer/pi-durable";
 import { tokenOptimizerConfiguration, parseOptimizerConfig, optimizerConfigSchema, type OptimizerConfig } from "./token-optimizer-config.ts";
@@ -44,7 +44,9 @@ function presetOf(policy: Policy): Preset {
 }
 function applyPreset(policy: Policy, preset: Exclude<Preset, "custom">) {
   const assisted = preset === "assisted";
-  policy.reduceOutputs = true;policy.goalChecks = true;
+  policy.reduceOutputs = true;policy.offloadOutputs = true;policy.goalChecks = true;
+  // Basic promises no extra model calls.
+  if (!assisted) policy.outputSummaries = false;
   policy.microSkills = assisted ? "both" : "envfacts";
   policy.loop = assisted ? "judge" : "rules";
   policy.judge = "generative";
@@ -88,6 +90,7 @@ function advancedHtml(policy: Policy, catalogue: Catalogue) {
   const features = `<div class="token-optimizer__custom form-stack">${heading("Features")}
     <input type="hidden" name="nativeChecks" value="true">
     ${checkboxRow("reduceOutputs", "Compact test and compiler output", policy.reduceOutputs ?? false, "Keeps full logs and script results. No model calls.")}
+    ${checkboxRow("offloadOutputs", "Store long tool outputs", policy.offloadOutputs ?? false, "Agents see a preview and can search or read the rest. Scripts still get full results. No model calls.")}
     ${checkboxRow("goalChecks", "Keep the current task in view", policy.goalChecks ?? false, "Checks the latest request, active plan and unverified edits. Shares the nudge limit.")}
     ${selectRow("microSkills", "Repository facts", policy.microSkills, [["off", "Off"], ["envfacts", "From tool results"], ["distiller", "Written by a model"], ["both", "Both"]])}
     ${selectRow("loop", "Runs going in circles", policy.loop, [["off", "Leave alone"], ["rules", "Nudge using rules"], ["judge", "Nudge using rules and a judge"]])}
@@ -114,6 +117,11 @@ function advancedHtml(policy: Policy, catalogue: Catalogue) {
     ${numberRow("budget.maxCostPerSession", "Spending cap per session (USD)", budget.maxCostPerSession, { min: 0, step: 0.01, placeholder: "No cap", hint: "Calls to models without a price are blocked when a cap is set." })}
     ${numberRow("budget.deadlineSeconds", "Time limit per call (seconds)", budget.deadlineMs / 1000, { max: 180 })}
     ${numberRow("budget.maxOutputTokens", "Output limit per call (tokens)", budget.maxOutputTokens)}`);
+  const offload = outputOffload(policy);
+  const stored = disclosure("Stored outputs", `    <p class="settings-help">Applies when Store long tool outputs is on. Outputs are kept in this workspace’s Agent database with its searchable history, and deleted when they expire or the workspace is deleted.</p>
+    ${numberRow("offload.lines", "Store outputs longer than (lines)", offload.lines, { min: 10, max: 5000 })}
+    ${numberRow("offload.kilobytes", "…or larger than (KB)", offload.bytes / 1024, { min: 1, max: 256 })}
+    ${numberRow("offload.retentionDays", "Keep stored outputs for (days)", offload.retentionDays, { max: 30 })}`);
   const tuning = disclosure("Fine-tuning", `    ${numberRow("maxFacts", "Facts per request", policy.maxFacts)}
     ${numberRow("maxFactTokens", "Fact text limit (estimated tokens)", policy.maxFactTokens)}
     ${numberRow("proposeEvery", "Evidence checks between model proposals", policy.proposeEvery, { hint: "During a session: at least 3 checks with new evidence and 10 minutes between calls. Session-end checks may also propose." })}
@@ -125,7 +133,7 @@ function advancedHtml(policy: Policy, catalogue: Catalogue) {
   const perTask = disclosure("Models for each task", `${selectRow("classifierModel", "Classifier model", policy.classifierModel ? JSON.stringify(policy.classifierModel) : "", modelOptions(catalogue, true, policy.classifierModel, "None"))}
     ${([["proposer", "Writing facts", false], ["loopJudge", "Judging stuck runs", false], ["writer", "Writing nudges", false], ["toolJudge", "Picking tools", false], ["loopClassifier", "Classifying stuck runs", true], ["toolClassifier", "Classifying tools", true]] as const).map(([name, label, classifier]) => selectRow(`models.${name}`, label, policy.models[name] ? JSON.stringify(policy.models[name]) : "", modelOptions(catalogue, classifier, policy.models[name], classifier ? "Same as the classifier model" : same))).join("")}`);
   const expert = disclosure("Loop guard thresholds", `<label class="token-optimizer__stacked">Overrides as JSON<textarea class="textarea token-optimizer__json" name="thresholds" rows="3" spellcheck="false">${h(JSON.stringify(policy.thresholds))}</textarea></label><p class="settings-help">For example <code>{"min_turns": 30}</code>. Leave <code>{}</code> to use learned values.</p>`);
-  return `${features}${limits}${tuning}${perTask}${expert}`;
+  return `${features}${limits}${stored}${tuning}${perTask}${expert}`;
 }
 
 function settingsForm(config: OptimizerConfig, catalogue: Catalogue, view: View) {
@@ -134,6 +142,7 @@ function settingsForm(config: OptimizerConfig, catalogue: Catalogue, view: View)
   const modelBlock = `<div class="token-optimizer__model form-stack">
     ${selectRow("model", "Model for optimizer calls", policy.generativeModel ? JSON.stringify(policy.generativeModel) : "", models, models.length > 1 ? "A small, fast model is plenty." : "Connect a model provider under Models first.")}
     ${checkboxRow("autoToolPicks", "Pick tools before each new prompt", policy.autoToolPicks ?? false, "Adds a model call before the Agent starts. After 20 seconds it is cancelled and the prompt goes ahead. Tool changes can invalidate the prompt cache.")}
+    ${checkboxRow("outputSummaries", "Summarise stored outputs", policy.outputSummaries ?? false, "Adds a model call for each stored output. After 15 seconds the Agent gets a preview instead. Output text goes to this model.")}
     ${checkboxRow("inferenceInObserve", "Use the model while watching", policy.inferenceInObserve, "Off means Watch only never costs anything.")}
     <p class="settings-help">Up to ${plural(budget.callsPerSession, "call")} per Agent session and ${budget.callsPerDay} per day. Change this in Advanced settings › Limits.</p>
   </div>`;
@@ -141,7 +150,7 @@ function settingsForm(config: OptimizerConfig, catalogue: Catalogue, view: View)
     ${choices("Status", ([["off", "Nothing new is learned or applied."], ["observe", "Learns and shows what it would do. Agents are unchanged."], ["active", "Applies eligible facts on the next request, including during an ongoing session."]] as const).map(([value, hint]) => choice("mode", value, mode === value, modeLabels[value], hint)).join(""))}
     <div class="token-optimizer__when-on form-stack">
       ${choices("What it does", [
-        choice("preset", "basic", preset === "basic", "Basic", "Remembers facts, compacts test output, checks task progress and suggests unused tools to hide. No extra model calls."),
+        choice("preset", "basic", preset === "basic", "Basic", "Remembers facts, compacts test output, stores long tool outputs, checks task progress and suggests unused tools to hide. No extra model calls."),
         choice("preset", "assisted", preset === "assisted", "Model-assisted", "Basic, plus a model that writes facts, judges stuck runs and picks tools for a task."),
         choice("preset", "custom", preset === "custom", "Custom", "Choose each feature under Advanced settings."),
       ].join(""))}
@@ -329,7 +338,8 @@ function policyFromForm(form: FormData, current: Policy) {
   policy.enabled = mode !== "off";
   if (mode !== "off") policy.mode = mode;
   policy.generativeModel = model("model", policy.generativeModel);
-  if (form.has("model")) {policy.inferenceInObserve = form.get("inferenceInObserve") === "true";policy.autoToolPicks = form.get("autoToolPicks") === "true";}
+  if (form.has("model")) {policy.inferenceInObserve = form.get("inferenceInObserve") === "true";policy.autoToolPicks = form.get("autoToolPicks") === "true";policy.outputSummaries = form.get("outputSummaries") === "true";}
+  if (form.has("offload.lines")) {const offload = outputOffload(policy);policy.offload = {lines:number("offload.lines", "Lines before storing an output", offload.lines, { min: 10, max: 5000 }),bytes:Math.round(number("offload.kilobytes", "Size before storing an output", offload.bytes / 1024, { max: 256, integer: false }) * 1024),retentionDays:number("offload.retentionDays", "Days to keep stored outputs", offload.retentionDays, { max: 30 })};}
   policy.classifierModel = model("classifierModel", policy.classifierModel);
   for (const name of ["proposer", "loopJudge", "writer", "toolJudge", "loopClassifier", "toolClassifier"] as const) policy.models[name] = model(`models.${name}`, policy.models[name]);
   const budget = policy.budget;
@@ -351,7 +361,7 @@ function policyFromForm(form: FormData, current: Policy) {
     Object.assign(policy, { thresholds });
   }
   if (preset === "custom") {
-    if (form.has("nativeChecks")) {policy.reduceOutputs = form.get("reduceOutputs") === "true";policy.goalChecks = form.get("goalChecks") === "true";}
+    if (form.has("nativeChecks")) {policy.reduceOutputs = form.get("reduceOutputs") === "true";policy.offloadOutputs = form.get("offloadOutputs") === "true";policy.goalChecks = form.get("goalChecks") === "true";}
     for (const name of ["microSkills", "loop", "judge", "level", "pruning", "toolJudge"] as const) if (form.has(name)) Object.assign(policy, { [name]: text(name) });
     policy.redirects = number("redirects", "Nudges per prompt", policy.redirects, { max: 10 });
     if (form.has("savers.auditPercent")) {

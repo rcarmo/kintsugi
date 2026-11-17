@@ -82,11 +82,11 @@ export async function ensureDefaultWorkspaceAgent(workspaceId: string): Promise<
 }
 
 async function listWorkspaceAgentsUnlocked(workspaceId: string): Promise<WorkspaceAgentInfo[]> {
-  const { workspaceDurableJournalDirectory } = await import("./durable-storage.ts");
+  const { workspaceDurableJournalDirectory, durableJournalExists } = await import("./durable-storage.ts");
   const journal = await workspaceDurableJournalDirectory(workspaceId);
   const local: WorkspaceAgentInfo[] = (await agentRecords(workspaceId)).map(info => ({ ...info, workspaceId, path: journal }));
   // The journal catalog wins after a crash between a metadata commit and tab metadata.
-  if (local.length && await Bun.file(join(journal, "main.jsonl")).exists()) {
+  if (local.length && durableJournalExists(journal)) {
     const { durableWorkspaceOwner } = await import("./runtime.ts");
     const catalog = await (await durableWorkspaceOwner(workspaceId)).catalog();
     for (const agent of local) {

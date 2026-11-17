@@ -43,9 +43,9 @@ async function initializeWorkspaceAgent(workspaceId: string, context: AgentWorks
   }
 
   const prompt = await expandSlashCommand(workspaceId, input.text);
-  const { images, attachmentNotes } = input;
+  const { images, attachmentNotes, files } = input;
   if (!prompt.trim() && images.length === 0 && attachmentNotes.length === 0) return;
 
   await events.emit("workspace_user_activity", { workspaceId });
-  await runtime.submit({ text: prompt, requestId: crypto.randomUUID(), images: images.map(image => ({ type: "image", data: image.data, mimeType: image.mimeType })), attachmentNotes });
+  await runtime.submit({ text: prompt, requestId: crypto.randomUUID(), images: images.map(image => ({ type: "image", data: image.data, mimeType: image.mimeType })), attachmentNotes, files });
 }

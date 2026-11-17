@@ -1363,3 +1363,37 @@ test("passive runtime opening does not await MCP discovery, but task recovery do
   f.load.harness=async()=>({models:f.models,registry:f.registry,mcp:{async attach(){},ready(){entered.resolve();return release.promise;},async close(){release.resolve();}}});
   const reopened=await f.open();const pending=reopened.resume().then(()=>{resumed=true;});await entered.promise;expect(resumed).toBe(false);release.resolve();await pending;expect(resumed).toBe(true);expect(f.faux.state.callCount).toBe(0);
 });
+
+test("history pages and UI tree projections remain bounded without hiding older searchable entries",async()=>{
+  const {runtime}=await setup(),agent=await runtime.agent(record);
+  const entries=await runtime.harness.commit(async tx=>{
+    const result=[];
+    for(let i=0;i<450;i++)result.push(await tx.appendEntry(agent.id,{kind:"test.bounded",model:[{role:"user",timestamp:i,content:`entry ${i} ${"x".repeat(500)} searchable-${i}`}]}));
+    return result;
+  },context);
+  const seen=new Set<number>();let before:number|undefined;
+  do {
+    const view=await agent.historyView(undefined,before);
+    expect(view.entries.length).toBeLessThanOrEqual(200);
+    for(const entry of view.entries){expect(seen.has(Number(entry.id))).toBe(false);seen.add(Number(entry.id));}
+    before=view.before;
+  }while(before);
+  expect(entries.every(entry=>seen.has(Number(entry.id)))).toBe(true);
+  const limited=await agent.tree({filter:"user-only",query:"",limit:10});
+  expect(limited.nodes).toHaveLength(10);expect(limited.totalMatches).toBe(450);
+  expect(limited.nodes.every(node=>JSON.stringify(node.entry).length<700)).toBe(true);
+  const older=await agent.tree({filter:"user-only",query:"searchable-0",limit:10});
+  expect(older.nodes).toHaveLength(1);
+  await agent.label(String(entries[0]!.id),"Old decision","add");
+  expect((await agent.tree({filter:"labeled-only",query:"",limit:10})).nodes[0]?.entry.id).toBe(entries[0]!.id);
+  const previousBranch=agent.id;await agent.navigate(String(entries[0]!.id));expect(agent.id).not.toBe(previousBranch);
+  await runtime.harness.commit(async tx=>{for(let i=0;i<2;i++)await tx.appendEntry(agent.id,{kind:"test.large",model:[{role:"user",timestamp:i,content:"x".repeat(1500*1024)}]});},context);
+  const large=await agent.historyView();expect(large.entries).toHaveLength(1);expect(large.before).toBeDefined();
+});
+
+test("tree UI projections omit complete tool catalogs and other non-text model payloads",async()=>{
+  const {runtime}=await setup(),agent=await runtime.agent(record);
+  await runtime.harness.commit(tx=>tx.appendEntry(agent.id,{kind:"test.huge-system-schema",model:[{role:"system",timestamp:1,content:"",toolsAdded:[{name:"schema",description:"x".repeat(1024*1024),parameters:{type:"object"}}]}]}),context);
+  const tree=await agent.tree({filter:"all",query:"huge-system-schema",limit:500});
+  expect(tree.nodes).toHaveLength(1);expect(JSON.stringify(tree.nodes[0]!.entry).length).toBeLessThan(700);
+});

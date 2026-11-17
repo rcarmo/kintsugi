@@ -20,7 +20,7 @@ import { tmpdir } from "node:os";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { contentText, createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, normalizeContext, type Model, type Api, type ProviderStreams } from "@earendil-works/pi-ai";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
-import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import { openBunDurableStorage } from "../../src/server/durable-sqlite.ts";
 import { openNodeJsonlStorage } from "@earendil-works/pi-durable/storage/jsonl/node";
 import { AgentDoc, AssistantEntry, LiveDoc, UserEntry, type AgentChange, type ConversationId, createRegistry, defineExtension, defineTool, Harness, MemoryStorage } from "@earendil-works/pi-durable";
 import { Type } from "typebox";
@@ -56,7 +56,7 @@ async function setup(kind:"memory"|"sqlite"|"jsonl" = "memory",overrideConfig?:T
   registry.install(defineExtension({name:"fixture-tools",tools:[defineTool({name:"bash",description:"Run",parameters:Type.Object({command:Type.String()}),structuredOutputSchema:Type.Object({output:Type.String(),exitCode:Type.Integer(),aborted:Type.Boolean(),timedOut:Type.Boolean(),truncated:Type.Boolean()}),replay:"safe",async execute() {if (gate) {entered.resolve();await gate;gate = null;}return {structuredOutput:{output:failing ? failureOutput : "passed",exitCode:failing ? 1 : 0,aborted:false,timedOut:false,truncated:false},details:{exitCode:failing ? 1 : 0,aborted:false,timedOut:false}};}}),defineTool({name:"rare",description:"Rare helper",parameters:Type.Object({}),execute:async () => ({output:[{type:"text",text:"done"}]})}),defineTool({name:"plan",description:"Plan",parameters:Type.Object({}),execute:async () => ({output:[{type:"text",text:"done"}]})})]}));
   if (withLongRead) registry.install(defineExtension({name:"long-read-fixture",tools:[defineTool({name:"read",description:"Read fixture",parameters:Type.Object({path:Type.String()}),replay:"safe",async execute(){return {output:[{type:"text",text:"x".repeat(20_000)}]};}})]}));
   const native = createNativeTokenOptimizer({workspaceId:"fixture",models,registry,harness:() => harness,configuration});registry.install(native.optimizer.extension);
-  harness = await Harness.open(kind === "memory" ? new MemoryStorage() : kind === "sqlite" ? await openNodeSqliteStorage(join(path,"state.sqlite")) : await openNodeJsonlStorage(join(path,"journal"),context),{models,registry,settings:retry?{retry:{enabled:true,baseDelayMs:1,maxRetries:1}}:undefined},context);cleanups.push(async () => {await native.close();await harness.close(context);});
+  harness = await Harness.open(kind === "memory" ? new MemoryStorage() : kind === "sqlite" ? await openBunDurableStorage(join(path,"state.sqlite")) : await openNodeJsonlStorage(join(path,"journal"),context),{models,registry,settings:retry?{retry:{enabled:true,baseDelayMs:1,maxRetries:1}}:undefined},context);cleanups.push(async () => {await native.close();await harness.close(context);});
   const root = await harness.commit(tx => tx.createConversation({ownership:{kind:"ownerless"}}),context), conversation = (await harness.conversation(root.id,context))!;
   await conversation.configure({model:{provider:"faux",modelId:"faux-1"},instructions:"Main instructions"},context);
   await native.attach();const host = (await native.start(conversation,{agentId:"agent"}))!;

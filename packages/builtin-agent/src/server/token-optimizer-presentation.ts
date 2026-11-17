@@ -30,6 +30,7 @@ const modelPurposes = new Map([
   ["optimizer.tool-judge",{asked:"which tools this task needs",doing:"Picking tools"}],
   ["optimizer.classifier",{asked:"to classify a decision",doing:"Classifying"}],
   ["optimizer.audit",{asked:"to double-check a local decision",doing:"Double-checking"}],
+  ["optimizer.output-summary",{asked:"to summarise a long tool output",doing:"Summarising output"}],
 ]);
 const factStates = new Map([["CANDIDATE","still learning"],["ACTIVE","active evidence; review status not recorded"],["RETIRED","retired"]]);
 const learningChangesSchema = Type.Object({facts:Type.Array(Type.Object({id:Type.String(),state:Type.String(),claim:Type.String()})),suggestedTools:Type.Array(Type.String()),withdrawnTools:Type.Array(Type.String())});

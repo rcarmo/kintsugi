@@ -1,5 +1,6 @@
+import { persistedTimelineText } from "./fixtures/sqlite-timeline.ts";
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { JsonValue } from "@earendil-works/chord/json";
@@ -57,7 +58,7 @@ async function runTool(tool: ToolRegistration<any> | WorkspaceTool<any, any>, ar
   const restored = await reopened.agent({ agentId: "tab", label: "Agent 1", title: "Tools" });
   expect((await restored.entries({}, 100, undefined, context)).items).toEqual(entries);
   await reopened.close();
-  return { result: result!, journal: await readFile(join(path, "main.jsonl"), "utf8") };
+  return { result: result!, journal: persistedTimelineText(path) };
 }
 
 test("assembly opts only the observational read into replay and excludes legacy bash", () => {
@@ -91,7 +92,8 @@ test("images survive the native Harness tool result and fsynced journal", async 
   const { result, journal } = await runTool(read!, { path });
   expect(result.isError).toBe(false);
   expect(result.content).toContainEqual({ type: "image", mimeType: "image/png", data: base64 });
-  expect(journal).toContain(base64);
+  expect(journal).not.toContain(base64);
+  expect(journal).toContain("__kintsugi_media");
 });
 
 test("invalid tool input and execution failures become durable errors, not effects or lost tasks", async () => {

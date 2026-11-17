@@ -7,9 +7,11 @@
     "./json-settings": "./src/json-settings.ts",
     "./resource-metrics": "./src/resource-metrics.ts",
     "./resource-history": "./src/resource-history.ts",
-    "./resource-probe": "./src/resource-probe.ts"
+    "./resource-probe": "./src/resource-probe.ts",
+    "./bun-sqlite": "./src/bun-sqlite.ts"
   },
   "dependencies": {
+    "@earendil-works/chord": "catalog:",
     "typebox": "^1.0.57"
   }
 }

@@ -18,6 +18,11 @@ export const PolicySchema = Type.Object({
   autoToolPicks: Type.Optional(Type.Boolean()),
   reduceOutputs: Type.Optional(Type.Boolean()),
   goalChecks: Type.Optional(Type.Boolean()),
+  /** Store long tool outputs outside model context, with bounded search and reads. Optional so older settings load. */
+  offloadOutputs: Type.Optional(Type.Boolean()),
+  /** Ask the optimizer model to summarise each stored output; a deterministic preview is the fallback. */
+  outputSummaries: Type.Optional(Type.Boolean()),
+  offload: Type.Optional(Type.Object({ bytes: Type.Integer({ minimum: 1024, maximum: 262_144 }), lines: Type.Integer({ minimum: 10, maximum: 5000 }), retentionDays: Type.Integer({ minimum: 1, maximum: 30 }) }, { additionalProperties: false })),
   generativeModel: model, classifierModel: model,
   models:Type.Object({proposer:model,loopJudge:model,writer:model,toolJudge:model,loopClassifier:model,toolClassifier:model},{additionalProperties:false}),
   thresholds:Type.Object({min_turns:Type.Optional(positive),edit_churn:Type.Optional(positive),distinct_edit_files:Type.Optional(positive),error_outputs:Type.Optional(positive),stagnation:Type.Optional(Type.Number({minimum:0,maximum:1})),envelope_margin:Type.Optional(Type.Number({exclusiveMinimum:0})),envelope_pct:Type.Optional(Type.Number({minimum:0,maximum:100})),envelope_min_samples:Type.Optional(positive),judge_confidence:Type.Optional(Type.Number({minimum:0,maximum:1})),backstop_mult:Type.Optional(Type.Number({exclusiveMinimum:0})),gate_min_turns:Type.Optional(positive),gate_error_outputs:Type.Optional(positive),nudge_on_ambiguous:Type.Optional(Type.Boolean())},{additionalProperties:false}),
@@ -49,10 +54,13 @@ export function purposeAllowed(policy:Policy,request:InferenceRequest):boolean {
   if (!inferenceAllowed(policy)) return false;
   const paidFacts = policy.microSkills === "distiller" || policy.microSkills === "both";
   if (request.purpose === "proposer") return paidFacts;
+  if (request.purpose === "output-summary") return policy.offloadOutputs === true && policy.outputSummaries === true;
   if (request.purpose === "loop-judge" || request.purpose === "writer") return policy.loop === "judge";
   if (request.purpose === "tool-judge") return policy.pruning !== "off" && policy.toolJudge !== "none";
   if (request.purpose === "classifier") return request.classification?.purpose === "loop" ? policy.loop === "judge" : request.classification?.purpose === "tools" && policy.pruning !== "off" && policy.toolJudge !== "none";
   return policy.savers.auditPercent > 0 && (request.auditFor === "loop" ? policy.loop === "judge" : request.auditFor === "tools" ? policy.pruning !== "off" && policy.toolJudge !== "none" : request.auditFor === "proposer" && paidFacts);
 }
+export const defaultOutputOffload = { bytes: 8192, lines: 100, retentionDays: 7 } as const;
+export function outputOffload(policy: Policy) { return { ...defaultOutputOffload, ...policy.offload }; }
 export function observing(policy: Policy): boolean { return policy.enabled && policy.mode !== "off"; }
 export function emitting(policy: Policy): boolean { return policy.enabled && policy.mode === "active"; }

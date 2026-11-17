@@ -154,7 +154,7 @@ provisioningHooks.push({ id: "workspace.agent", label: "Prepare agent", async ru
   const agentType = getAgentType(parameters?.agentTypeId ?? "builtin");
   if (parameters) {
     const attachments = parameters.attachmentDraft && validDraftId(parameters.attachmentDraft)
-      ? await deliverAttachmentDraft(workspaceId, parameters.attachmentDraft)
+      ? await deliverAttachmentDraft(workspaceId, parameters.attachmentDraft,undefined,{retainFiles:(parameters.agentTypeId ?? "builtin") === "builtin"})
       : { images: [], attachmentNotes: [] };
     parameters.input = { text: parameters.initialPrompt ?? "", ...attachments };
   }

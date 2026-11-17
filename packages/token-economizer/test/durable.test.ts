@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai";
 import { createRegistry, Harness, MemoryStorage, type Storage } from "@earendil-works/pi-durable";
-import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import { openBunDurableStorage } from "../../builtin-agent/src/server/durable-sqlite.ts";
 import { openNodeJsonlStorage } from "@earendil-works/pi-durable/storage/jsonl/node";
 import { createLifecycle } from "../src/core/microskills/lifecycle.ts";
 import { defaultPolicy, type Policy } from "../src/core/config.ts";
@@ -22,7 +22,7 @@ const reply: InferenceResult = {text:"result",model:{provider:"fixture",id:"smal
 async function setup(kind: "memory" | "sqlite" | "jsonl", sideCall: SideCall = async () => reply, beforeFold?: (knowledge:Knowledge) => Promise<void>) {
   const directory = await mkdtemp(join(tmpdir(),"token-economizer-"));
   closes.push(() => rm(directory,{recursive:true,force:true}));
-  const openStorage = async (): Promise<Storage> => kind === "memory" ? new MemoryStorage() : kind === "sqlite" ? openNodeSqliteStorage(join(directory,"state.sqlite")) : openNodeJsonlStorage(join(directory,"journal"),context);
+  const openStorage = async (): Promise<Storage> => kind === "memory" ? new MemoryStorage() : kind === "sqlite" ? openBunDurableStorage(join(directory,"state.sqlite")) : openNodeJsonlStorage(join(directory,"journal"),context);
   const policy:Policy = {...defaultPolicy(),enabled:true,mode:"active" as const,microSkills:"both" as const,loop:"judge" as const};
   const registry = createRegistry(); let harness: Harness;
   const queue = createInferenceQueue({harness:() => harness,policy:() => policy,sideCall}); registry.install(queue.extension);

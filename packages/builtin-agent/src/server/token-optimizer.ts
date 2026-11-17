@@ -1,4 +1,7 @@
-import { createOptimizerOutputExtension } from "./token-optimizer-output.ts";
+import { createOptimizerOutputExtension, createToolOutputTools } from "./token-optimizer-output.ts";
+import { createToolOutputStore } from "./tool-output-store.ts";
+import { readSavedWorkspaceOutput, type SavedOutputReader } from "./history-search.ts";
+import { captureMark, conversationLineage, workspaceAgentDatabase, type AgentDatabase } from "./agent-database.ts";
 import { codemodeTemplateRunEndEntry } from "./durable-codemode-templates.ts";
 import { durablePlanContextEntry } from "./durable-plan.ts";
 import { isFinalAssistantMessage } from "@kintsugi/agent/server/transcript";
@@ -82,7 +85,7 @@ const actorSchema = Type.Tuple([Type.String(),Type.String()]);
 function actor(host:HostSession) {const value:unknown = JSON.parse(host.id);Value.Assert(actorSchema,value);return value[0];}
 const active = new Map<string,ReturnType<typeof createNativeTokenOptimizer>>();
 export function nativeTokenOptimizers() {return [...active.entries()];}
-export function createNativeTokenOptimizer(options:{workspaceId:string;harness:() => Harness;models:Models;registry:RegistryReader;configuration:TokenOptimizerConfiguration;workspaceTitle?:() => Promise<string|null>}) {
+export function createNativeTokenOptimizer(options:{workspaceId:string;harness:() => Harness;models:Models;registry:RegistryReader;configuration:TokenOptimizerConfiguration;workspaceTitle?:() => Promise<string|null>;readSavedOutput?:SavedOutputReader;database?:AgentDatabase}) {
   const hosts = new Map<ConversationId,HostSession>(), subagents = new Map<ConversationId,HostSession>(), excluded = new Set<ConversationId>(), modelFree = new Map<ConversationId,boolean>(), preparing = new Set<ConversationId>();let maintenance:ConversationId|undefined, stop:(() => void)|undefined, observer:(() => void)|undefined;
   let events = Promise.resolve();
   const chips = new Map<ConversationId,OptimizerChip>(), chipListeners = new Set<(id:ConversationId) => void>();
@@ -145,7 +148,7 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
       const conversation = await options.harness().conversation(host.conversationId,context);if (!conversation) throw new Error("Optimizer conversation is absent");
       const agent = await conversation.agent(context), stored = await options.harness().snapshot(NativeMask,host.conversationId,context), settings = await options.harness().snapshot(AgentDoc,host.conversationId,context), baseline = stored?.initialized ? stored.baseline : settings?.tools ?? null;
       const extensions = new Set(agent.extensions.map(extension => extension.name)), exposed = new Set([...agent.tools,...agent.callable,...agent.deferred].map(tool => tool.name));
-      const tools = [...new Map(options.registry.snapshot().tools().filter(item => extensions.has(item.extension.name)).map(item => [item.tool.name,item.tool])).values()].filter(tool => Array.isArray(baseline) ? baseline.includes(tool.name) : !baseline?.remove.includes(tool.name)).map(tool => ({name:tool.name,description:tool.description.slice(0,4096),revision:fingerprint(JSON.stringify([tool.name,tool.description,tool.parameters,tool.callers])),protected:/plan|user|ask|permission|agent|delegat|message|stop|cancel|credential|recover|codemode|tool_search/i.test(tool.name),highRisk:!nativeOptimizerTool(tool.name).readOnly,exposed:exposed.has(tool.name)}));
+      const tools = [...new Map(options.registry.snapshot().tools().filter(item => extensions.has(item.extension.name)).map(item => [item.tool.name,item.tool])).values()].filter(tool => Array.isArray(baseline) ? baseline.includes(tool.name) : !baseline?.remove.includes(tool.name)).map(tool => ({name:tool.name,description:tool.description.slice(0,4096),revision:fingerprint(JSON.stringify([tool.name,tool.description,tool.parameters,tool.callers])),protected:/plan|user|ask|permission|agent|delegat|message|stop|cancel|credential|recover|codemode|tool_search|tool_output|history/i.test(tool.name),highRisk:!nativeOptimizerTool(tool.name).readOnly,exposed:exposed.has(tool.name)}));
       return {revision:fingerprint(JSON.stringify(tools.map(({exposed:_exposed,...tool}) => tool))),source:"native-registry-and-agent-filter",complete:true,tools};
     },
     async setTools(host,excluded,expiresAt) {
@@ -171,14 +174,21 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
   };
   const transport = createSdkModelTransport(options.models);
   const optimizer = createTokenEconomizer({harness:options.harness,backgroundOwner:() => {if (maintenance === undefined) throw new Error("Optimizer maintenance owner is not attached");return maintenance;},domain,...transport,onOperation:recordOptimizerOperation,policy:host => options.configuration.policy(options.workspaceId,actor(host)),onNotice:async notice => {if (["tools-applied","tools-restored","tool-publication-refused","still-stuck"].includes(notice.code)) return;const rows = (await options.harness().snapshot(NativeOptimizerSessions,context))?.sessions, host = rows?.[notice.sessionId]?.host ?? [...subagents.values()].find(row => row.id === notice.sessionId);if (host) await options.harness().commit(async tx => {const state = await tx.doc(NativeNotices);if (state.ids.includes(notice.id)) return;await tx.appendEntry(OptimizerNotice,host.conversationId,{data:{id:notice.id,text:notice.text,at:Date.now(),code:notice.code,runId:notice.runId}});state.ids.push(notice.id);},context);},onError:error => console.error("Token optimizer observation failed",error)});
-  const outputExtension = createOptimizerOutputExtension(async id => {const host = await domain.session(id);return host && !host.delegated ? options.configuration.policy(options.workspaceId,actor(host)) : null;});
+  const outputStore = createToolOutputStore(options.database ?? workspaceAgentDatabase(options.workspaceId));
+  const outputScope = async (id:ConversationId) => {const host = await domain.session(id);return host ? {owner:actor(host),lineage:await conversationLineage(options.harness(),id,context)} : null;};
+  const outputExtension = createOptimizerOutputExtension({
+    policyFor:async id => {const host = await domain.session(id);return host && !host.delegated ? options.configuration.policy(options.workspaceId,actor(host)) : null;},
+    scope:outputScope,mark:id => captureMark(options.harness(),id,context),store:outputStore,readSaved:options.readSavedOutput ?? (path => readSavedWorkspaceOutput(options.workspaceId,path)),
+    summarize:(id,input,timeoutMs) => optimizer.summarizeOutput(id,input,timeoutMs),
+  });
+  let pruneTimer:ReturnType<typeof setInterval>|undefined;
   const goalExtension = createOptimizerGoalsExtension({harness:options.harness,host:domain.session,policy:host => options.configuration.policy(options.workspaceId,actor(host)),drained:optimizer.drained,async plan(host) {
     // Child Agents have separate plans/tasks; never borrow the root's objective.
     const child = host.parent ? (await options.harness().snapshot(WorkspaceAgents,context))?.agents.find(record => record.durableId === host.conversationId || record.branches?.includes(host.conversationId)) : undefined;
     if (host.parent && !child) return null;
     const plan = agentPlanStore().read(options.workspaceId,child?.agentId ?? actor(host));return plan.revision ? {revision:plan.revision,steps:plan.plan} : null;
   }});
-  optimizer.extension = {...optimizer.extension,hooks:[...optimizer.extension.hooks ?? [],...outputExtension.hooks ?? [],...goalExtension.hooks ?? []]};
+  optimizer.extension = {...optimizer.extension,tools:[...optimizer.extension.tools ?? [],...createToolOutputTools(outputStore,outputScope)],hooks:[...optimizer.extension.hooks ?? [],...outputExtension.hooks ?? [],...goalExtension.hooks ?? []]};
   async function start(conversation:Conversation,record:Pick<DurableAgentRecord,"agentId"|"parentId"|"readOnly"|"oneShotCallId">,event:"startup"|"new"|"resume"|"fork" = "startup",parentGroup?:string) {
     if (record.parentId || record.readOnly || record.oneShotCallId) return;
     if (event === "startup" && hosts.has(conversation.id)) return hosts.get(conversation.id)!
@@ -219,6 +229,9 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
     async attach() {
       detached = false;
       maintenance = (await options.harness().root(context)).id;await optimizer.attach();
+      // Expired outputs are never returned; this also removes them while nobody is using the workspace.
+      const prune = () => outputStore.prune().catch(error => {console.error("Could not prune stored tool outputs",error);return 0;});
+      await prune();clearInterval(pruneTimer);pruneTimer = setInterval(prune,3_600_000);pruneTimer.unref?.();
       const catalogue = await options.harness().snapshot(WorkspaceAgents,context), gates = await options.harness().snapshot(WorkspaceAdmission,context);
       if (!gates?.deleted) for (const record of catalogue?.agents ?? []) if (!record.readOnly && !record.parentId && !record.oneShotCallId && !gates?.closed.includes(record.durableId)) await start((await options.harness().conversation(record.durableId,context))!,record,"resume");
       stop = options.configuration.watch(async () => {await optimizer.updatePolicy(true);void refreshChips();});active.set(options.workspaceId,this);
@@ -269,7 +282,7 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
     async hostForAgent(agentId:string) {const record=(await options.harness().snapshot(WorkspaceAgents,context))?.agents.find(record=>record.agentId===agentId);const host=record&&hosts.get(record.durableId);if(!host)throw new Error("This Agent has no optimizer session.");return host;},
     async commandNotice(host:HostSession,id:string,text:string) {await options.harness().commit(async tx=>{const state=await tx.doc(NativeNotices);const key=`command:${host.id}:${id}`;if(state.ids.includes(key))return;state.ids.push(key);await tx.appendEntry(OptimizerNotice,host.conversationId,{data:{id:key,text,at:Date.now(),code:"optimizer-command"}});},context);},
     host(id:ConversationId) {const host = hosts.get(id);if (!host) throw new Error("This Agent has no optimizer logical session");return host;},
-    async detach() {detached = true;await events;stop?.();observer?.();await optimizer.close();await chipRefresh;if (active.get(options.workspaceId) === this) active.delete(options.workspaceId);},
+    async detach() {detached = true;clearInterval(pruneTimer);pruneTimer = undefined;await events;stop?.();observer?.();await optimizer.close();await chipRefresh;if (active.get(options.workspaceId) === this) active.delete(options.workspaceId);},
     async close() {await events;for (const id of [...hosts.keys()]) await end(id);await this.detach();},
   };
 }

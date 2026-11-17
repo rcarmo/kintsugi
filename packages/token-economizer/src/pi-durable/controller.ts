@@ -33,6 +33,7 @@ import { factKey, type FactSource, type FactDecision } from "../core/microskills
 import { describeKnowledge } from "../core/describe.ts";
 import { renderFacts, permittedFactSection } from "../core/microskills/render.ts";
 import { redact } from "../core/observations.ts";
+import { outputSummaryPrompt, outputSummaryText } from "../core/output/offload.ts";
 import type { HostDomain, HostSession, SessionStart } from "./domain.ts";
 const sourceIdentitySchema = Type.Tuple([Type.String(),Type.String(),Type.Union([Type.String(),Type.Null()]),Type.Literal("result")]);
 export const SteeringEntry = defineEntry<{decisionId:string;runId:string}>("token-economizer.redirect");
@@ -283,6 +284,22 @@ export function createTokenEconomizer(options:TokenEconomizerOptions) {
     rebuildClassifiers:training.rebuild,
     clearClassifiers:training.clear,
     reviewSample:training.review,
+    /**
+     * Optional summary of a stored tool output with the optimizer's model. Uses the shared queue, so budgets, redaction,
+     * auth pauses and accounting apply. Returns null on any refusal, failure or timeout; callers fall back to a preview.
+     */
+    async summarizeOutput(conversationId:ConversationId,input:{id:string;tool:string;label:string;text:string;lines:number;bytes:number},timeoutMs:number):Promise<string|null> {
+      const host = await resolve(conversationId);if (!host || host.delegated) return null;
+      const key = sessionKey(host.scope,host.id), policy = policyFor(key), model = policy.generativeModel;
+      if (!model || !inferenceAllowed(policy) || policy.offloadOutputs !== true || policy.outputSummaries !== true) return null;
+      const expiresAt = clock()+timeoutMs, prompt = outputSummaryPrompt(input);
+      const request = {id:`output-summary:${input.id}`,purpose:"output-summary" as const,model,prompt,maxOutputTokens:Math.min(400,policy.budget.maxOutputTokens),deadlineMs:Math.min(timeoutMs,policy.budget.deadlineMs)};
+      const admission = await queue.enqueue(host.conversationId,request,{sessionKey:key,account:JSON.stringify([host.scope.host,model.provider]),runId:null,revision:fingerprint(JSON.stringify(policy)),digest:fingerprint(prompt),estimatedMaximumCost:null,expiresAt});
+      const taskId = admission.job?.taskId;if (!taskId) return null;
+      await options.harness().waitForTask(taskId,BACKGROUND_CONTEXT);
+      const row = (await options.harness().snapshot(JobsDoc,BACKGROUND_CONTEXT))?.jobs[request.id];
+      return row?.status === "complete" && row.result ? outputSummaryText(row.result.text) : null;
+    },
     async retryModelCalls() {const state = await options.harness().snapshot(JobsDoc,BACKGROUND_CONTEXT);for (const account of state?.paused ?? []) await queue.retry(account);},
     drained:recorder.drained,
     async close() {await recorder.drained();detachObserver?.();detachObserver = null;},

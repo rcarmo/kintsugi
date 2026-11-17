@@ -23,6 +23,17 @@ function elements(input: TextInput): SessionTreeElements {
   };
 }
 
+const mutatingMenus = new WeakSet<HTMLElement>();
+const requests = new WeakMap<HTMLElement, number>();
+export const agentTreeMenuIsUpdating = (menu: HTMLElement) => mutatingMenus.has(menu);
+function mutateMenu(menu: HTMLElement, change: () => void) {
+  mutatingMenus.add(menu);
+  try {change();} finally {mutatingMenus.delete(menu);}
+}
+export function clearAgentTreeMenu(menu: HTMLElement) {
+  requests.set(menu,(requests.get(menu) ?? 0)+1);
+  mutateMenu(menu,()=>menu.replaceChildren());
+}
 function showMessage(menu: HTMLElement, message: string, loading = false): void {
   const content = document.createElement("div");
   content.className = "agent-completion-menu empty";
@@ -33,15 +44,30 @@ function showMessage(menu: HTMLElement, message: string, loading = false): void 
     content.append(spinner);
   }
   content.append(message);
-  menu.replaceChildren(content);
-  menu.hidden = false;
+  mutateMenu(menu,()=>{menu.replaceChildren(content);menu.hidden = false;});
 }
 
-async function showResponse(menu: HTMLElement, response: Response): Promise<boolean> {
+/** Fit above the composer without slipping behind the Agent header on short/touch layouts. */
+export function fitAgentTreeMenu(menu: HTMLElement) {
+  if (menu.hidden) return;
+  const popup = menu.querySelector<HTMLElement>(".agent-tree-menu, .agent-tree-summary-menu");
+  const pane = menu.closest<HTMLElement>(".agent-pane");
+  if (!popup || !pane) return;
+  const available = menu.getBoundingClientRect().bottom - pane.getBoundingClientRect().top - 8;
+  popup.style.maxHeight = `${Math.max(80,Math.min(popup.classList.contains("agent-tree-summary-menu") ? 470 : 500,available))}px`;
+}
+async function showResponse(menu: HTMLElement, response: Response, request?: number): Promise<boolean> {
   const content = await response.text();
+  if (request !== undefined && requests.get(menu) !== request) return false;
   if (response.ok) {
-    menu.innerHTML = content;
-    menu.hidden = false;
+    const active = document.activeElement;
+    const focusSearch = active instanceof HTMLInputElement && active.classList.contains("agent-tree-search") && menu.contains(active);
+    const focusFilter = active instanceof HTMLSelectElement && active.classList.contains("agent-tree-filter") && menu.contains(active);
+    mutateMenu(menu,()=>{
+      menu.innerHTML = content;menu.hidden = false;fitAgentTreeMenu(menu);
+      if (focusSearch) menu.querySelector<HTMLInputElement>(".agent-tree-search")?.focus();
+      else if (focusFilter) menu.querySelector<HTMLSelectElement>(".agent-tree-filter")?.focus();
+    });
   } else {
     showMessage(menu, content);
   }
@@ -53,7 +79,10 @@ async function refresh(input: TextInput, options: { query?: string; filter?: str
   const endpoint = new URL(url, window.location.href);
   if (options.query) endpoint.searchParams.set("q", options.query);
   if (options.filter) endpoint.searchParams.set("filter", options.filter);
-  const shown = await showResponse(menu, await fetch(endpoint, { headers: { Accept: "text/html" } }));
+  const request = (requests.get(menu) ?? 0)+1;requests.set(menu,request);
+  const response = await fetch(endpoint,{headers:{Accept:"text/html"}});
+  if (requests.get(menu) !== request) return;
+  const shown = await showResponse(menu,response,request);
   if (shown && options.focusSearch) {
     const search = menu.querySelector<HTMLInputElement>(".agent-tree-search")!;
     search.focus();
@@ -63,7 +92,7 @@ async function refresh(input: TextInput, options: { query?: string; filter?: str
 
 async function open(input: TextInput): Promise<void> {
   const { menu } = elements(input);
-  input.value = "";
+  setTextInputValue(input,"");
   showMessage(menu, "Loading session tree…", true);
   await refresh(input);
 }
@@ -104,7 +133,8 @@ async function updateLabel(action: HTMLElement, input: TextInput, operation: "ad
 
 function nodeAction(action: HTMLElement, input: TextInput): void {
   const kind = action.dataset.treeAction;
-  if (kind === "label-cancel") action.closest<HTMLElement>(".agent-tree-label-editor")!.hidden = true;
+  if (kind === "label-edit") editLabel(action);
+  else if (kind === "label-cancel") action.closest<HTMLElement>(".agent-tree-label-editor")!.hidden = true;
   else if (kind === "label-save") void updateLabel(action, input, "add");
   else if (kind === "label-remove") void updateLabel(action, input, "remove");
 }
@@ -114,7 +144,9 @@ async function openContinuation(option: HTMLElement, input: TextInput): Promise<
   const endpoint = new URL(`${url}/summary`, window.location.href);
   endpoint.searchParams.set("entry", option.dataset.treeEntry!);
   showMessage(menu, "Loading options…", true);
-  await showResponse(menu, await fetch(endpoint, { headers: { Accept: "text/html" } }));
+  const request = (requests.get(menu) ?? 0)+1;requests.set(menu,request);
+  const response = await fetch(endpoint,{headers:{Accept:"text/html"}});
+  if (requests.get(menu) === request) await showResponse(menu,response,request);
 }
 
 async function navigate(option: HTMLElement, input: TextInput): Promise<void> {
@@ -129,7 +161,7 @@ async function navigate(option: HTMLElement, input: TextInput): Promise<void> {
     return;
   }
   menu.hidden = true;
-  menu.replaceChildren();
+  clearAgentTreeMenu(menu);
   setTextInputValue(input, await response.text());
   input.focus();
 }
@@ -146,7 +178,9 @@ export function handleAgentTreeMenuEvent(event: Event, input: TextInput): boolea
   if (event.type === "input" && event.target.classList.contains("agent-tree-search")) scheduleRefresh(event.target, input);
   if (event.type === "change" && event.target.classList.contains("agent-tree-filter")) scheduleRefresh(event.target, input);
   if (!(event instanceof KeyboardEvent) || event.type !== "keydown" || !event.target.matches(".agent-tree-label-editor input")) return;
+  if (event.isComposing) return;
   const key = event.key;
+  if (key === "Enter" || key === "Escape") {event.preventDefault();event.stopPropagation();}
   if (key === "Enter") event.target.closest<HTMLElement>(".agent-tree-label-editor")!.querySelector<HTMLButtonElement>("[data-tree-action='label-save']")!.click();
   else if (key === "Escape") event.target.closest<HTMLElement>(".agent-tree-label-editor")!.querySelector<HTMLButtonElement>("[data-tree-action='label-cancel']")!.click();
 }
@@ -160,8 +194,10 @@ export function selectAgentTreeOption(option: HTMLElement, input: TextInput): bo
 }
 
 export function handleAgentTreeKeydown(event: KeyboardEvent, input: TextInput, actions: TreeAutocompleteActions): boolean {
+  if (event.isComposing) return false;
   const send = event.key === "Enter" && (event.metaKey || event.ctrlKey);
-  if ((send || event.key === "Enter") && input.value.trim() === "/tree") {
+  const nativeTree = input.closest(".composer")?.querySelector('[data-agent-completions-target="catalog"] [data-command-action="tree"]');
+  if ((send || event.key === "Enter") && input.value.trim() === "/tree" && nativeTree) {
     event.preventDefault();
     event.stopImmediatePropagation();
     actions.close();

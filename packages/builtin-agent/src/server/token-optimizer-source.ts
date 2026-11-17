@@ -1,6 +1,7 @@
+import { isDurableUserEntry } from "./durable-input.ts";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { contentText, type JsonObject, type Message } from "@earendil-works/pi-ai";
-import { AssistantEntry, LiveDoc, ToolResultEntry, UserEntry, type Conversation, type ConversationId, type Cursor, type EntryId, type EntryRecord, type Harness } from "@earendil-works/pi-durable";
+import { AssistantEntry, LiveDoc, ToolResultEntry, type Conversation, type ConversationId, type Cursor, type EntryId, type EntryRecord, type Harness } from "@earendil-works/pi-durable";
 import { ContextSnapshotEntry, FactContextEntry } from "@kintsugi/token-economizer/pi-durable";
 import { isJsonObject } from "@kintsugi/core";
 import { makeObservation, type ToolMapping } from "@kintsugi/token-economizer/core";
@@ -14,7 +15,7 @@ export function nativeOptimizerTool(name:string):ToolMapping {
   if (name === "bash") return {semantic:"shell",readOnly:false};
   if (["edit","write"].includes(name)) return {semantic:"edit",readOnly:false};
   if (["read","view"].includes(name)) return {semantic:"read",readOnly:true};
-  if (["grep","glob","search_history","code_search"].includes(name)) return {semantic:"search",readOnly:true};
+  if (["grep","glob","search_history","grep_history","code_search"].includes(name)) return {semantic:"search",readOnly:true};
   return {semantic:"other",readOnly:false};
 }
 /** A forward scan bounded to one optimizer session. */
@@ -67,7 +68,7 @@ function readSource(entries:readonly EntryRecord[],host:HostSession) {
   const observed:Observation[] = [], calls = new Map<string,{name:string;args:JsonObject;runId:string}>(), starts = new Map<string,{start:CallStart;entry:EntryRecord}>();
   let prompts = 0, activity = 0;
   for (const entry of entries) {
-    if (UserEntry.is(entry)) prompts++;
+    if (isDurableUserEntry(entry)) prompts++;
     if (AssistantEntry.is(entry)) for (const message of entry.model ?? []) if (message.role === "assistant") for (const call of message.content) if (call.type === "toolCall") calls.set(call.id,{name:call.name,args:call.arguments,runId:String(entry.byTaskId ?? "unknown")});
     function capture(name:string,args:JsonObject|null,result:ToolResultData,outer:string,nested:string|null,runId:string,at:number) {
       const mapping = nativeOptimizerTool(name);if (mapping.semantic === "wrapper") return;
