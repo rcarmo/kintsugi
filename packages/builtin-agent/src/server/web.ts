@@ -2,6 +2,7 @@ import { mcpSettingsContribution } from "./mcp-settings.ts";
 import { tokenOptimizerSettingsContribution, tokenOptimizerOpenApiPaths } from "./token-optimizer-settings.ts";
 import { tokenOptimizerIntegration } from "./token-optimizer.ts";
 import { optimizerToolPresentations } from "./token-optimizer-presentation.ts";
+import { toolOutputPresentations } from "./tool-output-presentations.ts";
 import { registerAgentToolPresentations } from "@kintsugi/agent/server";
 import { registerBuiltinAgentIntegration, builtinAgentIntegrations } from "./integrations.ts";
 import { registerAgentRequestReceiptChecker } from "@kintsugi/agent/server/request-receipts";
@@ -210,6 +211,7 @@ export const builtinAgentWorkspaceModule: WorkspaceModule = {
     if (!builtinAgentIntegrations().some(integration => integration.id === tokenOptimizerIntegration.id)) {
       registerBuiltinAgentIntegration(tokenOptimizerIntegration);
       registerAgentToolPresentations(optimizerToolPresentations);
+      registerAgentToolPresentations(toolOutputPresentations);
     }
     registerWorkspaceAgentTool("list_credentials", workspaceId => createCredentialCatalogueTool(workspaceId));
     // SAFETY: The module boundary validates or constructs this value with the asserted domain shape.

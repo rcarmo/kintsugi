@@ -96,7 +96,7 @@ function planSummary(tool: ToolView): string {
 }
 
 function toolSummaryText(tool: ToolView): string {
-  return [codemodeCallName(tool.name) || "tool", toolSummaryHtml(tool)].filter(Boolean).join(" · ");
+  return [agentToolPresentation(tool.name)?.displayName ?? (codemodeCallName(tool.name) || "tool"), toolSummaryHtml(tool)].filter(Boolean).join(" · ");
 }
 
 interface ToolPresentation {

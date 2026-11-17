@@ -3,6 +3,8 @@ import type { ToolView } from "./transcript.ts";
 
 /** How a feature shows its own tool's calls; `undefined` falls back to the generic row. */
 export interface AgentToolPresentation {
+  /** Optional human-facing action name; execution and expanded raw details keep the tool identity. */
+  displayName?: string;
   summary(tool: ToolView): string | undefined;
   detail(ctx: AgentRenderContext, tool: ToolView): string | undefined;
 }
