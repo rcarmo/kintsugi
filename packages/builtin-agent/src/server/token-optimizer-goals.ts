@@ -15,7 +15,7 @@ export function createOptimizerGoalsExtension(options:{harness:() => Harness;hos
       // Match the actual committed entry, not a prefix a real user could type.
       let messages = request.messages;
       if (messages.some(message=>message.role === "user" && contentText(message.content).startsWith("Task check (automated, advisory):"))) {
-        const prior = (await api.entries({kind:GoalContextEntry.kind,order:"descending"},128,undefined,context)).items;
+        const prior = (await api.entries({order:"descending"},128,undefined,context)).items.filter(GoalContextEntry.is);
         const keys = new Set(prior.flatMap(entry=>(entry.model ?? []).flatMap(message=>message.role === "user" ? [JSON.stringify([message.timestamp,contentText(message.content)])] : [])));
         messages = messages.filter(message=>message.role !== "user" || !keys.has(JSON.stringify([message.timestamp,contentText(message.content)])));
       }
@@ -43,7 +43,7 @@ export function createOptimizerGoalsExtension(options:{harness:() => Harness;hos
       const user = visible.find(isDurableUserEntry), compact = visible.find(CompactionEntry.is);
       const userText = user?.model?.filter(message => message.role === "user").map(message => contentText(message.content)).join("\n") ?? "";
       const plan = await options.plan(host), calls = (await api.snapshot(ObservationsDoc,sessionKey(host.scope,host.id),context))?.observations.filter(call => call.runId === runId) ?? [];
-      const wanted = (await api.snapshot(RunDoc,sessionKey(host.scope,host.id),null,context))?.guard?.held;
+      const wanted = (await api.snapshot(RunDoc,sessionKey(host.scope,host.id),context))?.guard?.held;
       const boundGoal = wanted?.reason === "goal-drift" && policy.sharePlanWithJudge ? await options.goal?.(host) : null;
       const chosen = await options.harness().commit(async tx => {
         const current = await tx.doc(LiveDoc,api.conversationId);

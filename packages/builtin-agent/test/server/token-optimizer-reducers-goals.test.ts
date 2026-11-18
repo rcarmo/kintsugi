@@ -188,7 +188,9 @@ for (const scenario of ["active","changed plan","observe","old plan","no consent
   expect((await(await f.conversation.submit({type:"input",content:"Private user request text"},context)).wait(context)).status).toBe("done");
   await f.native.optimizer.drained();
   const notes=(await f.entries()).filter(OptimizerOperationEntry.is).filter(entry=>entry.data.name==="optimizer.goal-check" && entry.data.input.reason==="goal-drift");
-  expect(notes.at(-1)?.data.output?.delivery).toBe((scenario==="active"||scenario==="standalone"||scenario==="revoked on retry")?"consumed":scenario==="observe"?"simulated":undefined);
+  const delivery=(scenario==="active"||scenario==="standalone"||scenario==="revoked on retry")?"consumed":scenario==="observe"?"simulated":undefined;
+  if(delivery)expect(notes.at(-1)?.data.output).toMatchObject({delivery});
+  else expect(notes).toHaveLength(0);
   const jobs=await f.harness.snapshot(JobsDoc,context);
   if(queued || duringAuth) {
     const obsolete=Object.values(jobs!.jobs).find(job=>job.request.includesPlan);
