@@ -2,6 +2,7 @@ import { createKintsugiEventBus } from "@kintsugi/core";
 import { CableTopics, decodeCableServerMessage, type CableChannelAdapter, type CableClientMessage, type CableServerMessage } from "@kintsugi/shared";
 import { managementOriginRejection } from "@kintsugi/proxy-ingress";
 import { expect, test } from "bun:test";
+import { startProxyIngress } from "../../../images/system/src/local-ingress.ts";
 import { createCableServer } from "../src/server/cable.ts";
 import { createCableSseTransport } from "../src/server/cable-sse.ts";
 import { createWorkspaceRegistry } from "../src/server/workspace-registry.ts";
@@ -228,3 +229,69 @@ test("one HTTP batch restores ordered subscriptions, with fresh snapshots after 
 test("idle SSE streams receive a foreground heartbeat within twelve seconds",async()=>{
   const f=fixture();try{const stream=await open(f),began=Date.now();const heartbeat=await stream.next();expect(heartbeat.type).toBe("ping");expect(Date.now()-began).toBeLessThan(12000);stream.abort.abort();await waitClosed(f);}finally{f.server.stop(true);}
 },15000);
+
+test("SSE delivers a large snapshot and its delta through System proxy ingress with HTTPS origin checks", async () => {
+  const snapshot = `${"0123456789abcdef".repeat(105_000)}λ`;
+  let publish!: (value: string) => void;
+  const f = fixture([{ name: "shell", subscribe(_identifier, listener) {
+    publish = listener;
+    listener(snapshot);
+    return { unsubscribe() {} };
+  } }]);
+  const origin = "https://cable-host.local";
+  const proxy = startProxyIngress(() => f.server.port!, () => ({ origin, previewPorts: { start: 41000, end: 41009 } }), 0);
+  const abort = new AbortController();
+  const url = `http://127.0.0.1:${proxy.port}`;
+  try {
+    const headers = { host: "cable-host.local", origin };
+    for (const caller of ["null", "https://other.example", "http://cable-host.local", ""]) {
+      const denied = await fetch(`${url}/cable`, { method: "POST", headers: { ...headers, origin: caller } });
+      expect(denied.status).toBe(403);
+    }
+    const stream = await fetch(`${url}/cable`, { method: "POST", headers: { ...headers, accept: "text/event-stream" }, signal: abort.signal });
+    expect(stream.status).toBe(200);
+    expect(stream.headers.get("content-type")).toStartWith("text/event-stream");
+    const next = messages(stream.body!.getReader());
+    const welcome = await next();
+    if (welcome.type !== "welcome") throw new Error("Missing SSE welcome through proxy");
+    const command = await fetch(`${url}/cable/${welcome.connectionId}`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ command: "subscribe", identifier: CableTopics.shell(), subscriptionId: "proxy" }) });
+    expect(command.status).toBe(204);
+    expect(await next()).toMatchObject({ type: "confirm_subscription", subscriptionId: "proxy", html: snapshot });
+    publish("next revision λ");
+    expect(await next()).toMatchObject({ type: "turbo_stream", subscriptionId: "proxy", html: "next revision λ" });
+    abort.abort();
+    await waitClosed(f);
+  } finally { abort.abort(); proxy.stop(true); f.server.stop(true); }
+});
+
+test("an interrupted command upload is discarded without retiring the live SSE connection", async () => {
+  let subscribed = 0;
+  const f = fixture([{ name: "shell", subscribe(_identifier, listener) {
+    subscribed++;
+    listener("current snapshot");
+    return { unsubscribe() {} };
+  } }]);
+  const abort = new AbortController();
+  let input!: ReadableStreamDefaultController<Uint8Array>;
+  let cancelled = false;
+  try {
+    const stream = await open(f);
+    const command = { command: "subscribe", identifier: CableTopics.shell(), subscriptionId: "interrupted" } as const;
+    const upload = f.handle(new Request(`${f.url}/cable/${stream.id}`, {
+      method: "POST", headers: { "content-type": "application/json" }, signal: abort.signal,
+      body: new ReadableStream<Uint8Array>({ start(controller) { input = controller; }, cancel() { cancelled = true; } }),
+    }));
+    // The bytes have arrived, but the sender has not finished the request.
+    input.enqueue(new TextEncoder().encode(JSON.stringify(command)));
+    await Bun.sleep(0);
+    abort.abort();
+    if (!cancelled) input.close();
+    expect((await upload)!.status).toBe(499);
+    expect(cancelled).toBe(true);
+    expect(subscribed).toBe(0);
+    expect((await f.command(stream.id, { ...command, subscriptionId: "fresh" })).status).toBe(204);
+    expect(await stream.next()).toMatchObject({ type: "confirm_subscription", subscriptionId: "fresh" });
+    stream.abort.abort();
+    await waitClosed(f);
+  } finally { abort.abort(); f.server.stop(true); }
+});

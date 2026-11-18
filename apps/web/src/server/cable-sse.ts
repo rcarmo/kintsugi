@@ -12,36 +12,45 @@ export function createCableSseTransport(cable: CableServer) {
     const path = new URL(request.url).pathname;
     if (path !== "/cable" && !/^\/cable\/[^/]+$/.test(path)) return;
     if (request.method !== "POST") return new Response("Method not allowed", { status: 405, headers: { allow: "POST" } });
+    if (request.signal.aborted) return new Response(null, { status: 499 });
 
     if (path !== "/cable") {
-      const connection = connections.get(path.slice("/cable/".length));
+      const connectionId = path.slice("/cable/".length);
+      const connection = connections.get(connectionId);
       if (!connection) return new Response("Live connection expired", { status: 410 });
       if (!request.headers.get("content-type")?.startsWith("application/json")) return new Response("Expected JSON", { status: 415 });
       const reader = request.body?.getReader();
       const chunks: Uint8Array[] = [];
       let length = 0;
       if (reader) {
+        const cancelRead = () => { void reader.cancel().catch(() => {}); };
+        request.signal.addEventListener("abort", cancelRead, { once: true });
         try {
           for (;;) {
             const { value, done } = await reader.read();
-            if (done) break;
+            if (request.signal.aborted || done) break;
             length += value.byteLength;
             if (length > cableCommandBodyLimit) {
-              await reader.cancel();
+              cancelRead();
               return new Response("Live command too large", { status: 413 });
             }
-            chunks.push(value);
+            if (value.byteLength !== 0) chunks.push(value);
           }
+        } catch {
+          if (!request.signal.aborted) return new Response("Live command upload failed", { status: 400 });
         } finally {
+          request.signal.removeEventListener("abort", cancelRead);
           reader.releaseLock();
         }
       }
-      if (connections.get(path.slice("/cable/".length)) !== connection) return new Response("Live connection expired", { status: 410 });
+      // Cancelling the reader can look like end-of-body, including after a
+      // complete JSON value but before the HTTP request has been committed.
+      if (request.signal.aborted) return new Response(null, { status: 499 });
+      if (connections.get(connectionId) !== connection) return new Response("Live connection expired", { status: 410 });
       cable.message(connection, Buffer.concat(chunks, length));
       return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
     }
 
-    if (request.signal.aborted) return new Response(null, { status: 499 });
     const connectionId = crypto.randomUUID();
     let controller: ReadableStreamDefaultController<Uint8Array>;
     let connection: CableSocket;

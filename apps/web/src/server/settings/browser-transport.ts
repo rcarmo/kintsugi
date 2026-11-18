@@ -1,3 +1,4 @@
+import { buttonHtml } from "@kintsugi/design-system/button";
 import { toggleHtml } from "@kintsugi/design-system/toggle";
 import { kintsugiUrl } from "@kintsugi/proxy-ingress";
 import { browserTransportFromCookies, browserTransportSetCookie } from "../../browser-transport.ts";
@@ -12,8 +13,9 @@ export function renderBrowserTransportSettings(request: Request): string {
     form: { action: "/settings/browser-transport", turbo: false },
     options: [{ value: "websocket", label: "WebSocket" }, { value: "sse", label: "SSE" }],
   });
+  const retry = buttonHtml({ type: "button", variant: "secondary", content: { kind: "caption", caption: "Retry live connection" }, attributesHtml: 'data-action="cable-shell#retry"' });
   return `<section class="settings-sec" id="settings-sec-${browserTransportSectionId}"><h2>Browser connection</h2>
-    <p class="browser-transport-status" role="status">Live updates are paused. You can still change this setting.</p>
+    <div class="browser-transport-status"><p role="status">Live updates are paused. You can retry without switching transports.</p>${retry}</div>
     <p>Use SSE if WebSockets cannot connect, for example on iOS with a self-signed certificate. HTTPS still needs to be accepted by your browser.</p>
     ${toggle}<p>Saved for this browser. Switching reloads the page; Agents keep running.</p></section>`;
 }

@@ -64,7 +64,8 @@ try{
       await cdp.send("Network.emulateNetworkConditions",{offline:true,latency:0,downloadThroughput:0,uploadThroughput:0});await page.waitForTimeout(250);
       await cdp.send("Network.emulateNetworkConditions",{offline:false,latency:0,downloadThroughput:-1,uploadThroughput:-1});await page.evaluate(()=>window.dispatchEvent(new Event("online")));
     }
-    const budget=fault==="confirmation-stall"?23000:fault==="command-stall"?11000:3000;
+    // Confirmation waits 20s, then uses the normal reconnect backoff (up to 5s).
+    const budget=fault==="confirmation-stall"?27000:fault==="command-stall"?15000:4000;
     if(fault==="missed-hide")await page.waitForFunction(streams=>window.sseReview.streams>streams,before.streams,{timeout:budget}).catch(()=>{});
     const ready=await waitReady(budget),elapsed=Date.now()-started,after=await page.evaluate(()=>({...window.sseReview}));
     const scenario=await report.scenario(fault,"Recover a fresh, ready snapshot while preserving the unsent draft.");

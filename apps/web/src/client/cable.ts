@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 
-import { cableHeartbeatIntervalMs, decodeCableServerMessage, encodeCableClientMessages, liveRegionDigestsSchema, liveShownAttribute, serializeCableIdentifier, type KintsugiCableClient, type CableClientMessage, type CableIdentifier, type CableSubscription, type CableSubscriptionOptions, type WorkspaceVisibilityReport } from "@kintsugi/shared";
+import { cableCommandBatchLimit, cableCommandBodyLimit, cableHeartbeatIntervalMs, decodeCableServerMessage, encodeCableClientMessages, liveRegionDigestsSchema, liveShownAttribute, serializeCableIdentifier, type KintsugiCableClient, type CableClientMessage, type CableIdentifier, type CableSubscription, type CableSubscriptionOptions, type WorkspaceVisibilityReport } from "@kintsugi/shared";
 import { Value } from "typebox/value";
 import { browserTransportFromCookies } from "../browser-transport.ts";
 
@@ -27,23 +27,30 @@ type DesiredSubscription = {
 
 type LiveConnection = {
   pendingCommands: CableClientMessage[];
+  drainingCommands?: boolean;
   connectionId?: string;
   openingTimer?: ReturnType<typeof setTimeout>;
   stabilityTimer?: ReturnType<typeof setTimeout>;
   startedAt: number;
   /** Welcome frames from older app servers use the original 30s cadence. */
   heartbeatIntervalMs?: number;
-} & ({ transport: "websocket"; socket: WebSocket } | { transport: "sse"; controller: AbortController; commands: Promise<void>; reader?: ReadableStreamDefaultReader<Uint8Array> });
+} & ({ transport: "websocket"; socket: WebSocket } | { transport: "sse"; controller: AbortController; reader?: ReadableStreamDefaultReader<Uint8Array> });
 
-export type CableStreamRenderer = (html: string, isCurrent: () => boolean, onApplied: () => void) => void;
+export type CableStreamRenderer = (html: string, isCurrent: () => boolean, onApplied: () => void, onFailed: (error: Error) => void) => void;
+
+const utf8 = new TextEncoder();
+const maxPendingCommands = cableCommandBatchLimit * 4;
+const maxBufferedCommandBytes = 1024 * 1024;
 
 export function createKintsugiCableClient(renderStreams: CableStreamRenderer): KintsugiCableClient {
   const desired = new Map<string, DesiredSubscription>();
+  // Changing the browser preference reloads the initiating page. Other open
+  // pages keep their selected transport until they too are reloaded.
+  const transport = browserTransportFromCookies(document.cookie);
   const delays = [100, 250, 500, 1000, 2000, 5000];
   let connection: LiveConnection | undefined;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let attempts = 0;
-  let recovering = true;
   let closingForPageHide = false;
   let visibility: WorkspaceVisibilityReport = { surfaceKeys: [] };
   let lastMessageAt = Date.now();
@@ -53,50 +60,58 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
     // reconcile visible state when there is no socket left to become stale.
     if (closingForPageHide) { resume(true); return; }
     if (!connection) { scheduleReconnect(); return; }
-    if (Date.now() - lastMessageAt > (connection.heartbeatIntervalMs ?? 30_000) * 2.5) disconnect(connection);
+    if (Date.now() - lastMessageAt > (connection.heartbeatIntervalMs ?? 30_000) * 2.5) transportFailed(connection, "heartbeat timed out");
   }, cableHeartbeatIntervalMs / 2);
 
   function changed(): void { document.dispatchEvent(new Event("live:connection")); }
 
   function sendRaw(message: CableClientMessage): void {
     const source = connection;
-    if (!source?.connectionId || (source.transport === "websocket" && source.socket.readyState !== WebSocket.OPEN)) return;
-    source.pendingCommands.push(message);
-    if (source.pendingCommands.length > 1) return;
-    // Visibility and initial subscriptions share a bounded, ordered batch.
-    queueMicrotask(() => {
-      const messages = source.pendingCommands.splice(0);
-      if (connection !== source) return;
-      if (source.transport === "websocket") {
-        try {
-          for (const body of encodeCableClientMessages(messages)) source.socket.send(body);
-        } catch (error) {
-          console.error("Live command could not be delivered", error);
-          disconnect(source);
-        }
-      } else {
-        source.commands = source.commands.then(async () => {
+    if (!source?.connectionId) return;
+    const queue = source.pendingCommands;
+    // Visibility describes current state, not a history. Preserve its order
+    // relative to subscribe/unsubscribe, but replace adjacent unsent reports.
+    if (message.command === "visibility" && queue.at(-1)?.command === "visibility") queue[queue.length - 1] = message;
+    else queue.push(message);
+    if (queue.length > maxPendingCommands) {
+      transportFailed(source, "command queue exceeded capacity");
+      return;
+    }
+    if (source.drainingCommands) return;
+    source.drainingCommands = true;
+    queueMicrotask(() => { void drainCommands(source); });
+  }
+
+  async function drainCommands(source: LiveConnection): Promise<void> {
+    try {
+      // Keep one drain per connection, including while an SSE POST is pending.
+      while (connection === source && source.pendingCommands.length) {
+        for (const body of encodeCableClientMessages(source.pendingCommands.splice(0))) {
           if (connection !== source) return;
-          for (const body of encodeCableClientMessages(messages)) {
-            if (connection !== source) return;
-            // Safari may leave a POST pending while the SSE reader still receives pings.
-            // A heartbeat alone cannot prove that the command path is making progress.
-            const timer = setTimeout(() => disconnect(source), 8_000);
-            try {
-              const response = await fetch(`/cable/${source.connectionId}`, {
-                method: "POST", headers: { "content-type": "application/json" }, body,
-                signal: source.controller.signal, credentials: "same-origin", cache: "no-store", redirect: "error",
-              });
-              if (!response.ok) throw new Error(`Live command failed: ${response.status}`);
-            } finally { clearTimeout(timer); }
+          if (source.transport === "websocket") {
+            if (source.socket.readyState !== WebSocket.OPEN) throw new Error("WebSocket is no longer writable");
+            if (source.socket.bufferedAmount + utf8.encode(body).byteLength > maxBufferedCommandBytes) {
+              throw new Error("WebSocket command buffer exceeded capacity");
+            }
+            source.socket.send(body);
+            continue;
           }
-        }).catch(error => {
-          if (connection !== source) return;
-          console.error("Live command could not be delivered", error);
-          disconnect(source);
-        });
+          // Safari may leave a POST pending while the SSE reader still receives pings.
+          const timer = setTimeout(() => transportFailed(source, "SSE command timed out"), 8_000);
+          try {
+            const response = await fetch(`/cable/${source.connectionId}`, {
+              method: "POST", headers: { "content-type": "application/json" }, body,
+              signal: source.controller.signal, credentials: "same-origin", cache: "no-store", redirect: "error",
+            });
+            if (!response.ok) throw new Error(`Live command failed: ${response.status}`);
+          } finally { clearTimeout(timer); }
+        }
       }
-    });
+    } catch (error) {
+      if (connection !== source) return;
+      console.error("Live command could not be delivered", error);
+      transportFailed(source, "command failed");
+    } finally { source.drainingCommands = false; }
   }
 
   function subscribeOnWire(subscription: DesiredSubscription): void {
@@ -110,8 +125,11 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
     const message: Extract<CableClientMessage, { command: "subscribe" }> = { command: "subscribe", identifier: subscription.identifier, subscriptionId };
     const shown = subscription.shownIn?.getAttribute(liveShownAttribute);
     if (shown) {
-      try { message.shown = Value.Parse(liveRegionDigestsSchema, JSON.parse(shown)); }
-      catch (error) {
+      try {
+        message.shown = Value.Parse(liveRegionDigestsSchema, JSON.parse(shown));
+        if (utf8.encode(JSON.stringify(message)).byteLength > cableCommandBodyLimit) throw new Error("Live cache hint exceeds the command limit");
+      } catch (error) {
+        delete message.shown;
         // A retained cache hint is optional, not a reason to break the connection.
         console.error("Invalid live cache hint; requesting a fresh snapshot", error);
         subscription.shownIn?.removeAttribute(liveShownAttribute);
@@ -119,7 +137,8 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
       }
     }
     subscription.confirmationTimer = setTimeout(() => {
-      if (matchingSubscription(subscription.identifier, subscriptionId) === subscription) disconnect(source);
+      if (matchingSubscription(subscription.identifier, subscriptionId) !== subscription) return;
+      failView(source, subscription, "Live updates timed out while waiting for this view. Retry the view to reconnect.");
     }, 20_000);
     sendRaw(message);
   }
@@ -139,16 +158,18 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
     }, delay);
   }
 
+  function shellUnavailable(): boolean {
+    return [...desired.values()].some(item => item.identifier.channel === "shell" && item.status !== "ready");
+  }
+
   function settled(source: LiveConnection): void {
-    if (connection !== source || [...desired.values()].some(item => item.status === "pending")) return;
-    recovering = false;
-    if (source.stabilityTimer !== undefined) return;
+    if (connection !== source || !source.connectionId || shellUnavailable() || source.stabilityTimer !== undefined) return;
     // Welcome/confirmation alone cannot establish recovery: a flapping server
     // can deliver either and immediately disconnect. Retain its retry history
     // until the subscriptions have remained settled on a stable connection.
     source.stabilityTimer = setTimeout(() => {
       source.stabilityTimer = undefined;
-      if (connection === source && ![...desired.values()].some(item => item.status === "pending")) attempts = 0;
+      if (connection === source && !shellUnavailable()) attempts = 0;
     }, 10_000);
   }
 
@@ -157,29 +178,70 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
     return subscription?.subscriptionId === subscriptionId ? subscription : undefined;
   }
 
-  function markSubscriptionsDisconnected(notify: boolean): void {
+  function notifyLease(notify: () => void): void {
+    try { notify(); }
+    catch (error) { console.error("Live subscription callback failed", error); }
+  }
+
+  function rejectView(source: LiveConnection, subscription: DesiredSubscription, reason: string): void {
+    clearTimeout(subscription.confirmationTimer);
+    subscription.confirmationTimer = undefined;
+    subscription.status = "rejected";
+    subscription.subscriptionId = undefined;
+    for (const lease of [...subscription.leases]) {
+      if (subscription.leases.has(lease)) notifyLease(() => lease.options?.onRejected?.(reason));
+    }
+    settled(source);
+    changed();
+  }
+
+  function failView(source: LiveConnection, subscription: DesiredSubscription, reason: string): void {
+    if (subscription.identifier.channel === "shell") { disconnect(source); return; }
+    if (subscription.subscriptionId) {
+      sendRaw({ command: "unsubscribe", identifier: subscription.identifier, subscriptionId: subscription.subscriptionId });
+    }
+    // A slow or broken view must not tear down a healthy connection or its siblings.
+    rejectView(source, subscription, reason);
+  }
+
+  function applyStreams(source: LiveConnection, subscription: DesiredSubscription, subscriptionId: string, html: string, applied: () => void): void {
+    const current = () => connection === source && matchingSubscription(subscription.identifier, subscriptionId) === subscription;
+    const failed = (error: Error) => {
+      if (!current()) return;
+      console.error("Live view could not be applied", error);
+      failView(source, subscription, "Live updates could not be applied to this view. Retry the view to reconnect.");
+    };
+    try { renderStreams(html, current, applied, failed); }
+    catch (error) { failed(error instanceof Error ? error : new Error(String(error))); }
+  }
+
+  function markSubscriptionsDisconnected(notify: boolean): SubscriptionLease[] {
+    const interrupted: SubscriptionLease[] = [];
     for (const subscription of desired.values()) {
-      if (notify && subscription.status === "ready") {
-        for (const lease of subscription.leases) lease.options?.onDisconnected?.();
-      }
+      if (notify && subscription.status === "ready") interrupted.push(...subscription.leases);
       clearTimeout(subscription.confirmationTimer);
       subscription.confirmationTimer = undefined;
       subscription.status = "pending";
       subscription.subscriptionId = undefined;
     }
+    return interrupted;
   }
 
   function handleMessage(source: LiveConnection, raw: string): void {
     if (connection !== source) return;
-    lastMessageAt = Date.now();
     const message = decodeCableServerMessage(raw);
+    lastMessageAt = Date.now();
     switch (message.type) {
       case "welcome":
+        // A welcome belongs to a connection, not to a subscription refresh.
+        if (source.connectionId !== undefined) break;
         clearTimeout(source.openingTimer);
         source.connectionId = message.connectionId;
         source.heartbeatIntervalMs = message.heartbeatIntervalMs;
         sendRaw({ command: "visibility", visibility });
         resubscribeAll();
+        settled(source);
+        changed();
         break;
       case "confirm_subscription": {
         const subscription = matchingSubscription(message.identifier, message.subscriptionId);
@@ -192,30 +254,27 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
           subscription.status = "ready";
           subscription.shownIn?.removeAttribute(liveShownAttribute);
           subscription.shownIn = undefined;
+          const leases = [...subscription.leases];
           settled(source);
           changed();
-          for (const lease of subscription.leases) lease.options?.onReady?.();
+          for (const lease of leases) {
+            if (isCurrent() && subscription.leases.has(lease)) notifyLease(() => lease.options?.onReady?.());
+          }
         };
-        if (message.html) renderStreams(message.html, isCurrent, applied);
+        if (message.html) applyStreams(source, subscription, message.subscriptionId, message.html, applied);
         else applied();
         break;
       }
       case "reject_subscription":
         const rejected = matchingSubscription(message.identifier, message.subscriptionId);
         if (rejected) {
-          clearTimeout(rejected.confirmationTimer);
-          rejected.confirmationTimer = undefined;
-          rejected.status = "rejected";
-          rejected.subscriptionId = undefined;
           console.error("Cable subscription rejected", message);
-          for (const lease of rejected.leases) lease.options?.onRejected?.(message.reason);
-          settled(source);
-          changed();
+          rejectView(source, rejected, message.reason);
         }
         break;
       case "turbo_stream": {
         const subscription = matchingSubscription(message.identifier, message.subscriptionId);
-        if (subscription) renderStreams(message.html, () => matchingSubscription(message.identifier, message.subscriptionId) === subscription, () => {});
+        if (subscription) applyStreams(source, subscription, message.subscriptionId, message.html, () => {});
         break;
       }
       case "ping":
@@ -227,21 +286,28 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
     }
   }
 
+  function transportFailed(source: LiveConnection, reason: string): void {
+    if (connection !== source) return;
+    console.warn(`Live ${source.transport} connection: ${reason}`);
+    disconnect(source);
+  }
+
   function disconnect(source: LiveConnection, notify = true): void {
     if (connection !== source) return;
     connection = undefined;
     clearTimeout(source.openingTimer);
     clearTimeout(source.stabilityTimer);
+    source.pendingCommands.length = 0;
     if (source.transport === "websocket") source.socket.close();
     else {
       source.controller.abort();
       // Release the reader too; suspended WebKit fetches do not always settle promptly on abort.
       void source.reader?.cancel().catch(() => {});
     }
-    recovering = true;
-    markSubscriptionsDisconnected(notify);
-    changed();
+    const interrupted = markSubscriptionsDisconnected(notify);
     scheduleReconnect();
+    for (const lease of interrupted) notifyLease(() => lease.options?.onDisconnected?.());
+    changed();
   }
 
   async function receiveSse(source: Extract<LiveConnection, { transport: "sse" }>): Promise<void> {
@@ -262,31 +328,31 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
           const { value, done } = await reader.read();
           if (done || connection !== source) break;
           pending += decoder.decode(value, { stream: true });
-          let boundary: number;
-          while ((boundary = pending.indexOf("\n\n")) !== -1) {
-            const frame = pending.slice(0, boundary);
-            pending = pending.slice(boundary + 2);
-            const data = frame.split("\n").filter(line => line.startsWith("data:")).map(line => line.slice(5).replace(/^ /, "")).join("\n");
+          let boundary: RegExpExecArray | null;
+          while ((boundary = /\r?\n\r?\n/.exec(pending))) {
+            const frame = pending.slice(0, boundary.index);
+            pending = pending.slice(boundary.index + boundary[0].length);
+            const data = frame.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).replace(/^ /, "")).join("\n");
             if (data) handleMessage(source, data);
           }
         }
       } finally { source.reader = undefined; reader.releaseLock(); }
-      disconnect(source);
+      transportFailed(source, "event stream ended");
     } catch (error) {
       if (connection !== source) return;
       console.error("Live stream disconnected", error);
-      disconnect(source);
+      transportFailed(source, "event stream failed");
     }
   }
 
   function connect(): void {
     // Online/offline are OS hints, not reachability tests for a local/tailnet app.
     // Visible pages keep bounded backoff probes; hidden pages do not reconnect.
-    if (connection || closingForPageHide || document.hidden || desired.size === 0) return;
+    if (connection || reconnectTimer !== undefined || closingForPageHide || document.hidden || desired.size === 0) return;
     lastMessageAt = Date.now();
     let source: LiveConnection;
-    if (browserTransportFromCookies(document.cookie) === "sse") {
-      source = { transport: "sse", controller: new AbortController(), commands: Promise.resolve(), pendingCommands: [], startedAt: Date.now() };
+    if (transport === "sse") {
+      source = { transport: "sse", controller: new AbortController(), pendingCommands: [], startedAt: Date.now() };
     } else {
       try {
         const protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -299,18 +365,18 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
       }
     }
     connection = source;
-    source.openingTimer = setTimeout(() => disconnect(source), 15_000);
+    source.openingTimer = setTimeout(() => transportFailed(source, "welcome timed out"), 15_000);
     if (source.transport === "sse") { void receiveSse(source); return; }
     source.socket.onmessage = event => {
       try {
         handleMessage(source, event.data);
       } catch (error) {
-        console.error("Live message could not be applied", error);
-        disconnect(source);
+        console.error("Live WebSocket message failed", error);
+        transportFailed(source, "invalid live message");
       }
     };
-    source.socket.onclose = () => disconnect(source);
-    source.socket.onerror = () => disconnect(source);
+    source.socket.onclose = event => transportFailed(source, `socket closed (${event?.code ?? 0})`);
+    source.socket.onerror = () => transportFailed(source, "socket error");
   }
 
   function pause(): void {
@@ -341,11 +407,12 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
   document.addEventListener("visibilitychange", () => document.hidden ? pause() : resume(true));
 
   const client: KintsugiCableClient = {
-    ready() { return connection?.connectionId !== undefined && !recovering; },
+    ready() { return connection?.connectionId !== undefined && !shellUnavailable(); },
     reconnect() {
       if (document.hidden) return;
       closingForPageHide = false;
-      if (connection) disconnect(connection); else scheduleReconnect();
+      if (connection) disconnect(connection);
+      resume();
     },
     reportVisibility(next) {
       visibility = next;
@@ -379,9 +446,14 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
         },
       };
       subscription.leases.add(lease);
-      if (subscription.status === "ready") requestAnimationFrame(() => {
-        if (subscription.leases.has(lease) && desired.get(key) === subscription && subscription.status === "ready") lease.options?.onReady?.();
-      });
+      if (subscription.status === "ready") {
+        const subscriptionId = subscription.subscriptionId;
+        requestAnimationFrame(() => {
+          if (subscription.leases.has(lease) && desired.get(key) === subscription && subscription.status === "ready" && subscription.subscriptionId === subscriptionId) {
+            notifyLease(() => lease.options?.onReady?.());
+          }
+        });
+      }
       return lease;
     },
   };

@@ -55,6 +55,10 @@ class LiveSurfaceController extends Controller<HTMLElement> {
 
   retry(): void {
     this.stop();
+    // The notice isn't part of the server snapshot. Remove it before morphing
+    // so Turbo cannot reuse the notice node for the recovered workspace.
+    this.failure?.remove();
+    this.failure = undefined;
     void this.ensureReady();
   }
 
@@ -119,6 +123,9 @@ class LiveSurfaceController extends Controller<HTMLElement> {
 export async function prepareLiveSurface(element: HTMLElement): Promise<void> {
   // Newly inserted server HTML connects at Stimulus's next mutation checkpoint.
   if (!mounts.has(element)) await new Promise<void>(resolve => setTimeout(resolve, 0));
+  // A newer snapshot or workspace selection can remove this mount while we
+  // wait for Stimulus. The caller can continue with the current presentation.
+  if (!element.isConnected) return;
   const mount = mounts.get(element);
   if (!mount) throw new Error(`Live surface did not connect: ${element.id}`);
   await mount.ensureReady();

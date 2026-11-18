@@ -7,7 +7,7 @@ let delivery = Promise.resolve();
 
 /** One application queue, not just a receipt-time lease check. Parent mounts and
  * their children are applied in wire order, with no deferred Turbo repaint race. */
-export const renderCableStreams: CableStreamRenderer = (html, isCurrent, onApplied) => {
+export const renderCableStreams: CableStreamRenderer = (html, isCurrent, onApplied, onFailed) => {
   delivery = delivery.then(async () => {
     if (!isCurrent()) return;
     const template = document.createElement("template");
@@ -44,9 +44,7 @@ export const renderCableStreams: CableStreamRenderer = (html, isCurrent, onAppli
     document.dispatchEvent(new Event("kintsugi:workspace-pane-changed"));
     onApplied();
   }).catch(error => {
-    // A failed application cannot be treated as current. Report it and force a
-    // new snapshot rather than continuing from a partially applied delta stream.
-    console.error("Live presentation could not be applied", error);
-    window.KintsugiCable?.reconnect();
+    // A late error from an obsolete view must not disturb a newer connection.
+    if (isCurrent()) onFailed(error instanceof Error ? error : new Error(String(error)));
   });
 };

@@ -184,14 +184,22 @@ test("WebSocket malformed commands fail explicitly and oversized commands close 
   } finally { f.server.stop(true); }
 });
 
-test("Cable traverses System proxy ingress with HTTPS origin checks and immediate welcome intact", async () => {
-  const f = fixture([{ name: "shell", subscribe(_identifier, listener) { listener("proxy snapshot"); return { unsubscribe() {} }; } }]);
+test("WebSocket delivers a large snapshot and its delta through System proxy ingress with HTTPS origin checks", async () => {
+  const snapshot = `${Buffer.from(crypto.getRandomValues(new Uint8Array(65536))).toString("base64").repeat(19)}λ`;
+  let publish!: (value: string) => void;
+  const f = fixture([{ name: "shell", subscribe(_identifier, listener) {
+    publish = listener;
+    listener(snapshot);
+    return { unsubscribe() {} };
+  } }]);
   const config = { origin: "https://cable-host.local", previewPorts: { start: 41000, end: 41009 } };
   const proxy = startProxyIngress(() => f.server.port!, () => config, 0);
   try {
     const stream = await open(`http://127.0.0.1:${proxy.port}`, { host: "cable-host.local", origin: config.origin });
     stream.command({ command: "subscribe", identifier: CableTopics.shell(), subscriptionId: "proxy" });
-    expect(await stream.next()).toMatchObject({ type: "confirm_subscription", subscriptionId: "proxy", html: "proxy snapshot" });
+    expect(await stream.next()).toMatchObject({ type: "confirm_subscription", subscriptionId: "proxy", html: snapshot });
+    publish("next revision λ");
+    expect(await stream.next()).toMatchObject({ type: "turbo_stream", subscriptionId: "proxy", html: "next revision λ" });
     stream.socket.close();
     await waitClosed(f);
     for (const origin of ["null", "https://foreign.example", "http://cable-host.local", ""]) {

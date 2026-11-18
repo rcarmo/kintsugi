@@ -6,6 +6,7 @@ import { registerWorkspaceControllers } from "./workspace-controller-registry.ts
 
 class CableShellController extends Controller<HTMLElement> {
   private subscription?: CableSubscription;
+  retry(): void { window.KintsugiCable?.reconnect(); }
   connect(): void {
     document.addEventListener("live:connection", this.changed);
     document.addEventListener("turbo:before-morph-attribute", this.preserveDisclosure);

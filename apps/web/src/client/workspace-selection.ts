@@ -39,8 +39,14 @@ class WorkspaceSelectionController extends Controller<HTMLElement> {
     if (!mount) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    void flushPreviewFrames(mount).then(() => {
-      this.preparedSubmissions.add(form); form.requestSubmit(event.submitter);
+    const submitter = event.submitter;
+    void flushPreviewFrames(mount).then(async () => {
+      // An empty preview flush can resolve during the native submit event's
+      // microtask checkpoint. The browser ignores requestSubmit in that event.
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
+      if (!form.isConnected) return;
+      this.preparedSubmissions.add(form);
+      form.requestSubmit(submitter);
     }).catch(error => { console.error("Workspace stop paused", error); window.alert("Preview settings could not be saved. The workspace was kept open."); });
   };
 

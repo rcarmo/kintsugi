@@ -209,3 +209,99 @@ test("resource meter scope allows global totals but rejects unknown workspaces b
   expect(serializeCableIdentifier(CableTopics.resources())).not.toBe(serializeCableIdentifier(CableTopics.resources("known")));
   cable.close(ws); expect(releases).toBe(2);
 });
+
+test("a dropped frame closes the socket while queued backpressure does not", () => {
+  for (const [sendResult, expectedClosed] of [[0, true], [-1, false]] as const) {
+    const cable = server();
+    const closes: number[] = [];
+    const ws = { send() { return sendResult; }, close(code: number) { closes.push(code); cable.close(ws); } };
+    cable.open(ws, { kind: "cable", connectionId: "drop-fixture" });
+    expect(closes).toEqual(expectedClosed ? [1013] : []);
+    cable.close(ws);
+  }
+});
+
+test("unsubscribe invalidates the attempt before running upstream cleanup", async () => {
+  const cable = server([{ name: "agent", subscribe(_identifier, listener) {
+    listener("initial");
+    return { unsubscribe() { listener("retired view must not publish during cleanup"); } };
+  } }]);
+  const ws = socket();
+  cable.open(ws, { kind: "cable", connectionId: "reentrant-unsubscribe" });
+  cable.message(ws, JSON.stringify({ command: "subscribe", identifier, subscriptionId: "retired" }));
+  await Bun.sleep(0);
+  cable.message(ws, JSON.stringify({ command: "unsubscribe", identifier, subscriptionId: "retired" }));
+  expect(ws.sent.map(message => message.type)).toEqual(["welcome", "confirm_subscription"]);
+  expect(cable.stats().subscriptions).toEqual({});
+  cable.close(ws);
+});
+
+test("a failed cleanup cannot prevent release of the other views on a closed connection", async () => {
+  let released = 0;
+  const cable = server([{ name: "agent", subscribe(id, listener) {
+    listener("initial");
+    return { unsubscribe() {
+      if (serializeCableIdentifier(id) === serializeCableIdentifier(identifier)) throw new Error("Synthetic upstream cleanup failure");
+      released++;
+    } };
+  } }]);
+  const ws = socket();
+  cable.open(ws, { kind: "cable", connectionId: "failed-cleanup" });
+  cable.message(ws, JSON.stringify([
+    { command: "subscribe", identifier, subscriptionId: "broken" },
+    { command: "subscribe", identifier: CableTopics.agent("workspace", "healthy"), subscriptionId: "healthy" },
+  ]));
+  await Bun.sleep(0);
+  expect(() => cable.close(ws)).not.toThrow();
+  cable.close(ws);
+  expect(released).toBe(1);
+  expect(cable.stats()).toEqual({ sockets: 0, subscriptions: {} });
+});
+
+test("dropping a snapshot stops dispatch before the transport close callback arrives", () => {
+  let subscriptions = 0;
+  const closeCodes: number[] = [];
+  const cable = server([{ name: "agent", subscribe(_id, listener) {
+    subscriptions++;
+    listener("initial");
+    return { unsubscribe() {} };
+  } }]);
+  const ws = {
+    send(raw: string) { return decodeCableServerMessage(raw).type === "confirm_subscription" ? 0 : raw.length; },
+    // Native WebSocket close is asynchronous, unlike the local SSE adapter.
+    close(code: number) { closeCodes.push(code); },
+  };
+  cable.open(ws, { kind: "cable", connectionId: "delayed-close" });
+  cable.message(ws, JSON.stringify([
+    { command: "subscribe", identifier, subscriptionId: "dropped" },
+    { command: "subscribe", identifier: CableTopics.agent("workspace", "next"), subscriptionId: "not-admitted" },
+  ]));
+  expect(subscriptions).toBe(1);
+  expect(closeCodes).toEqual([1013]);
+  expect(cable.stats()).toEqual({ sockets: 0, subscriptions: {} });
+  cable.close(ws);
+});
+
+test("a throwing writer disconnects only that client and cannot block the next listener", async () => {
+  const listeners = new Set<(html: string) => void>();
+  const cable = server([{ name: "agent", subscribe(_id, listener) {
+    listeners.add(listener);
+    listener("initial");
+    return { unsubscribe() { listeners.delete(listener); } };
+  } }]);
+  const bad = { send(raw: string) {
+    if (decodeCableServerMessage(raw).type === "turbo_stream") throw new Error("Synthetic transport write error");
+    return raw.length;
+  } };
+  const good = socket();
+  for (const client of [bad, good]) {
+    cable.open(client, { kind: "cable", connectionId: crypto.randomUUID() });
+    cable.message(client, JSON.stringify({ command: "subscribe", identifier, subscriptionId: "initial" }));
+  }
+  await Bun.sleep(0);
+  expect(() => { for (const listener of listeners) listener("update"); }).not.toThrow();
+  expect(good.sent.at(-1)).toMatchObject({ type: "turbo_stream", html: "update" });
+  expect(cable.stats().sockets).toBe(1);
+  expect(listeners.size).toBe(1);
+  cable.close(good);
+});

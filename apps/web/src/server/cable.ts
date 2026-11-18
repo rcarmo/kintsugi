@@ -57,15 +57,6 @@ function textMessage(message: string | Buffer): string {
   return Buffer.isBuffer(message) ? message.toString() : message;
 }
 
-function send(ws: CableSocket, message: CableServerMessage): void {
-  if ((ws.getBufferedAmount?.() ?? 0) > 1024 * 1024) {
-    ws.close?.(1013, "Live updates exceeded delivery capacity; reconnect for a snapshot");
-    return;
-  }
-  const serialized = JSON.stringify(message);
-  ws.send(serialized, serialized.length >= 1024);
-}
-
 export function createCableServer(options: CableServerOptions): CableServer {
   const channels = new Map<string, CableChannelAdapter>();
   for (const channel of options.channels ?? []) {
@@ -80,6 +71,32 @@ export function createCableServer(options: CableServerOptions): CableServer {
     for (const ws of connections.keys()) send(ws, { type: "ping", time });
   }, cableHeartbeatIntervalMs);
   heartbeat.unref?.();
+
+  function stopDelivery(ws: CableSocket, code: number, reason: string): void {
+    // A native WebSocket close callback is asynchronous. Fence off pending
+    // commands and updates now, before starting transport shutdown.
+    close(ws);
+    try { ws.close?.(code, reason); }
+    catch (error) { logError(`cable transport close failed: ${errorMessage(error)}`); }
+  }
+
+  function send(ws: CableSocket, message: CableServerMessage): void {
+    if (!connections.has(ws)) return;
+    let buffered = false;
+    try {
+      buffered = (ws.getBufferedAmount?.() ?? 0) > 1024 * 1024;
+      if (!buffered) {
+        const serialized = JSON.stringify(message);
+        // Bun returns zero for a dropped frame and -1 for a queued frame.
+        if (ws.send(serialized, serialized.length >= 1024) !== 0) return;
+      }
+    } catch (error) {
+      // The heartbeat and a presentation's listeners are shared. Do not let a
+      // failing writer skip delivery to the other clients.
+      logError(`cable transport send failed: ${errorMessage(error)}`);
+    }
+    stopDelivery(ws, 1013, buffered ? "Live updates exceeded delivery capacity; reconnect for a snapshot" : "Live update was not delivered; reconnect for a snapshot");
+  }
 
   function authorize(identifier: CableIdentifier): void {
     if (identifier.channel === "shell") return;
@@ -96,10 +113,12 @@ export function createCableServer(options: CableServerOptions): CableServer {
   function releaseAttempt(attempt: SocketSubscriptionAttempt): void {
     const unsubscribe = attempt.unsubscribe;
     attempt.unsubscribe = undefined;
-    unsubscribe?.();
-
     const socketAttempts = connections.get(attempt.ws)?.attempts;
     if (socketAttempts?.get(attempt.key) === attempt) socketAttempts.delete(attempt.key);
+    // Cleanup may trigger another publication or throw. The attempt is already
+    // obsolete, and a failed cleanup must not stop other releases.
+    try { unsubscribe?.(); }
+    catch (error) { logError(`cable subscription cleanup failed: ${errorMessage(error)}`); }
   }
 
   function confirm(attempt: SocketSubscriptionAttempt, html = ""): void {
@@ -133,8 +152,8 @@ export function createCableServer(options: CableServerOptions): CableServer {
         if (!attempt.confirmed) confirm(attempt, html);
         else if (html) send(attempt.ws, { type: "turbo_stream", identifier, subscriptionId: attempt.subscriptionId, html });
       }, options.events, attempt.shown);
-      if (!attemptIsCurrent(attempt)) { subscription.unsubscribe(); return; }
       attempt.unsubscribe = () => subscription.unsubscribe();
+      if (!attemptIsCurrent(attempt)) releaseAttempt(attempt);
     } catch (error) {
       reject(attempt, errorMessage(error));
     }
@@ -168,15 +187,16 @@ export function createCableServer(options: CableServerOptions): CableServer {
 
   function close(ws: CableSocket): void {
     const connection = connections.get(ws);
-    if (connection) options.registry.disconnect(connection.id);
+    if (!connection) return;
     connections.delete(ws);
-    for (const attempt of connection?.attempts.values() ?? []) releaseAttempt(attempt);
+    options.registry.disconnect(connection.id);
+    for (const attempt of connection.attempts.values()) releaseAttempt(attempt);
   }
 
   function handleInboundCommand(ws: CableSocket, raw: string | Buffer): void {
     if (!connections.has(ws)) return;
     if (Buffer.byteLength(raw) > cableCommandBodyLimit) {
-      ws.close?.(1009, "Live command too large");
+      stopDelivery(ws, 1009, "Live command too large");
       return;
     }
     try {

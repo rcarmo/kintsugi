@@ -486,7 +486,15 @@ html.software-keyboard-visible .composer.launch-composer :is(.agent-attach-row, 
 .composer.launch-composer .composer-selections { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .composer.launch-composer .composer-footer > turbo-frame { flex: 1; }
 
-.live-connection-status:not([hidden]) { position: fixed; z-index: 10000; top: 12px; left: 50%; transform: translateX(-50%); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; width: max-content; max-width: calc(100% - 24px); box-sizing: border-box; padding: 10px 16px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--panel); color: var(--text); box-shadow: 0 4px 18px #0002; }
+/* Keep the live status above the shell, clear of workspace recovery controls. */
+body:has(> .live-connection-status:not([hidden])):not(:has(.app-settings-host)) { display: flex; flex-direction: column; height: 100dvh; }
+body:has(> .live-connection-status:not([hidden])):not(:has(.app-settings-host)) > .fixed-shell-app { flex: 1; height: auto; }
+.live-connection-status:not([hidden]) { flex: none; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; width: max-content; max-width: calc(100% - 16px); box-sizing: border-box; margin: 8px auto 0; padding: 6px 12px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--panel); color: var(--text); }
+
+/* The compact shell stays fixed for WebKit keyboard anchoring. Reserve a row above it. */
+:where(html[data-kintsugi-layout="compact"]) body:has(> .live-connection-status:not([hidden])):not(:has(.app-settings-host)) { --live-status-height: max(3.75rem, 2lh + 0.75rem); }
+:where(html[data-kintsugi-layout="compact"]) body:has(> .live-connection-status:not([hidden])):not(:has(.app-settings-host)) > .fixed-shell-app { top: calc(var(--software-keyboard-top, 0px) + var(--live-status-height)); }
+:where(html[data-kintsugi-layout="compact"]) .live-connection-status:not([hidden]) { position: fixed; top: var(--software-keyboard-top, 0px); left: 50%; translate: -50% 0; height: var(--live-status-height); margin: 0; }
 
 /* Settings owns its disconnected status; the recovery banner must not cover its controls. */
 body:has(.app-settings-host) .live-connection-status { display: none; }
