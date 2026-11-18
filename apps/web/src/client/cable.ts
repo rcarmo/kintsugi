@@ -31,7 +31,6 @@ type LiveConnection = {
   connectionId?: string;
   openingTimer?: ReturnType<typeof setTimeout>;
   stabilityTimer?: ReturnType<typeof setTimeout>;
-  startedAt: number;
   /** Welcome frames from older app servers use the original 30s cadence. */
   heartbeatIntervalMs?: number;
 } & ({ transport: "websocket"; socket: WebSocket } | { transport: "sse"; controller: AbortController; reader?: ReadableStreamDefaultReader<Uint8Array> });
@@ -58,9 +57,9 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
     if (document.hidden || desired.size === 0) return;
     // Lifecycle events can be lost when WebKit suspends/restores a page. Also
     // reconcile visible state when there is no socket left to become stale.
-    if (closingForPageHide) { resume(true); return; }
+    if (closingForPageHide) { resume(); return; }
     if (!connection) { scheduleReconnect(); return; }
-    if (Date.now() - lastMessageAt > (connection.heartbeatIntervalMs ?? 30_000) * 2.5) transportFailed(connection, "heartbeat timed out");
+    checkHeartbeat(connection);
   }, cableHeartbeatIntervalMs / 2);
 
   function changed(): void { document.dispatchEvent(new Event("live:connection")); }
@@ -286,6 +285,12 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
     }
   }
 
+  function checkHeartbeat(source: LiveConnection): void {
+    if (source.connectionId && Date.now() - lastMessageAt > (source.heartbeatIntervalMs ?? 30_000) * 2.5) {
+      transportFailed(source, "heartbeat timed out");
+    }
+  }
+
   function transportFailed(source: LiveConnection, reason: string): void {
     if (connection !== source) return;
     console.warn(`Live ${source.transport} connection: ${reason}`);
@@ -352,11 +357,11 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
     lastMessageAt = Date.now();
     let source: LiveConnection;
     if (transport === "sse") {
-      source = { transport: "sse", controller: new AbortController(), pendingCommands: [], startedAt: Date.now() };
+      source = { transport: "sse", controller: new AbortController(), pendingCommands: [] };
     } else {
       try {
         const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-        source = { transport: "websocket", socket: new WebSocket(`${protocol}//${location.host}/cable`), pendingCommands: [], startedAt: Date.now() };
+        source = { transport: "websocket", socket: new WebSocket(`${protocol}//${location.host}/cable`), pendingCommands: [] };
       } catch (error) {
         // A browser/CSP rejection must not prevent Settings from initialising.
         console.error("Live WebSocket could not be opened", error);
@@ -385,33 +390,28 @@ export function createKintsugiCableClient(renderStreams: CableStreamRenderer): K
     reconnectTimer = undefined;
     if (connection) disconnect(connection, false);
   }
-  function resume(replace = false): void {
+  function resume(): void {
     if (document.hidden) return;
     closingForPageHide = false;
-    // A frozen iPad page can return without delivering its earlier hide event.
-    // Do not trust the pre-suspension reader. Coalesce the cluster of wake events
-    // by retaining a connection we have only just started.
-    if (replace && connection && Date.now() - connection.startedAt > 1000) disconnect(connection);
-    clearTimeout(reconnectTimer);
-    reconnectTimer = undefined;
-    connect();
+    // Focus, visibility and network hints often arrive together. Keep a healthy
+    // connection (and any pending handshake or retry); only replace a stale one.
+    if (connection) checkHeartbeat(connection);
+    else connect();
   }
+  // Leaving the page releases its transport. Merely switching tabs does not.
   window.addEventListener("pagehide", pause);
-  window.addEventListener("pageshow", event => resume(event.persisted));
-  window.addEventListener("online", () => resume(true));
-  window.addEventListener("offline", () => {
-    if (connection) disconnect(connection);
-    else scheduleReconnect();
-  });
-  window.addEventListener("focus", () => resume(Date.now() - lastMessageAt > (connection?.heartbeatIntervalMs ?? 30_000)));
-  document.addEventListener("visibilitychange", () => document.hidden ? pause() : resume(true));
+  window.addEventListener("pageshow", resume);
+  window.addEventListener("online", resume);
+  window.addEventListener("focus", resume);
+  document.addEventListener("visibilitychange", resume);
 
   const client: KintsugiCableClient = {
     ready() { return connection?.connectionId !== undefined && !shellUnavailable(); },
     reconnect() {
       if (document.hidden) return;
-      closingForPageHide = false;
       if (connection) disconnect(connection);
+      clearTimeout(reconnectTimer);
+      reconnectTimer = undefined;
       resume();
     },
     reportVisibility(next) {

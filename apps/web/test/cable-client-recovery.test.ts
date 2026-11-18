@@ -162,6 +162,76 @@ function createFixture(transport: "websocket" | "sse", holdFirstAck = false) {
 
 for (const transport of ["websocket", "sse"] as const) describe(transport, () => {
   const fixture = (holdFirstAck = false) => createFixture(transport, holdFirstAck);
+  test("a tab switch and network hints preserve a healthy connection and subscriptions", async () => {
+    const f = fixture();
+    let disconnected = 0;
+    f.client.subscribe({ channel: "shell" }, { onDisconnected: () => { disconnected++; } });
+    await f.handshake();
+    f.document.hidden = true;
+    f.document.dispatchEvent(new Event("visibilitychange"));
+    await f.heartbeatFor(35_000);
+    f.document.hidden = false;
+    f.document.dispatchEvent(new Event("visibilitychange"));
+    f.window.dispatchEvent(new Event("focus"));
+    f.window.dispatchEvent(new Event("offline"));
+    f.window.dispatchEvent(new Event("online"));
+    await f.tick(1000);
+    expect(f.opens).toBe(1);
+    expect(disconnected).toBe(0);
+    expect(f.client.ready()).toBe(true);
+  });
+
+  test("a transport lost while hidden reconnects once the tab returns", async () => {
+    const f = fixture();
+    f.client.subscribe({ channel: "shell" });
+    await f.handshake();
+    f.document.hidden = true;
+    f.document.dispatchEvent(new Event("visibilitychange"));
+    f.streams[0]!.close();
+    await f.tick(30_000);
+    expect(f.opens).toBe(1);
+    f.document.hidden = false;
+    f.document.dispatchEvent(new Event("visibilitychange"));
+    f.window.dispatchEvent(new Event("focus"));
+    await f.handshake();
+    expect(f.opens).toBe(2);
+    expect(f.client.ready()).toBe(true);
+  });
+
+  test("a half-open transport is replaced after returning to the tab", async () => {
+    const f = fixture();
+    f.client.subscribe({ channel: "shell" });
+    await f.handshake();
+    f.document.hidden = true;
+    f.document.dispatchEvent(new Event("visibilitychange"));
+    await f.tick(30_000);
+    expect(f.client.ready()).toBe(true);
+    f.document.hidden = false;
+    f.document.dispatchEvent(new Event("visibilitychange"));
+    f.window.dispatchEvent(new Event("focus"));
+    await f.tick(1000);
+    expect(f.opens).toBe(2);
+    await f.handshake();
+    expect(f.client.ready()).toBe(true);
+  });
+
+  test("wake signals neither bypass a scheduled retry nor replace a pending handshake", async () => {
+    const f = fixture();
+    f.client.subscribe({ channel: "shell" });
+    await f.handshake();
+    f.streams[0]!.close();
+    await f.tick(0);
+    f.window.dispatchEvent(new Event("focus"));
+    f.window.dispatchEvent(new Event("online"));
+    expect(f.opens).toBe(1);
+    await f.tick(2500);
+    f.window.dispatchEvent(new Event("online"));
+    f.document.dispatchEvent(new Event("visibilitychange"));
+    expect(f.opens).toBe(2);
+    await f.handshake();
+    expect(f.client.ready()).toBe(true);
+  });
+
   test("a visible connection recovers after a missed wake event without background reconnection", async () => {
     const f = fixture();
     f.client.subscribe({ channel: "shell" });
