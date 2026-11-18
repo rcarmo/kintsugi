@@ -36,3 +36,21 @@ test("classifier-only optimizer configuration preserves the Decisions reference 
   expect(saved.policy.generativeModel).toBeNull();expect(saved.policy.judge).toBe("classifier");
   expect(saved.policy.mode).toBe("observe");expect(saved.policy.inferenceInObserve).toBe(false);
 });
+
+test("split settings preserve legacy modes and ancestor vetoes, then apply changes independently",async()=>{
+  const path=await mkdtemp(join(tmpdir(),"optimizer-split-config-"));paths.push(path);
+  const {splitOptimizerPolicy}=await import("../../src/server/token-optimizer-config.ts");
+  const {oversightPolicy}=await import("@kintsugi/token-economizer/core");
+  const service=new TokenOptimizerConfiguration(path),config=await service.load();
+  config.policy.enabled=true;config.policy.goalChecks=true;config.policy.loop="rules";
+  await service.configure(config);const legacy=service.snapshot();legacy.policy.mode="active";legacy.workspaces.blocked="off";
+  await service.configure(legacy);expect(oversightPolicy(service.policy("allowed","agent")).mode).toBe("active");
+  const split=service.snapshot();splitOptimizerPolicy(split);split.policy.enabled=false;
+  await service.configure(split);
+  expect(service.policy("allowed","agent").mode).toBe("off");expect(oversightPolicy(service.policy("allowed","agent")).mode).toBe("active");
+  expect(oversightPolicy(service.policy("blocked","agent")).mode).toBe("off");
+  expect(split.policy.sharePlanWithJudge).toBeUndefined();
+  const next=service.snapshot();next.policy.enabled=true;next.policy.oversightMode="off";await service.configure(next);
+  const saved=new TokenOptimizerConfiguration(path);await saved.load();
+  expect(saved.policy("allowed","agent").mode).toBe("active");expect(oversightPolicy(saved.policy("allowed","agent")).mode).toBe("off");
+});

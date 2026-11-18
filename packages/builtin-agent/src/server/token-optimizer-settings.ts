@@ -10,49 +10,48 @@ import { warningBannerHtml } from "@kintsugi/design-system/warning-banner";
 import { escapeHtml as h, errorMessage, turboStream, turboStreamResponse, type SettingsContribution } from "@kintsugi/shared";
 import type { JsonObject } from "@kintsugi/core";
 import { readPiModelCatalogue } from "@kintsugi/llm/server";
-import { modelFor, outputOffload, parsePolicy, type Policy } from "@kintsugi/token-economizer/core";
+import { modelFor, outputOffload, oversightPolicy, parsePolicy, type Policy } from "@kintsugi/token-economizer/core";
 import type { ModelRef } from "@kintsugi/token-economizer/core";
 import type { HostSession } from "@kintsugi/token-economizer/pi-durable";
-import { tokenOptimizerConfiguration, parseOptimizerConfig, optimizerConfigSchema, type OptimizerConfig } from "./token-optimizer-config.ts";
+import { tokenOptimizerConfiguration, splitOptimizerPolicy, parseOptimizerConfig, optimizerConfigSchema, type OptimizerConfig } from "./token-optimizer-config.ts";
 import { nativeTokenOptimizers } from "./token-optimizer.ts";
 import { readWorkspaceTitle } from "@kintsugi/workspace";
 import { describeKnowledge, type FactSummary } from "@kintsugi/token-economizer/core";
 import type { GuardDecisionRecord } from "@kintsugi/token-economizer/pi-durable";
 
 const panel = "token_optimizer_controls";
+const optimisationFormId = "token_optimizer_optimisation_form";
+const oversightFormId = "token_optimizer_oversight_form";
 type Mode = "off" | "observe" | "active";
 type Preset = "basic" | "assisted" | "custom";
 type Native = ReturnType<typeof nativeTokenOptimizers>[number][1];
 type Catalogue = Awaited<ReturnType<typeof readPiModelCatalogue>>;
 type Option = [value: string, label: string];
 /** `focus` names the Agent disclosure to keep open; `form` places feedback beside Save. */
-type View = { message?: string; error?: boolean; draft?: OptimizerConfig; focus?: string; form?: boolean };
+type View = { message?: string; error?: boolean; draft?: OptimizerConfig; focus?: string; form?: boolean; oversightForm?: boolean };
 const modeSchema = Type.Enum(["off", "observe", "active"]);
 const presetSchema = Type.Enum(["basic", "assisted", "custom"]);
 const modelRefSchema = Type.Object({ provider: Type.String({ minLength: 1 }), id: Type.String({ minLength: 1 }) }, { additionalProperties: false });
 const modeLabels = { off: "Off", observe: "Watch only", active: "On" } satisfies Record<Mode, string>;
-const saverNames = ["localLoop", "authorizeLocalStuck", "toolPrefilter", "localToolDrops", "reuse", "templates", "novelty", "compact"] as const;
 const judgeOptions: Option[] = [["generative", "Model"], ["classifier", "Classifier model"], ["cascade", "Classifier, then model if unsure"]];
 
 function presetOf(policy: Policy): Preset {
-  if (saverNames.some(name => policy.savers[name])) return "custom";
+  if (policy.savers.toolPrefilter || policy.savers.localToolDrops || policy.savers.novelty) return "custom";
   // A fresh installation starts from the recommended preset.
-  if (policy.microSkills === "off" && policy.loop === "off" && policy.pruning === "off") return "basic";
-  if (policy.microSkills === "envfacts" && policy.loop === "rules" && policy.pruning === "propose" && policy.toolJudge === "none") return "basic";
-  if (policy.microSkills === "both" && policy.loop === "judge" && policy.judge === "generative" && policy.pruning === "propose" && policy.toolJudge === "generative") return "assisted";
+  if (policy.microSkills === "off" && policy.pruning === "off") return "basic";
+  if (policy.microSkills === "envfacts" && policy.pruning === "propose" && policy.toolJudge === "none") return "basic";
+  if (policy.microSkills === "both" && policy.pruning === "propose" && policy.toolJudge === "generative") return "assisted";
   return "custom";
 }
 function applyPreset(policy: Policy, preset: Exclude<Preset, "custom">) {
   const assisted = preset === "assisted";
-  policy.reduceOutputs = true;policy.offloadOutputs = true;policy.goalChecks = true;
+  policy.reduceOutputs = true;policy.offloadOutputs = true;
   // Basic promises no extra model calls.
   if (!assisted) policy.outputSummaries = false;
   policy.microSkills = assisted ? "both" : "envfacts";
-  policy.loop = assisted ? "judge" : "rules";
-  policy.judge = "generative";
   policy.pruning = "propose";
   policy.toolJudge = assisted ? "generative" : "none";
-  for (const name of saverNames) policy.savers[name] = false;
+  for (const name of ["toolPrefilter","localToolDrops","novelty"] as const) policy.savers[name] = false;
 }
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
@@ -98,23 +97,13 @@ function advancedHtml(policy: Policy, catalogue: Catalogue) {
     <input type="hidden" name="nativeChecks" value="true">
     ${checkboxRow("reduceOutputs", "Compact test and compiler output", policy.reduceOutputs ?? false, "Keeps full logs and script results. No model calls.")}
     ${checkboxRow("offloadOutputs", "Store long tool outputs", policy.offloadOutputs ?? false, "Agents see a preview and can search or read the rest. Scripts still get full results. No model calls.")}
-    ${checkboxRow("goalChecks", "Keep the current task in view", policy.goalChecks ?? false, "Checks the latest request, active plan and unverified edits. Shares the nudge limit.")}
     ${selectRow("microSkills", "Repository facts", policy.microSkills, [["off", "Off"], ["envfacts", "From tool results"], ["distiller", "Written by a model"], ["both", "Both"]])}
-    ${selectRow("loop", "Runs going in circles", policy.loop, [["off", "Leave alone"], ["rules", "Nudge using rules"], ["judge", "Nudge using rules and a judge"]])}
-    ${selectRow("judge", "Stuck-run judge", policy.judge, judgeOptions, "Used when nudges include a judge.")}
-    ${selectRow("level", "When to step in", policy.level, [["conservative", "Patiently"], ["default", "Normally"], ["aggressive", "Early"]])}
-    ${numberRow("redirects", "Nudges per prompt", policy.redirects, { max: 10 })}
     ${selectRow("pruning", "Unused tools", policy.pruning, [["off", "Leave alone"], ["propose", "Suggest hiding them"], ["auto", "Hide them automatically"]], "Restore brings hidden tools back.")}
     ${selectRow("toolJudge", "Task-aware tool picks", policy.toolJudge, [["none", "Off"], ...judgeOptions], "Runs only when you pick tools for a task.")}
     ${disclosure("Call savers and local classifiers", `${heading("Call savers")}
-    ${checkboxRow("savers.templates", "Use template nudges", savers.templates, "Skips the model call that writes each nudge.")}
-    ${checkboxRow("savers.reuse", "Reuse identical judgements", savers.reuse)}
     ${checkboxRow("savers.novelty", "Only propose facts when something changed", savers.novelty)}
-    ${checkboxRow("savers.compact", "Collapse repeated failures before judging", savers.compact)}
     ${heading("Local classifiers")}
-    <p class="settings-help">These learn from the judge’s earlier decisions. Each one stays inactive until it passes its safety checks.</p>
-    ${checkboxRow("savers.localLoop", "Skip the judge when a run is clearly fine", savers.localLoop)}
-    ${checkboxRow("savers.authorizeLocalStuck", "Let it decide a run is stuck", savers.authorizeLocalStuck)}
+    <p class="settings-help">Local tool decisions require validated safety thresholds.</p>
     ${checkboxRow("savers.toolPrefilter", "Keep tools that clearly match the task", savers.toolPrefilter)}
     ${checkboxRow("savers.localToolDrops", "Let it hide tools by itself", savers.localToolDrops)}
     ${numberRow("savers.auditPercent", "Double-check with the model (%)", savers.auditPercent, { min: 0, max: 20 })}`)}
@@ -137,9 +126,8 @@ function advancedHtml(policy: Policy, catalogue: Catalogue) {
     ${numberRow("evidenceSessions", "Or after this many sessions", policy.evidenceSessions)}
     ${numberRow("quietMinutes", "Quiet time before hiding automatically (minutes)", policy.quietMinutes, { min: 0, hint: "Waits until the repository is idle this long, or 24 hours at most." })}`);
   const same = "Same as the main model";
-  const perTask = disclosure("Models for each task", `${([["proposer", "Writing facts", false], ["loopJudge", "Judging stuck runs", false], ["writer", "Writing nudges", false], ["toolJudge", "Picking tools", false], ["loopClassifier", "Classifying stuck runs", true], ["toolClassifier", "Classifying tools", true]] as const).map(([name, label, classifier]) => selectRow(`models.${name}`, label, policy.models[name] ? JSON.stringify(policy.models[name]) : "", modelOptions(catalogue, classifier, policy.models[name], classifier ? "Same as the classifier model" : same))).join("")}`);
-  const expert = disclosure("Loop guard thresholds", `<label class="token-optimizer__stacked">Overrides as JSON<textarea class="textarea token-optimizer__json" name="thresholds" rows="3" spellcheck="false">${h(JSON.stringify(policy.thresholds))}</textarea></label><p class="settings-help">For example <code>{"min_turns": 30}</code>. Leave <code>{}</code> to use learned values.</p>`);
-  return `${features}${limits}${stored}${tuning}${perTask}${expert}`;
+  const perTask = disclosure("Models for each task", `${([["proposer", "Writing facts", false], ["toolJudge", "Picking tools", false], ["toolClassifier", "Classifying tools", true]] as const).map(([name, label, classifier]) => selectRow(`models.${name}`, label, policy.models[name] ? JSON.stringify(policy.models[name]) : "", modelOptions(catalogue, classifier, policy.models[name], classifier ? "Same as the classifier model" : same))).join("")}`);
+  return `${features}${limits}${stored}${tuning}${perTask}`;
 }
 
 function settingsForm(config: OptimizerConfig, catalogue: Catalogue, view: View) {
@@ -156,18 +144,50 @@ function settingsForm(config: OptimizerConfig, catalogue: Catalogue, view: View)
     ${checkboxRow("inferenceInObserve", "Use the model while watching", policy.inferenceInObserve, "Off means Watch only never costs anything.")}
     <p class="settings-help">Up to ${plural(budget.callsPerSession, "call")} per Agent session and ${budget.callsPerDay} per day. Change this in Advanced settings › Limits.</p>
   </div>`;
-  return `<form method="post" action="/settings/token-optimizer" class="token-optimizer__form form-stack" data-turbo="true">
-    ${choices("Status", ([["off", "Nothing new is learned or applied."], ["observe", "Learns and shows what it would do. Agents are unchanged."], ["active", "Applies eligible facts on the next request, including during an ongoing session."]] as const).map(([value, hint]) => choice("mode", value, mode === value, modeLabels[value], hint)).join(""))}
+  return `<form id="${optimisationFormId}" method="post" action="/settings/token-optimizer" class="token-optimizer__form form-stack" data-turbo="true">
+    ${heading("Token optimisation")}
+    <p class="settings-help">Control how Agents learn facts, compact or retain output, and select tools. This does not turn task oversight on.</p>
+    ${choices("Optimisation status", ([["off", "Nothing new is learned or applied."], ["observe", "Learns and shows what it would do. Agents are unchanged."], ["active", "Applies eligible facts on the next request, including during an ongoing session."]] as const).map(([value, hint]) => choice("mode", value, mode === value, modeLabels[value], hint)).join(""))}
     <div class="token-optimizer__when-on form-stack">
       ${choices("What it does", [
-        choice("preset", "basic", preset === "basic", "Basic", "Remembers facts, compacts test output, stores long tool outputs, checks task progress and suggests unused tools to hide. No extra model calls."),
-        choice("preset", "assisted", preset === "assisted", "Model-assisted", "Basic, plus a model that writes facts, judges stuck runs and picks tools for a task."),
+        choice("preset", "basic", preset === "basic", "Basic", "Remembers facts, compacts test output, stores long tool outputs and suggests unused tools to hide. No extra model calls."),
+        choice("preset", "assisted", preset === "assisted", "Model-assisted", "Basic, plus a model that writes facts and picks tools for a task."),
         choice("preset", "custom", preset === "custom", "Custom", "Choose each feature under Advanced settings."),
       ].join(""))}
       ${modelBlock}
       ${disclosure("Advanced settings", advancedHtml(policy, catalogue))}
     </div>
-    <div class="token-optimizer__save">${view.form ? feedback(view) : ""}${buttonHtml({ type: "submit", variant: "primary", content: { kind: "caption", caption: "Save" } })}</div>
+    <div class="token-optimizer__save">${view.form ? feedback(view) : ""}${buttonHtml({ type: "submit", variant: "primary", content: { kind: "caption", caption: "Save optimisation" } })}</div>
+  </form>`;
+}
+
+function oversightForm(config: OptimizerConfig, catalogue: Catalogue, view: View) {
+  const policy = config.policy, mode = oversightPolicy(policy).mode;
+  const expert = disclosure("Loop guard thresholds", `<label class="token-optimizer__stacked">Overrides as JSON<textarea class="textarea token-optimizer__json" name="thresholds" rows="3" spellcheck="false">${h(JSON.stringify(policy.thresholds))}</textarea></label><p class="settings-help">For example <code>{"min_turns": 30}</code>. Leave <code>{}</code> to use learned values.</p>`);
+  const savers = policy.savers;
+  const modelRows = ([["loopJudge","Loop judge",false],["writer","Nudge writer",false],["loopClassifier","Loop classifier",true]] as const).map(([name,label,classifier]) => selectRow(`models.${name}`,label,policy.models[name] ? JSON.stringify(policy.models[name]) : "",modelOptions(catalogue,classifier,policy.models[name],"Use shared model"))).join("");
+  return `<form id="${oversightFormId}" method="post" action="/settings/token-optimizer/oversight" class="token-optimizer__form form-stack" data-turbo="true">
+    ${heading("Task oversight")}
+    <p class="settings-help">Check for repeated failures, unverified edits and loss of focus. Oversight can run with optimisation off.</p>
+    ${choices("Oversight status", ([["off","No checks or nudges."],["observe","Record what would have been sent."],["active","Send advice at a safe point in the current task."]] as const).map(([value,hint]) => choice("oversightMode",value,mode === value,modeLabels[value],hint)).join(""))}
+    ${checkboxRow("goalChecks","Check task progress",policy.goalChecks ?? true,"Uses local rules; no model calls.")}
+    ${selectRow("loop","Loop checks",policy.loop,[["off","Off"],["rules","Local rules"],["judge","Model-assisted"]],"The model-assisted option uses the shared model budget.")}
+    ${disclosure("Oversight models and limits",`
+      <input type="hidden" name="oversightAdvanced" value="true">
+      ${selectRow("judge","Loop judge type",policy.judge,judgeOptions)}
+      ${modelRows}
+      <p class="settings-help">These calls share the model budget in Token optimisation › Advanced settings. Select an oversight model here or use the shared default.</p>
+      ${selectRow("level", "When to step in", policy.level, [["conservative", "Patiently"], ["default", "Normally"], ["aggressive", "Early"]])}
+    ${checkboxRow("savers.templates", "Use template nudges", savers.templates, "Skips the model call that writes each nudge.")}
+    ${checkboxRow("savers.reuse", "Reuse identical judgements", savers.reuse)}
+    ${checkboxRow("savers.compact", "Collapse repeated failures before judging", savers.compact)}
+    ${checkboxRow("savers.localLoop", "Skip the judge when a run is clearly fine", savers.localLoop)}
+    ${checkboxRow("savers.authorizeLocalStuck", "Let it decide a run is stuck", savers.authorizeLocalStuck)}
+      ${expert}
+      ${checkboxRow("oversightInferenceInObserve","Allow model calls in Watch only",oversightPolicy(policy).inferenceInObserve,"Only applies to model-assisted oversight.")}
+      ${checkboxRow("sharePlanWithJudge","Share the active plan item with the judge",policy.sharePlanWithJudge === true,"Off by default. Sends one redacted plan item to the configured provider on an already scheduled loop-judge call, only when the plan was updated in the current task.")}
+      ${numberRow("redirects","Maximum nudges per prompt",policy.redirects,{max:10})}`)}
+    <div class="token-optimizer__save">${view.oversightForm ? feedback(view) : ""}${buttonHtml({type:"submit",variant:"primary",content:{kind:"caption",caption:"Save oversight"}})}</div>
   </form>`;
 }
 
@@ -177,9 +197,9 @@ function hidden(workspaceId: string, agentId: string) {
 function actionForm(workspaceId: string, agentId: string, action: string, caption: string, body = "", variant: "primary" | "secondary" = "secondary") {
   return `<form method="post" action="/settings/token-optimizer/${action}" data-turbo="true" class="token-optimizer__action">${hidden(workspaceId, agentId)}${body}${buttonHtml({ type: "submit", variant, content: { kind: "caption", caption } })}</form>`;
 }
-function overrideForm(workspaceId: string, agentId: string, value: string, label: string) {
+function overrideForm(workspaceId: string, agentId: string, value: string, label: string, feature = "optimisation") {
   const inherit = agentId ? "Same as workspace" : "Use main setting";
-  return `<form class="token-optimizer__override" method="post" action="/settings/token-optimizer/override" data-turbo="true" data-controller="settings-autosave" data-action="change->settings-autosave#save submit->settings-autosave#submit">${hidden(workspaceId, agentId)}${select("mode", label, value, [["inherit", inherit], ["off", "Off"], ["observe", "Watch only"], ["active", "On"]])}</form>`;
+  return `<form class="token-optimizer__override" method="post" action="/settings/token-optimizer/override" data-turbo="true" data-controller="settings-autosave" data-action="change->settings-autosave#save submit->settings-autosave#submit">${hidden(workspaceId, agentId)}<input type="hidden" name="feature" value="${h(feature)}">${select("mode", label, value, [["inherit", inherit], ["off", "Off"], ["observe", "Watch only"], ["active", "On"]])}</form>`;
 }
 
 type Status = Awaited<ReturnType<Native["optimizer"]["status"]>>;
@@ -287,7 +307,8 @@ async function agentHtml(workspaceId: string, native: Native, host: HostSession,
   ].join("");
   const body = `<div class="form-stack">${view.focus === key ? feedback(view) : ""}<ul class="token-optimizer__status">${status}</ul>${notes}${actions ? buttonGroupHtml({ orientation: "horizontal", semantics: "layout", itemsHtml: actions }) : ""}
     <div class="token-optimizer__details">${factsHtml(workspaceId, agentId, data, mode)}${toolsHtml(workspaceId, agentId, data, mode, native.lastPick(host.conversationId))}${nudgesHtml(data, nudges)}</div>
-    ${row("This Agent", overrideForm(workspaceId, agentId, config.agents[key] ?? "inherit", "Optimizer for this Agent"))}
+    ${row("Optimisation", overrideForm(workspaceId, agentId, config.agents[key] ?? "inherit", "Optimisation for this Agent"))}
+    ${row("Task oversight", overrideForm(workspaceId, agentId, (config.oversightAgents ?? (config.policy.oversightMode === undefined ? config.agents : {}))[key] ?? "inherit", "Task oversight for this Agent", "oversight"))}
     ${await troubleshootingHtml(workspaceId, agentId, data)}</div>`;
   return disclosureHtml({ open: view.focus === key, summary: { kind: "multiline", label: { kind: "text", text: title }, description: summary }, bodyHtml: body });
 }
@@ -295,10 +316,18 @@ async function agentHtml(workspaceId: string, native: Native, host: HostSession,
 /** Saved overrides for workspaces that aren't running, so they can still be changed or cleared. */
 async function savedOverridesHtml(config: OptimizerConfig, running: Set<string>) {
   const rows: string[] = [];
-  const workspaces = new Set([...Object.keys(config.workspaces), ...Object.keys(config.agents).map(key => parseOverrideKey(key)[0])].filter(id => !running.has(id)));
+  const oversightWorkspaces = config.oversightWorkspaces ?? (config.policy.oversightMode === undefined ? config.workspaces : {});
+  const oversightAgents = config.oversightAgents ?? (config.policy.oversightMode === undefined ? config.agents : {});
+  const agentKeys = new Set([...Object.keys(config.agents), ...Object.keys(oversightAgents)]);
+  const workspaces = new Set([...Object.keys(config.workspaces), ...Object.keys(oversightWorkspaces), ...[...agentKeys].map(key => parseOverrideKey(key)[0])].filter(id => !running.has(id)));
   for (const workspaceId of [...workspaces].sort()) {
-    const name = await readWorkspaceTitle(workspaceId) || workspaceId, agents = Object.entries(config.agents).filter(([key]) => parseOverrideKey(key)[0] === workspaceId);
-    rows.push(`<div class="token-optimizer__saved">${row(name, overrideForm(workspaceId, "", config.workspaces[workspaceId] ?? "inherit", `Optimizer for ${name}`))}${agents.map(([key, mode]) => { const agentId = parseOverrideKey(key)[1];return row(`Agent ${agentId}`, overrideForm(workspaceId, agentId, mode, `Optimizer for Agent ${agentId}`)); }).join("")}</div>`);
+    const name = await readWorkspaceTitle(workspaceId) || workspaceId;
+    const workspace = row(name, overrideForm(workspaceId, "", config.workspaces[workspaceId] ?? "inherit", `Optimisation for ${name}`) + overrideForm(workspaceId, "", oversightWorkspaces[workspaceId] ?? "inherit", `Task oversight for ${name}`, "oversight"));
+    const agents = [...agentKeys].filter(key => parseOverrideKey(key)[0] === workspaceId).map(key => {
+      const agentId = parseOverrideKey(key)[1];
+      return row(`Agent ${agentId}`, overrideForm(workspaceId, agentId, config.agents[key] ?? "inherit", `Optimisation for Agent ${agentId}`) + overrideForm(workspaceId, agentId, oversightAgents[key] ?? "inherit", `Task oversight for Agent ${agentId}`, "oversight"));
+    }).join("");
+    rows.push(`<div class="token-optimizer__saved">${workspace}${agents}</div>`);
   }
   return rows.length ? disclosure(`Saved settings for other workspaces (${rows.length})`, `<p class="settings-help">These workspaces aren’t running. Choose “Use main setting” to clear an override.</p>${rows.join("")}`) : "";
 }
@@ -311,7 +340,7 @@ async function agentsHtml(config: OptimizerConfig, view: View) {
     running.add(workspaceId);
     const rows: string[] = [];
     for (const host of hosts) rows.push(await agentHtml(workspaceId, native, host, config, view));
-    groups.push(`<section class="token-optimizer__workspace"><div class="token-optimizer__workspace-head"><h4>${h(await native.workspaceTitle())}</h4>${overrideForm(workspaceId, "", config.workspaces[workspaceId] ?? "inherit", "Optimizer for this workspace")}</div>${rows.join("")}</section>`);
+    groups.push(`<section class="token-optimizer__workspace"><div class="token-optimizer__workspace-head"><h4>${h(await native.workspaceTitle())}</h4>${overrideForm(workspaceId, "", config.workspaces[workspaceId] ?? "inherit", "Optimisation for this workspace")}${overrideForm(workspaceId,"",(config.oversightWorkspaces ?? (config.policy.oversightMode === undefined ? config.workspaces : {}))[workspaceId] ?? "inherit","Task oversight for this workspace","oversight")}</div>${rows.join("")}</section>`);
   }
   const refresh = actionLinkHtml({ href: "/settings/sections/token-optimizer", variant: "secondary", content: { kind: "caption", caption: "Refresh" }, attributesHtml: 'data-turbo-frame="app_settings_section_token-optimizer"' });
   return `<div class="token-optimizer__agents form-stack"><div class="token-optimizer__agents-head"><h3>Agents</h3>${refresh}</div>${groups.join("") || '<p class="settings-help">No built-in Agents are open. Your settings apply as soon as one starts.</p>'}${await savedOverridesHtml(config, running)}</div>`;
@@ -320,12 +349,22 @@ async function agentsHtml(config: OptimizerConfig, view: View) {
 export async function renderTokenOptimizerSettings(view: View = {}) {
   const config = view.draft ?? await tokenOptimizerConfiguration().load(), catalogue = await readPiModelCatalogue();
   return `<section class="settings-sec token-optimizer" id="${panel}">
-    <p>Saves tokens for built-in Agents. It remembers facts about each repository, nudges runs that go in circles and hides tools that never get used. CLI Agents are unaffected.</p>
+    <p>Two independent controls for built-in Agents. Changes do not affect CLI Agents.</p>
     <p class="settings-help">Learning checks completed tool results between replies; it does not wait for the session to end. Review proposed facts directly in the transcript.</p>
-    ${view.focus || view.form ? "" : feedback(view)}
+    ${view.focus || view.form || view.oversightForm ? "" : feedback(view)}
     ${settingsForm(config, catalogue, view)}
+    ${oversightForm(config, catalogue, view)}
     ${await agentsHtml(config, view)}
   </section>`;
+}
+
+async function settingsUpdate(view:View) {
+  if (!view.form && !view.oversightForm) return turboStream("replace",panel,await renderTokenOptimizerSettings(view));
+  // Replace only the submitted form; the other form may have an unsaved draft.
+  const config = view.draft ?? tokenOptimizerConfiguration().snapshot(), catalogue = await readPiModelCatalogue();
+  return view.oversightForm
+    ? turboStream("replace",oversightFormId,oversightForm(config,catalogue,view))
+    : turboStream("replace",optimisationFormId,settingsForm(config,catalogue,view));
 }
 
 /** Reads the progressive form. Presets own the feature choices; Advanced fields refine limits and models. */
@@ -371,11 +410,11 @@ function policyFromForm(form: FormData, current: Policy) {
     Object.assign(policy, { thresholds });
   }
   if (preset === "custom") {
-    if (form.has("nativeChecks")) {policy.reduceOutputs = form.get("reduceOutputs") === "true";policy.offloadOutputs = form.get("offloadOutputs") === "true";policy.goalChecks = form.get("goalChecks") === "true";}
+    if (form.has("nativeChecks")) {policy.reduceOutputs = form.get("reduceOutputs") === "true";policy.offloadOutputs = form.get("offloadOutputs") === "true";}
     for (const name of ["microSkills", "loop", "judge", "level", "pruning", "toolJudge"] as const) if (form.has(name)) Object.assign(policy, { [name]: text(name) });
     policy.redirects = number("redirects", "Nudges per prompt", policy.redirects, { max: 10 });
     if (form.has("savers.auditPercent")) {
-      for (const name of saverNames) policy.savers[name] = form.get(`savers.${name}`) === "true";
+      for (const name of ["toolPrefilter","localToolDrops","novelty"] as const) policy.savers[name] = form.get(`savers.${name}`) === "true";
       policy.savers.auditPercent = number("savers.auditPercent", "Double-check percentage", policy.savers.auditPercent, { min: 0, max: 20 });
     }
   } else applyPreset(policy, preset);
@@ -383,9 +422,9 @@ function policyFromForm(form: FormData, current: Policy) {
 }
 
 const actionSchema = Type.Object({reviewKey:Type.Optional(Type.String({pattern:"^[a-f0-9]{64}$"})),workspaceId:Type.String({minLength:1,maxLength:256}),agentId:Type.String({minLength:1,maxLength:256}),names:Type.Optional(Type.Array(Type.String({minLength:1,maxLength:256}),{maxItems:1000})),confirmed:Type.Optional(Type.Boolean()),sampleId:Type.Optional(Type.String({maxLength:256})),label:Type.Optional(Type.Union([Type.Literal(0),Type.Literal(1)])),unsafeArtifactId:Type.Optional(Type.String({maxLength:256})),task:Type.Optional(Type.String({maxLength:16000})),requestId:Type.Optional(Type.String({maxLength:256})),factId:Type.Optional(Type.String({minLength:1,maxLength:512})),factSource:Type.Optional(Type.Enum(["environment","distilled"])),decision:Type.Optional(Type.Enum(["approved","rejected","stale"])),claimRevision:Type.Optional(Type.String({minLength:1,maxLength:128})),note:Type.Optional(Type.String({maxLength:500}))},{additionalProperties:false});
-const overrideSchema = Type.Object({workspaceId:Type.String({minLength:1,maxLength:256}),agentId:Type.Optional(Type.String({maxLength:256})),mode:Type.Enum(["inherit","off","observe","active"])},{additionalProperties:false});
+const overrideSchema = Type.Object({workspaceId:Type.String({minLength:1,maxLength:256}),agentId:Type.Optional(Type.String({maxLength:256})),mode:Type.Enum(["inherit","off","observe","active"]),feature:Type.Optional(Type.Enum(["optimisation","oversight"]))},{additionalProperties:false});
 export const tokenOptimizerSettingsContribution:SettingsContribution = {id:"token-optimizer",label:"Token optimizer",order:29,render:() => renderTokenOptimizerSettings(),renderFocused:focus => renderTokenOptimizerSettings({focus}),async handleAction({request,url}) {
-  if (!/^\/settings\/token-optimizer(?:\/(?:override|apply|restore|retry|refit|clear|review|prepare|remove-context|fact-review|stale-facts))?$/.test(url.pathname)) return;
+  if (!/^\/settings\/token-optimizer(?:\/(?:oversight|override|apply|restore|retry|refit|clear|review|prepare|remove-context|fact-review|stale-facts))?$/.test(url.pathname)) return;
   const service = tokenOptimizerConfiguration();await service.load();
   if (request.method === "GET" && url.pathname === "/settings/token-optimizer") return Response.json({config:service.snapshot(),workspaces:nativeTokenOptimizers().map(([id]) => id)},{headers:{"cache-control":"no-store"}});
   if (request.method !== "POST") return;
@@ -393,22 +432,47 @@ export const tokenOptimizerSettingsContribution:SettingsContribution = {id:"toke
   const view:View = {};
   let inline: {key:string;workspaceId:string;agentId:string;fact:FactSummary}|undefined;
   try {
-    const config = service.snapshot(), form = json ? null : await request.formData();view.message = "Saved.";
+    const form = json ? null : await request.formData();view.message = "Saved.";
     if (url.pathname === "/settings/token-optimizer") {
       if (json) await service.configure(parseOptimizerConfig(await request.json()));
       else {
-        view.form = true;const read = policyFromForm(form!,config.policy);config.policy = read.policy;view.draft = config;
-        if (read.preset === "assisted" && read.policy.enabled && !modelFor(read.policy,"proposer")) throw new Error("Pick a model for Model-assisted, or choose Basic.");
-        const saved = await service.configure(config);view.draft = undefined;
-        view.message = read.mode === "active" && saved.policy.mode === "observe" ? "Started in Watch only. Switch to On once you like what it suggests." : read.mode === "off" ? "Saved. The optimizer is off." : "Saved. Agents pick this up from their next step.";
+        view.form = true;
+        const saved = await service.update(config => {
+          splitOptimizerPolicy(config);const read = policyFromForm(form!,config.policy);config.policy = read.policy;view.draft = config;
+          if (read.preset === "assisted" && read.policy.enabled && !modelFor(read.policy,"proposer")) throw new Error("Pick a model for Model-assisted, or choose Basic.");
+          return config;
+        });
+        view.draft = undefined;
+        view.message = form!.get("mode") === "active" && saved.policy.mode === "observe" ? "Started in Watch only. Switch to On once you like what it suggests." : !saved.policy.enabled ? "Saved. Token optimisation is off." : "Saved. Agents pick this up from their next step.";
       }
+    } else if (url.pathname.endsWith("/oversight")) {
+      if (!form) throw new Error("Expected oversight form fields.");
+      view.oversightForm = true;
+      await service.update(config => {
+        splitOptimizerPolicy(config);
+        const policy = config.policy;
+        Object.assign(policy,{oversightMode:form.get("oversightMode"),goalChecks:form.get("goalChecks") === "true",loop:form.get("loop"),judge:form.get("judge"),oversightInferenceInObserve:form.get("oversightInferenceInObserve") === "true",sharePlanWithJudge:form.get("sharePlanWithJudge") === "true",redirects:Number(form.get("redirects"))});
+        if (form.has("level")) Object.assign(policy,{level:form.get("level")});
+        if (form.has("thresholds")) Object.assign(policy,{thresholds:JSON.parse(String(form.get("thresholds") || "{}"))});
+        if (form.has("oversightAdvanced")) for (const key of ["templates","reuse","compact","localLoop","authorizeLocalStuck"] as const) policy.savers[key] = form.get(`savers.${key}`) === "true";
+        for (const name of ["loopJudge","writer","loopClassifier"] as const) {const field = form.get(`models.${name}`);if (field !== null) {const value:unknown = field ? JSON.parse(String(field)) : null;if (value !== null) Value.Assert(modelRefSchema,value);policy.models[name] = value;}}
+        view.draft = {...config,policy:parsePolicy(policy)};
+        return view.draft;
+      });
+      view.draft = undefined;view.message = "Task oversight saved. Optimisation is unchanged.";
     } else if (url.pathname.endsWith("/override")) {
-      const raw:unknown = json ? await request.json() : {workspaceId:String(form!.get("workspaceId")),agentId:String(form!.get("agentId") ?? ""),mode:String(form!.get("mode"))};
+      const raw:unknown = json ? await request.json() : {workspaceId:String(form!.get("workspaceId")),agentId:String(form!.get("agentId") ?? ""),mode:String(form!.get("mode")),feature:String(form!.get("feature") ?? "optimisation")};
       Value.Assert(overrideSchema,raw);
-      const scope = raw.agentId ? config.agents : config.workspaces, key = raw.agentId ? JSON.stringify([raw.workspaceId,raw.agentId]) : raw.workspaceId;
-      if (raw.mode === "inherit") delete scope[key];else scope[key] = raw.mode;
-      if (raw.agentId) view.focus = key;
-      await service.configure(config);view.message = undefined;
+      const {feature,agentId,workspaceId,mode} = raw;
+      const key = agentId ? JSON.stringify([workspaceId,agentId]) : workspaceId;
+      if (agentId) view.focus = key;
+      await service.update(config => {
+        if (feature === "oversight" || !json) splitOptimizerPolicy(config);
+        const scope = feature === "oversight" ? agentId ? (config.oversightAgents ??= {}) : (config.oversightWorkspaces ??= {}) : agentId ? config.agents : config.workspaces;
+        if (mode === "inherit") delete scope[key];else scope[key] = mode;
+        return config;
+      });
+      view.message = undefined;
     } else {
       const raw:unknown = json ? await request.json() : {workspaceId:String(form!.get("workspaceId")),agentId:String(form!.get("agentId"))};
       if (form) {
@@ -440,11 +504,11 @@ export const tokenOptimizerSettingsContribution:SettingsContribution = {id:"toke
       else {if (!raw.task?.trim()) throw new Error("Describe the task first.");await native.prepare(host,raw.task,raw.requestId ?? "");view.message = (await native.optimizer.status(host)).policy.mode === "active" ? "Tools picked. The Agent uses them from its next request." : "Picks recorded. Watch only leaves the toolset unchanged.";}
     }
     if (inline && !json) return turboStreamResponse(turboStream("replace",factReviewTarget(inline.key),inlineFactReview(inline,inline.key,inline.fact,view.message)));
-    return json ? Response.json({config:service.snapshot(),message:view.message}) : turboStreamResponse(turboStream("replace",panel,await renderTokenOptimizerSettings(view)));
+    return json ? Response.json({config:service.snapshot(),message:view.message}) : turboStreamResponse(await settingsUpdate(view));
   } catch (error) {
     const message = errorMessage(error);
     if (inline && !json) return turboStreamResponse(turboStream("replace",factReviewTarget(inline.key),inlineFactReview(inline,inline.key,inline.fact,message)),{status:422});
-    return json ? Response.json({error:{code:"invalid_arguments",message}},{status:400}) : turboStreamResponse(turboStream("replace",panel,await renderTokenOptimizerSettings({...view,message,error:true})),{status:422});
+    return json ? Response.json({error:{code:"invalid_arguments",message}},{status:400}) : turboStreamResponse(await settingsUpdate({...view,message,error:true}),{status:422});
   }
 }};
 

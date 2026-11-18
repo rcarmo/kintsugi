@@ -4,7 +4,7 @@ import {join} from "node:path";
 import {tmpdir} from "node:os";
 import {BACKGROUND_CONTEXT as context} from "@earendil-works/chord/context";
 import {contentText,createModels,fauxProvider,fauxAssistantMessage,fauxToolCall} from "@earendil-works/pi-ai";
-import {createRegistry,defineExtension,defineTool,Harness,MemoryStorage,ToolResultEntry,CompactionEntry,UserEntry} from "@earendil-works/pi-durable";
+import {LiveDoc,createRegistry,defineExtension,defineTool,Harness,MemoryStorage,ToolResultEntry,CompactionEntry,UserEntry} from "@earendil-works/pi-durable";
 import {openNodeJsonlStorage} from "@earendil-works/pi-durable/storage/jsonl/node";
 import {Type} from "typebox";
 import {CodemodeSandbox} from "@earendil-works/pi-codemode";
@@ -13,15 +13,17 @@ import {createNativeTokenOptimizer} from "../../src/server/token-optimizer.ts";
 import {TokenOptimizerConfiguration} from "../../src/server/token-optimizer-config.ts";
 import {OptimizerOperationEntry} from "../../src/server/token-optimizer-operations.ts";
 import {codemodeCallEntry} from "../../src/server/codemode-call.ts";
+import {OptimizerPlanBinding,optimizerPlanTask} from "../../src/server/optimizer-plan-binding.ts";
 import {GoalContextEntry} from "../../src/server/token-optimizer-goals.ts";
 import {agentPlanStore} from "@kintsugi/agent/server/plan";
 import {WorkspaceAgents} from "../../src/server/durable-workspace.ts";
-import {ObservationsDoc,RunDoc} from "../../../token-economizer/src/pi-durable/documents.ts";
+import {GuardJobsDoc,JobsDoc,KnowledgeDoc,ObservationsDoc,RunDoc} from "../../../token-economizer/src/pi-durable/documents.ts";
+import {scopeKey} from "@kintsugi/token-economizer/core";
 import {sessionKey} from "../../../token-economizer/src/core/sessions.ts";
 const cleanup:(()=>Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
 const raw=Array.from({length:100},(_,i)=>`(pass) fixture > case ${i} [0.1ms]`).join("\n")+"\n100 pass\n0 fail\nRan 100 tests across 8 files.";
-async function setup(mode:"off"|"observe"|"active"="active",persistent=false,retry=false) {
+async function setup(mode:"off"|"observe"|"active"="active",persistent=false,retry=false,failing=false) {
   const dir=await mkdtemp(join(tmpdir(),"optimizer-native-features-")),old=process.env.KINTSUGI_DATA_DIR;process.env.KINTSUGI_DATA_DIR=dir;
   cleanup.push(async()=>{if(old===undefined)delete process.env.KINTSUGI_DATA_DIR;else process.env.KINTSUGI_DATA_DIR=old;await rm(dir,{recursive:true,force:true});});
   const configuration=new TokenOptimizerConfiguration(dir);await configuration.load();const config=configuration.snapshot();Object.assign(config.policy,{enabled:mode!=="off",mode,reduceOutputs:true,goalChecks:true});await configuration.configure(config);
@@ -29,14 +31,14 @@ async function setup(mode:"off"|"observe"|"active"="active",persistent=false,ret
   const models=createModels(),faux=fauxProvider({tokensPerSecond:100000});models.setProvider(faux.provider);
   const registry=createRegistry();let harness:Harness,calls=0;
   registry.install(createWorkspaceCodemodeExtension("fixture",new CodemodeSandbox(),async()=>({text:""})));
-  registry.install(defineExtension({name:"fixtures",tools:[defineTool({name:"bash",description:"Run",parameters:Type.Object({command:Type.String()}),structuredOutputSchema:Type.Object({output:Type.String(),exitCode:Type.Integer(),truncated:Type.Boolean(),timedOut:Type.Boolean(),aborted:Type.Boolean()}),replay:"safe",async execute(){calls++;return {output:[{type:"text",text:raw}],structuredOutput:{output:raw,exitCode:0,truncated:false,timedOut:false,aborted:false},details:{fullOutputPath:"/tmp/full-fixture.log",exitCode:0,displayAnsi:raw}};}}),defineTool({name:"edit",description:"Edit",parameters:Type.Object({path:Type.String()}),replay:"safe",async execute(){calls++;return {output:[{type:"text",text:"Edited"}]};}})]}));
+  registry.install(defineExtension({name:"fixtures",tools:[defineTool({name:"bash",description:"Run",parameters:Type.Object({command:Type.String()}),structuredOutputSchema:Type.Object({output:Type.String(),exitCode:Type.Integer(),truncated:Type.Boolean(),timedOut:Type.Boolean(),aborted:Type.Boolean()}),replay:"safe",async execute(){calls++;const log=failing?"AssertionError: unexpected parser output":raw, exitCode=failing?1:0;return {output:[{type:"text",text:log}],structuredOutput:{output:log,exitCode,truncated:false,timedOut:false,aborted:false},details:{fullOutputPath:"/tmp/full-fixture.log",exitCode,displayAnsi:log}};}}),defineTool({name:"edit",description:"Edit",parameters:Type.Object({path:Type.String()}),replay:"safe",async execute(){calls++;return {output:[{type:"text",text:"Edited"}]};}})]}));
   const native=createNativeTokenOptimizer({workspaceId:"fixture",models,registry,harness:()=>harness,configuration});registry.install(native.optimizer.extension);
   const open=async()=>Harness.open(persistent?await openNodeJsonlStorage(join(dir,"journal"),context):new MemoryStorage(),{models,registry,settings:{retry:{enabled:retry,baseDelayMs:1,maxRetries:1}}},context);
   harness=await open();cleanup.push(async()=>{await native.close();await harness.close(context);});
   const conversation=await harness.root(context);await conversation.configure({model:{provider:"faux",modelId:"faux-1"},instructions:"Fixture instructions"},context);
   await native.attach();const host=(await native.start(conversation,{agentId:"agent"}))!;
   const entries=async()=>(await conversation.entries({order:"ascending"},1000,undefined,context)).items;
-  return {configuration,native,faux,host,conversation,entries,get harness(){return harness;},calls:()=>calls,async reopen(){await native.detach();await harness.close(context);harness=await open();return (await harness.conversation(conversation.id,context))!;}};
+  return {configuration,native,models,faux,host,conversation,entries,get harness(){return harness;},calls:()=>calls,async reopen(){await native.detach();await harness.close(context);harness=await open();return (await harness.conversation(conversation.id,context))!;}};
 }
 for(const mode of ["off","observe","active"] as const)test(`direct bash reducer: ${mode}, raw learning evidence and no extra calls`,async()=>{
   const f=await setup(mode);f.faux.setResponses([fauxAssistantMessage([fauxToolCall("bash",{command:"bun test"})],{stopReason:"toolUse"}),request=>{const output=request.messages.filter(message=>message.role==="toolResult").map(message=>contentText(message.content)).join("\n");expect(output.includes("Output reduced")).toBe(mode==="active");return fauxAssistantMessage("Done");}]);
@@ -127,5 +129,87 @@ test("explicit steering changes the quoted goal without treating automated conte
   const f=await setup();
   f.faux.setResponses([async()=>{await f.conversation.submit({type:"input",content:"Instead fix the serializer, no deployment",whenBusy:"steer",whenIdle:"reject"},context);return fauxAssistantMessage([fauxToolCall("codemode",{code:'for(let i=0;i<4;i++)await tools.edit({path:"serializer.ts"});'})],{stopReason:"toolUse"});},request=>{const note=request.messages.filter(message=>message.role==="user"&&contentText(message.content).startsWith("Task check (automated")).at(-1)!;expect(contentText(note.content)).toContain("Instead fix the serializer, no deployment");return fauxAssistantMessage("Done");}]);
   await(await f.conversation.submit({type:"input",content:"Fix parser"},context)).wait(context);
+  expect((await f.entries()).filter(GoalContextEntry.is)).toHaveLength(1);
+});
+
+for (const scenario of ["active","changed plan","observe","old plan","no consent","standalone","revoked on retry","changed while queued","changed during SDK auth"] as const) test(`existing loop judge supplies goal oversight: ${scenario}`, async () => {
+  const mode=scenario==="observe"?"observe":"active",f=await setup(mode,false,scenario==="revoked on retry",true);
+  const config=f.configuration.snapshot();Object.assign(config.policy,{loop:"judge",sharePlanWithJudge:scenario!=="no consent",inferenceInObserve:true,generativeModel:{provider:"faux",id:"faux-1"},thresholds:{min_turns:1,gate_min_turns:1,gate_error_outputs:1}});await f.configuration.configure(config);
+  if(scenario==="changed while queued"){const options=f.configuration.snapshot();Object.assign(options.policy,{offloadOutputs:true,outputSummaries:true});await f.configuration.configure(options);}
+  const planStore=agentPlanStore();const planned=planStore.change("fixture","agent",{action:"update",plan:[{step:"Verify parser edge cases",status:"in_progress"},{step:"Unrelated private plan item",status:"pending"}]});
+  await f.harness.commit(async tx=>{(await tx.doc(KnowledgeDoc,scopeKey(f.host.scope),f.host.scope)).envelope.resolved_turns=[40,40,40,40,40];},context);
+  let main=0,judges=0,plansSent=0;
+  const ready = Promise.withResolvers<void>();
+  const queued = scenario==="changed while queued", duringAuth = scenario==="changed during SDK auth";
+  if(duringAuth){
+    const complete=f.models.completeSimple.bind(f.models);
+    f.models.completeSimple=(model,request,options)=>complete(model,request,{...options,async transformHeaders(headers){
+      if(request.messages.some(message=>message.role==="user"&&contentText(message.content).includes("Active plan item (quoted task data"))) planStore.change("fixture","agent",{action:"update",plan:[{step:"New item after auth",status:"in_progress"}]});
+      return await options?.transformHeaders?.(headers)??headers;
+    }});
+  }
+  cleanup.push(async()=>ready.resolve());
+  f.faux.setResponses(Array.from({length:8},()=>async request=>{
+    const prompt=contentText(request.messages[0]?.content??"");
+    if(prompt.includes("Summarise this tool output")){await ready.promise;return fauxAssistantMessage("Fixture summary");}
+    if (prompt.includes("Return the JSON verdict:")) {
+      judges++;const hasPlan=prompt.includes("Verify parser edge cases");if(hasPlan)plansSent++;
+      const shared=scenario!=="old plan"&&scenario!=="no consent"&&!queued&&!duringAuth;expect(hasPlan).toBe(shared);expect(prompt).not.toContain("Unrelated private plan item");expect(prompt).not.toContain("Private user request text");
+      await ready.promise;
+      const verdict={stuck:false,confidence:1,reason:"No stagnant loop"};
+      return fauxAssistantMessage(JSON.stringify(shared?{...verdict,goal:{drift:true,confidence:1}}:verdict));
+    }
+    if (prompt.includes("Write the redirect:")) throw Error("Goal drift must not start a writer call");
+    main++;
+    if(main===1 && scenario!=="old plan") await f.harness.commit(async tx=>{const run=(await tx.doc(LiveDoc,f.conversation.id)).run;Object.assign(await tx.doc(OptimizerPlanBinding,f.conversation.id),{revision:planned.revision,task:optimizerPlanTask(run)});},context);
+    if(main===1 && queued) void f.native.optimizer.summarizeOutput(f.conversation.id,{id:"queue-fixture",tool:"bash",label:"test fixture",text:"synthetic",lines:1,bytes:9},10000);
+    if (main===2) {
+      if(queued){
+        let found=false;
+        for(let i=0;i<200&&!found;i++){const jobs=Object.values((await f.harness.snapshot(JobsDoc,context))?.jobs??{});found=jobs.some(job=>job.request.includesPlan&&job.status==="queued");if(!found)await Bun.sleep(5);}
+        planStore.change("fixture","agent",{action:"update",plan:[{step:"New task item",status:"in_progress"}]});
+        ready.resolve();expect(found).toBe(true);
+      }
+      ready.resolve();
+      for (let attempt=0;attempt<100;attempt++) {
+        const jobs=Object.values((await f.harness.snapshot(GuardJobsDoc,context))?.jobs??{});
+        if (jobs.some(job=>job.status==="complete")) break;
+        await Bun.sleep(5);
+      }
+      if (scenario==="changed plan") planStore.change("fixture","agent",{action:"update",plan:[{step:"Check serializer instead",status:"in_progress"}]});
+    }
+    if (main<3 && scenario==="standalone") return fauxAssistantMessage([fauxToolCall("bash",{command:`bun test case-${main}.test.ts`})],{stopReason:"toolUse"});
+    if (main<3) return fauxAssistantMessage([fauxToolCall("codemode",{code:`for (let i=0;i<4;i++) await tools.bash({command: "bun test case-${main}-"+i+".test.ts"});`})],{stopReason:"toolUse"});
+    const texts=request.messages.filter(message=>message.role==="user").map(message=>contentText(message.content));
+    expect(texts.some(text=>text.includes("Recent actions may not be advancing"))).toBe(scenario==="active"||scenario==="standalone"||scenario==="revoked on retry"&&main===3);
+    if(scenario==="revoked on retry"&&main===3){const config=f.configuration.snapshot();config.policy.sharePlanWithJudge=false;await f.configuration.configure(config);return fauxAssistantMessage("",{stopReason:"error",errorMessage:"429 rate limit exceeded"});}
+    return fauxAssistantMessage("Done");
+  }));
+  expect((await(await f.conversation.submit({type:"input",content:"Private user request text"},context)).wait(context)).status).toBe("done");
+  await f.native.optimizer.drained();
+  const notes=(await f.entries()).filter(OptimizerOperationEntry.is).filter(entry=>entry.data.name==="optimizer.goal-check" && entry.data.input.reason==="goal-drift");
+  expect(notes.at(-1)?.data.output?.delivery).toBe((scenario==="active"||scenario==="standalone"||scenario==="revoked on retry")?"consumed":scenario==="observe"?"simulated":undefined);
+  const jobs=await f.harness.snapshot(JobsDoc,context);
+  if(queued || duringAuth) {
+    const obsolete=Object.values(jobs!.jobs).find(job=>job.request.includesPlan);
+    expect(obsolete?.status).toBe("cancelled");expect(obsolete?.result).toBeNull();
+    expect(jobs?.budget.ledger.find(row=>row.id===obsolete?.id)?.cost).toBe(0);
+    expect(plansSent).toBe(0);
+  } else {
+    expect(jobs?.budget.ledger.map(row=>row.purpose)).toEqual(["loop-judge"]);expect(judges).toBe(1);
+  }
+  expect(main).toBe(scenario==="revoked on retry"?4:3);
+},15_000);
+
+test("a provider retry cannot replay a goal nudge after switching to Watch only",async()=>{
+  const f=await setup("active",false,true);const seen:boolean[]=[];
+  const hasAdvice=(messages:Parameters<typeof contentText>[0][])=>messages.some(content=>contentText(content).includes("Task check (automated"));
+  f.faux.setResponses([fauxAssistantMessage([fauxToolCall("codemode",{code:'for(let i=0;i<4;i++)await tools.edit({path:"src/parser.ts"});'})],{stopReason:"toolUse"}),async request=>{
+    seen.push(hasAdvice(request.messages.filter(message=>message.role==="user").map(message=>message.content)));
+    const config=f.configuration.snapshot();config.policy.oversightMode="observe";await f.configuration.configure(config);
+    return fauxAssistantMessage("",{stopReason:"error",errorMessage:"429 rate limit exceeded"});
+  },request=>{seen.push(hasAdvice(request.messages.filter(message=>message.role==="user").map(message=>message.content)));return fauxAssistantMessage("Done");}]);
+  expect((await(await f.conversation.submit({type:"input",content:"Fix parser"},context)).wait(context)).status).toBe("done");
+  expect(seen).toEqual([true,false]);
   expect((await f.entries()).filter(GoalContextEntry.is)).toHaveLength(1);
 });

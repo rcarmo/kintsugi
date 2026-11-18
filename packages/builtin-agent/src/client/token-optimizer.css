@@ -1,7 +1,14 @@
 /* Token optimizer Settings: presets first, details on demand. */
 .token-optimizer { display: grid; gap: 24px; min-width: 0; }
 .token-optimizer p { margin: 0; line-height: var(--leading-copy); }
-.token-optimizer__form { min-width: 0; }
+.token-optimizer__form {
+  min-width: 0;
+  padding: clamp(12px, 2.5vw, 20px);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+}
+.token-optimizer__form > .token-optimizer__subheading { margin-top: 0; }
 .token-optimizer__group { display: grid; gap: 8px; min-width: 0; margin: 0; padding: 0; border: 0; }
 .token-optimizer__legend { padding: 0; margin-bottom: 8px; color: var(--text-bright); font-weight: var(--weight-bold); }
 .token-optimizer__choices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; min-width: 0; }

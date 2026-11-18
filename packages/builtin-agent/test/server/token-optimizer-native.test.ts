@@ -71,6 +71,7 @@ for (const kind of ["memory","sqlite","jsonl"] as const) test(`native ${kind}: d
   const trajectory = await f.native.domain.trajectory(f.host,null);expect(trajectory.kind).toBe("ready");
   if (trajectory.kind !== "ready") throw new Error("Expected native trajectory");
   expect(trajectory.prompts).toBe(1);expect(trajectory.observations).toHaveLength(1);expect(trajectory.observations[0]).toMatchObject({tool:"bash",nested:true,exitCode:0,outcome:"success",coverage:"complete"});
+  expect(trajectory.work).toEqual({answeredTurns:1,tools:["shell"],checksAfterLastEdit:["bun test"]});
   await f.native.end(f.conversation.id);
   await settleLearning(f.harness);
   expect((await f.native.optimizer.status(f.host)).session?.folded).toBe(true);
@@ -185,13 +186,15 @@ test("Settings backend routes validate policies and native actions without start
   expect((await action("/clear",target)).status).toBe(400);expect((await action("/clear",{...target,confirmed:true})).status).toBe(200);expect((await action("/review",{...target,sampleId:"missing",label:0})).status).toBe(400);
   expect((await action("/override",{workspaceId:"fixture",mode:"off"})).status).toBe(200);expect((await action("/override",{...target,mode:"active"})).status).toBe(200);expect(service.policy("fixture","agent").mode).toBe("off");expect((await action("/refit",target)).status).toBe(400);
   const invalid = service.snapshot();invalid.policy.loop = "judge";expect((await action("",invalid)).status).toBe(400);expect((await action("/prepare",{...target,task:""})).status).toBe(400);
-  const html = await tokenOptimizerSettingsContribution.render();expect(html).toContain('name="mode" value="active" checked');expect(html).toContain('name="preset" value="custom" checked');expect(html).toContain("Troubleshooting");expect(html).toMatch(/Off(?: · [^<]*)?</);
-  const post = async (fields:[string,string][]) => {const body = new FormData();for (const [name,value] of fields) body.append(name,value);const request = new Request("http://fixture/settings/token-optimizer",{method:"POST",body});return (await tokenOptimizerSettingsContribution.handleAction!({request,url:new URL(request.url)}))!;};
+  const html = await tokenOptimizerSettingsContribution.render();expect(html).toContain('name="mode" value="active" checked');expect(html).toContain("Troubleshooting");expect(html).toMatch(/Off(?: · [^<]*)?</);
+  const post = async (fields:[string,string][],path="") => {const body = new FormData();for (const [name,value] of fields) body.append(name,value);const request = new Request("http://fixture/settings/token-optimizer"+path,{method:"POST",body});return (await tokenOptimizerSettingsContribution.handleAction!({request,url:new URL(request.url)}))!;};
   const refused = await post([["mode","active"],["preset","assisted"],["model",""]]);expect(refused.status).toBe(422);expect(await refused.text()).toContain("Pick a model for Model-assisted");expect(service.snapshot().policy.loop).toBe("off");
   expect((await post([["mode","observe"],["preset","basic"],["budget.callsPerSession","0"]])).status).toBe(422);
-  const basic = await post([["mode","observe"],["preset","basic"],["microSkills","both"]]);expect(basic.status).toBe(200);expect(service.snapshot().policy).toMatchObject({enabled:true,mode:"observe",microSkills:"envfacts",loop:"rules",pruning:"propose",toolJudge:"none"});
-  expect((await post([["mode","observe"],["preset","assisted"],["model",JSON.stringify({provider:"faux",id:"faux-1"})]])).status).toBe(200);expect(service.snapshot().policy).toMatchObject({microSkills:"both",loop:"judge",toolJudge:"generative",inferenceInObserve:false,generativeModel:{provider:"faux",id:"faux-1"}});
-  expect((await post([["mode","off"],["preset","custom"],["loop","rules"],["savers.auditPercent","5"],["savers.templates","true"]])).status).toBe(200);expect(service.snapshot().policy).toMatchObject({enabled:false,loop:"rules",savers:{templates:true}});expect(f.native.host(f.conversation.id).id).toBe(f.host.id);expect(f.faux.state.callCount).toBe(0);
+  const basic = await post([["mode","observe"],["preset","basic"],["microSkills","both"]]);expect(basic.status).toBe(200);expect(service.snapshot().policy).toMatchObject({enabled:true,mode:"observe",microSkills:"envfacts",oversightMode:"off",loop:"off",pruning:"propose",toolJudge:"none"});
+  expect((await post([["mode","observe"],["preset","assisted"],["model",JSON.stringify({provider:"faux",id:"faux-1"})]])).status).toBe(200);expect(service.snapshot().policy).toMatchObject({microSkills:"both",oversightMode:"off",loop:"off",toolJudge:"generative",inferenceInObserve:false,generativeModel:{provider:"faux",id:"faux-1"}});
+  expect((await post([["oversightMode","active"],["goalChecks","true"],["loop","rules"],["judge","generative"],["redirects","1"]],"/oversight")).status).toBe(200);
+  expect(service.snapshot().policy).toMatchObject({mode:"observe",oversightMode:"active",sharePlanWithJudge:false});
+  expect((await post([["mode","off"],["preset","custom"]])).status).toBe(200);expect(service.snapshot().policy).toMatchObject({enabled:false,oversightMode:"active",loop:"rules"});expect(f.native.host(f.conversation.id).id).toBe(f.host.id);expect(f.faux.state.callCount).toBe(0);
 },20_000);
 test("resuming a live native script freezes its mask until an idle start reads newly published policy",async () => {
   const f = await setup(), config = f.configuration.snapshot();config.policy.enabled = true;config.policy.pruning = "propose";await f.configuration.configure(config);const active = f.configuration.snapshot();active.policy.mode = "active";await f.configuration.configure(active);
@@ -686,3 +689,25 @@ for(const kind of ["memory","sqlite"] as const)test(`native ${kind}: inherited f
  for(let i=0;i<200&&((await f.native.optimizer.status(host)).session?.learning?.processed??0)<1;i++){await settleLearning(f.harness);await Bun.sleep(5);}
  expect((await f.native.optimizer.status(host)).knowledge!.environment.facts.find(f=>f.id==="absent_tool:pytest")!.life.confirms).toHaveLength(1);
 },20000);
+
+test("overlapping oversight and optimisation form saves preserve both changes",async()=>{
+  const path=await mkdtemp(join(tmpdir(),"optimizer-overlapping-")), old=process.env.KINTSUGI_DATA_DIR;process.env.KINTSUGI_DATA_DIR=path;
+  cleanups.push(async()=>{if(old===undefined)delete process.env.KINTSUGI_DATA_DIR;else process.env.KINTSUGI_DATA_DIR=old;await rm(path,{recursive:true,force:true});});
+  const service=tokenOptimizerConfiguration();await service.load();
+  const entered=Promise.withResolvers<void>(), release=Promise.withResolvers<void>();
+  function request(pathPart:string,fields:[string,string][]) {
+    const body=new FormData();for(const [key,value] of fields)body.set(key,value);
+    const url=new URL("http://fixture/settings/token-optimizer"+pathPart);return {request:new Request(url,{method:"POST",body}),url};
+  }
+  const delayed=request("",[["mode","observe"],["preset","basic"]]);
+  const parse=delayed.request.formData.bind(delayed.request);
+  delayed.request.formData=async()=>{entered.resolve();await release.promise;return parse();};
+  const pending=tokenOptimizerSettingsContribution.handleAction!(delayed);
+  await entered.promise;
+  try {
+    const saved=await tokenOptimizerSettingsContribution.handleAction!(request("/oversight",[["oversightMode","active"],["goalChecks","true"],["loop","rules"],["judge","generative"],["redirects","1"]]));
+    expect(saved?.status).toBe(200);
+  } finally {release.resolve();}
+  expect((await pending)?.status).toBe(200);
+  expect(service.snapshot().policy).toMatchObject({mode:"observe",enabled:true,oversightMode:"active",goalChecks:true});
+});

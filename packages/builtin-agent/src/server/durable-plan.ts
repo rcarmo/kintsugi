@@ -1,5 +1,6 @@
+import { OptimizerPlanBinding, optimizerPlanTask } from "./optimizer-plan-binding.ts";
 import { contentText } from "@earendil-works/pi-ai";
-import { defineDoc, defineEntry, defineExtension, defineTool, GenerationTask, hook, type Harness, type ConversationId } from "@earendil-works/pi-durable";
+import { defineDoc, defineEntry, defineExtension, defineTool, GenerationTask, LiveDoc, hook, type Harness, type ConversationId } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { agentPlanStore, agentPlanInputSchema, planToolDescription, planToolOutput } from "@kintsugi/agent/server/plan";
 import { compactLegacyPlanHistory, planContextPrefix } from "./plan-context.ts";
@@ -23,8 +24,16 @@ export function createNativePlanExtension(workspaceId: string, harness: () => Ha
   }
   return defineExtension({ name: "kintsugi.agent-plan", tools: [defineTool({
     name: "plan", description: planToolDescription, parameters: agentPlanInputSchema, replay: "unsafe",
-    async execute(input, api) {
-      const plan = agentPlanStore().change(workspaceId, await identity(api.conversationId), input);
+    async execute(input, api, context) {
+      const agentId = await identity(api.conversationId), store = agentPlanStore();
+      const admittedTask = optimizerPlanTask((await api.snapshot(LiveDoc,api.conversationId,context))?.run);
+      const prior = store.read(workspaceId,agentId).revision;
+      const plan = store.change(workspaceId,agentId,input);
+      if (plan.revision !== prior) await harness().commit(async tx => {
+        const task = optimizerPlanTask((await tx.doc(LiveDoc,api.conversationId)).run);
+        if (task === null || task !== admittedTask) return;
+        Object.assign(await tx.doc(OptimizerPlanBinding,api.conversationId),{revision:plan.revision,task});
+      },context);
       return { output: [{ type: "text", text: planToolOutput(input, plan) }] };
     },
   })], hooks: [hook(GenerationTask, {

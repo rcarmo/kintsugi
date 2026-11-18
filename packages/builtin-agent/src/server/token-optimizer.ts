@@ -5,9 +5,10 @@ import { captureMark, conversationLineage, workspaceAgentDatabase, type AgentDat
 import { codemodeTemplateRunEndEntry } from "./durable-codemode-templates.ts";
 import { durablePlanContextEntry } from "./durable-plan.ts";
 import { isFinalAssistantMessage } from "@kintsugi/agent/server/transcript";
+import { OptimizerPlanBinding, optimizerPlanTask } from "./optimizer-plan-binding.ts";
 import { createOptimizerGoalsExtension, GoalContextEntry } from "./token-optimizer-goals.ts";
 import { agentPlanStore } from "@kintsugi/agent/server/plan";
-import { contextSection, fingerprint, scopeKey, sessionKey, type AttachmentType, type LearningSession } from "@kintsugi/token-economizer/core";
+import { contextSection, fingerprint, judgeGoal, scopeKey, sessionKey, type AttachmentType, type LearningSession } from "@kintsugi/token-economizer/core";
 import { createSdkModelTransport, createTokenEconomizer, decodeArguments, decodeResult, detach, KnowledgeDoc, RunDoc, runIdentity, SessionsDoc, SteeringEntry, FactContextEntry, type HostDomain, type HostSession, type Knowledge } from "@kintsugi/token-economizer/pi-durable";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import type { Models } from "@earendil-works/pi-ai";
@@ -173,7 +174,21 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
     },
   };
   const transport = createSdkModelTransport(options.models);
-  const optimizer = createTokenEconomizer({harness:options.harness,backgroundOwner:() => {if (maintenance === undefined) throw new Error("Optimizer maintenance owner is not attached");return maintenance;},domain,...transport,onOperation:recordOptimizerOperation,policy:host => options.configuration.policy(options.workspaceId,actor(host)),onNotice:async notice => {if (["tools-applied","tools-restored","tool-publication-refused","still-stuck"].includes(notice.code)) return;const rows = (await options.harness().snapshot(NativeOptimizerSessions,context))?.sessions, host = rows?.[notice.sessionId]?.host ?? [...subagents.values()].find(row => row.id === notice.sessionId);if (host) await options.harness().commit(async tx => {const state = await tx.doc(NativeNotices);if (state.ids.includes(notice.id)) return;await tx.appendEntry(OptimizerNotice,host.conversationId,{data:{id:notice.id,text:notice.text,at:Date.now(),code:notice.code,runId:notice.runId}});state.ids.push(notice.id);},context);},onError:error => console.error("Token optimizer observation failed",error)});
+  async function planFor(host:HostSession) {
+    // Child Agents have separate plans/tasks; never borrow the root's objective.
+    const child = host.parent ? (await options.harness().snapshot(WorkspaceAgents,context))?.agents.find(record => record.durableId === host.conversationId || record.branches?.includes(host.conversationId)) : undefined;
+    if (host.parent && !child) return null;
+    const plan = agentPlanStore().read(options.workspaceId,child?.agentId ?? actor(host));return plan.revision ? {revision:plan.revision,steps:plan.plan} : null;
+  }
+  async function goalFor(host:HostSession) {
+    const binding = await options.harness().snapshot(OptimizerPlanBinding,host.conversationId,context);
+    const task = optimizerPlanTask((await options.harness().snapshot(LiveDoc,host.conversationId,context))?.run);
+    if (task === null || binding?.task !== task) return null;
+    const plan = await planFor(host);
+    const goal = plan?.revision === binding.revision ? judgeGoal(plan) : null;
+    return goal ? {plan:goal,task} : null;
+  }
+  const optimizer = createTokenEconomizer({harness:options.harness,backgroundOwner:() => {if (maintenance === undefined) throw new Error("Optimizer maintenance owner is not attached");return maintenance;},domain,...transport,goal:goalFor,onOperation:recordOptimizerOperation,policy:host => options.configuration.policy(options.workspaceId,actor(host)),onNotice:async notice => {if (["tools-applied","tools-restored","tool-publication-refused","still-stuck"].includes(notice.code)) return;const rows = (await options.harness().snapshot(NativeOptimizerSessions,context))?.sessions, host = rows?.[notice.sessionId]?.host ?? [...subagents.values()].find(row => row.id === notice.sessionId);if (host) await options.harness().commit(async tx => {const state = await tx.doc(NativeNotices);if (state.ids.includes(notice.id)) return;await tx.appendEntry(OptimizerNotice,host.conversationId,{data:{id:notice.id,text:notice.text,at:Date.now(),code:notice.code,runId:notice.runId}});state.ids.push(notice.id);},context);},onError:error => console.error("Token optimizer observation failed",error)});
   const outputStore = createToolOutputStore(options.database ?? workspaceAgentDatabase(options.workspaceId));
   const outputScope = async (id:ConversationId) => {const host = await domain.session(id);return host ? {owner:actor(host),lineage:await conversationLineage(options.harness(),id,context)} : null;};
   const outputExtension = createOptimizerOutputExtension({
@@ -183,12 +198,7 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
   });
   let pruneTimer:ReturnType<typeof setInterval>|undefined,pruning:Promise<number>|undefined;
   const pruneOutputs = () => pruning ??= outputStore.prune().catch(error=>{console.error("Could not prune stored tool outputs",error);return 0;}).finally(()=>{pruning=undefined;});
-  const goalExtension = createOptimizerGoalsExtension({harness:options.harness,host:domain.session,policy:host => options.configuration.policy(options.workspaceId,actor(host)),drained:optimizer.drained,async plan(host) {
-    // Child Agents have separate plans/tasks; never borrow the root's objective.
-    const child = host.parent ? (await options.harness().snapshot(WorkspaceAgents,context))?.agents.find(record => record.durableId === host.conversationId || record.branches?.includes(host.conversationId)) : undefined;
-    if (host.parent && !child) return null;
-    const plan = agentPlanStore().read(options.workspaceId,child?.agentId ?? actor(host));return plan.revision ? {revision:plan.revision,steps:plan.plan} : null;
-  }});
+  const goalExtension = createOptimizerGoalsExtension({harness:options.harness,host:domain.session,policy:host => options.configuration.policy(options.workspaceId,actor(host)),drained:optimizer.drained,goal:goalFor,plan:planFor});
   optimizer.extension = {...optimizer.extension,tools:[...optimizer.extension.tools ?? [],...createToolOutputTools(outputStore,outputScope)],hooks:[...optimizer.extension.hooks ?? [],...outputExtension.hooks ?? [],...goalExtension.hooks ?? []]};
   async function start(conversation:Conversation,record:Pick<DurableAgentRecord,"agentId"|"parentId"|"readOnly"|"oneShotCallId">,event:"startup"|"new"|"resume"|"fork" = "startup",parentGroup?:string) {
     if (record.parentId || record.readOnly || record.oneShotCallId) return;
