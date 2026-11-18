@@ -3,6 +3,7 @@ import { storeDurableAttachments,readDurableAttachmentBytes } from "./durable-up
 import { join } from "node:path";
 import { agentDatabaseName } from "./agent-database.ts";
 import type { TreeFilterMode } from "./session-tree.ts";
+import { FactContextEntry } from "@kintsugi/token-economizer/pi-durable";
 import { durableAttachmentEndpoint } from "./durable-attachments.ts";
 import { isDurableUserEntry } from "./durable-input.ts";
 import { forgetAgentCopies, workspaceAgentDatabase } from "./agent-database.ts";
@@ -224,12 +225,14 @@ export async function openDurableAgentRuntime(
             if (seen.has(source.id)) continue;seen.add(source.id);
             let entry:TreeEntry = source;
             if (options) {
-              const role = source.model?.[0]?.role,text = source.model?.map(message=>contentText(message.content)).join("\n") || source.kind;
+              const facts = FactContextEntry.is(source);
+              const role = facts ? "toolResult" : source.model?.[0]?.role;
+              const text = facts ? "Token optimizer · Applied learned facts" : source.model?.map(message=>contentText(message.content)).join("\n") || source.kind;
               if (options.filter === "user-only" && role !== "user" || options.filter === "labeled-only" && !labels[String(source.id)]?.length || ["default","no-tools"].includes(options.filter) && role === "system" || options.filter === "no-tools" && role === "toolResult") continue;
               if (!tokens.every(token=>`${role} ${text} ${(labels[String(source.id)] ?? []).join(" ")}`.toLowerCase().includes(token))) continue;
               // UI navigation needs only a short text/role projection, never file bytes, tool details or reasoning.
-              const first = source.model?.[0],preview = text.replace(/\s+/g," ").slice(0,240);
-              entry = {id:source.id,kind:source.kind,conversationId:source.conversationId,model:first ? [{role:first.role,content:preview}] : undefined};
+              const preview = text.replace(/\s+/g," ").slice(0,240);
+              entry = {id:source.id,kind:source.kind,conversationId:source.conversationId,model:role ? [{role,content:preview}] : undefined};
             }
             totalMatches++;nodes.set(entry.id,{entry,parentId:previous,branch:id});
             if (options && nodes.size > options.limit) nodes.delete([...nodes.keys()].reduce((a,b)=>a<b?a:b));

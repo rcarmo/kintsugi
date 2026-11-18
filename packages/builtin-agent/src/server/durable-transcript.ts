@@ -7,7 +7,9 @@ import { durableTimingEntry, DurableTurnTiming } from "./durable-timing.ts";
 import { durableStopEntry } from "./durable-lifecycle.ts";
 import { GoalContextEntry } from "./token-optimizer-goals.ts";
 import { durablePlanContextEntry } from "./durable-plan.ts";
-import { SteeringEntry } from "@kintsugi/token-economizer/pi-durable";
+import { FactContextEntry, SteeringEntry } from "@kintsugi/token-economizer/pi-durable";
+import { renderToolCard } from "@kintsugi/agent/server/render-tool";
+import { transcriptRow } from "@kintsugi/agent/server/render-markup";
 import { OptimizerOperationEntry } from "./token-optimizer-operations.ts";
 import { historyNote } from "@kintsugi/legacy-converter/entries";
 import { contentText, type Message } from "@earendil-works/pi-ai";
@@ -111,7 +113,7 @@ export function projectDurableTranscript(view: ConversationView): TranscriptItem
     if (message.role === "user") {
       const startsRun = pendingBoundary || !turn;
       // Input read together, such as a prompt and the steering queued behind it, shares one block.
-      const readTogether = records.findLast(record => record.kind !== "runStart")?.kind === "user";
+      const readTogether = records.findLast(record => record.kind !== "runStart" && record.kind !== "activity")?.kind === "user";
       // Steering read mid-run ends the block it interrupted and starts its own, within the same run.
       if (!startsRun && !readTogether) turnEnds.set(turn!, { timestamp: message.timestamp, completed: true });
       if (startsRun || !readTogether) { turn = key; pendingBoundary = false; timings.set(key, new DurableTurnTiming()); }
@@ -149,6 +151,13 @@ export function projectDurableTranscript(view: ConversationView): TranscriptItem
   for (const entry of view.entries) {
     // Model context snapshots are not user submissions or turn boundaries.
     if (durablePlanContextEntry.is(entry) || GoalContextEntry.is(entry)) continue;
+    if (FactContextEntry.is(entry)) {
+      const key = `${entry.id}:optimizer-facts`;
+      const tool: ToolView = { callId: key, name: "optimizer.facts", args: {}, status: "ok" };
+      records.push({ kind: "activity", item: { type: "extension", key, render: ctx =>
+        transcriptRow(renderToolCard(ctx, key, tool, { tone: "info", summary: "Token optimizer · Applied learned facts", summaryOnly: true })) } });
+      continue;
+    }
     if (codemodeTemplateRunEndEntry.is(entry)) {
       runEndingCalls.add(entry.data.callId);
       continue;

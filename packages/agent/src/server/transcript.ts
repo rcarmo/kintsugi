@@ -37,6 +37,7 @@ function assistantTextPhase(textSignature?: string): AssistantTextPhase | undefi
 export type TranscriptRecord =
   | { kind: "runStart"; turnEntryId: string; startedAt: number; timestamp: number }
   | { kind: "timing"; timing: TurnTimingSummary; turnEntryId?: string; outcome?: "completed" | "stopped"; timestamp: number }
+  | { kind: "activity"; item: Extract<TranscriptItem, { type: "extension" }>; timestamp?: undefined }
   | { kind: "taskStart"; id: string; timestamp: number }
   | { kind: "user"; id: string; text: string; images: SessionImageRef[]; attachments?: SessionAttachmentRef[]; timestamp: number; rewindable?: boolean }
   | { kind: "assistant"; id: string; parts: AssistantPart[]; stopReason: StopReason; partial?: boolean; errorMessage?: string; timestamp: number }
@@ -199,6 +200,11 @@ export function buildTranscript(records: TranscriptRecord[], options: { openEnde
   };
 
   for (const [recordIndex, record] of records.entries()) {
+    // Display-only activity keeps its journal position without affecting turn grouping or timing.
+    if (record.kind === "activity") {
+      (working?.items ?? items).push(record.item);
+      continue;
+    }
     lastTimestamp = record.timestamp ?? lastTimestamp;
     const follows = previousKind;
     if (record.kind !== "runStart") previousKind = record.kind;

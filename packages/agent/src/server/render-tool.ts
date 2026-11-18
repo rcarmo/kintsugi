@@ -20,7 +20,7 @@ import { isBashTool, formatCost, formatDuration, formatTokens, toolOutcomeLabel,
 import { agentPath, ids, sessionImageUrl, transcriptItemPath, type AgentRenderContext } from "./render-context.ts";
 import { codeBlockHtml, detailFullscreen, fullscreenAttributes, transcriptRowContent, transcriptTimestampAttributes } from "./render-markup.ts";
 
-type ToolArgumentKey = "code" | "command" | "path" | "file_path" | "content" | "offset" | "limit" | "timeout" | "edits" | "oldText" | "newText" | "kind" | "session" | "url";
+type ToolArgumentKey = "code" | "command" | "path" | "file_path" | "content" | "offset" | "limit" | "timeout" | "edits" | "oldText" | "newText" | "kind" | "session" | "url" | "lang" | "pattern" | "task_name" | "target" | "path_prefix";
 
 const toolStringArgumentSchema = Type.String();
 const toolNumberArgumentSchema = Type.Number();
@@ -46,10 +46,9 @@ function bashSummary(tool: ToolView): string {
   return summaryHtml([duration, toolOutcomeLabel(details, false)]);
 }
 
-function toolSummaryHtml(tool: ToolView): string {
+function toolSummaryDetail(tool: ToolView): string {
   if (isBashTool(tool.name)) return bashSummary(tool);
   if (tool.name === "codemode") return codemodeSummary(tool);
-  if (tool.name === "plan") return planSummary(tool);
   // Code mode's `models.*` calls name the model they run.
   if (codemodeModelCall.test(tool.name) && Value.Check(modelCallArgumentsSchema, tool.args)) return tool.args.model.id;
   if (tool.name === "read") {
@@ -65,7 +64,22 @@ function toolSummaryHtml(tool: ToolView): string {
     const changes = operations.length ? `+${stats.added} −${stats.deleted}` : "";
     return summaryHtml([pathSummary(tool), editCount, changes]);
   }
-  return genericToolSummary(tool);
+  switch (tool.name) {
+    case "code_search": case "code_rewrite":
+      return summaryHtml([stringArg(toolArgs(tool), "lang"), pathSummary(tool)]);
+    case "open_office_viewer": case "find": case "ls":
+      return pathSummary(tool);
+    case "grep":
+      return summaryHtml([stringArg(toolArgs(tool), "pattern"), pathSummary(tool)]);
+    case "spawn_agent":
+      return stringArg(toolArgs(tool), "task_name") ?? "";
+    case "send_message": case "followup_task": case "interrupt_agent":
+      return stringArg(toolArgs(tool), "target") ?? "";
+    case "list_agents":
+      return stringArg(toolArgs(tool), "path_prefix") ?? "";
+    default:
+      return "";
+  }
 }
 
 function planSummary(tool: ToolView): string {
@@ -115,9 +129,40 @@ function presentSummary(tool: ToolView): string {
   return "Show work view";
 }
 
+const toolActionLabels = new Map([
+  ["read", "Read file"], ["write", "Write file"], ["edit", "Edit file"],
+  ["grep", "Search file contents"], ["find", "Find files"], ["ls", "List directory"],
+  ["codemode", "Run script"], ["agent", "Run a one-shot agent"],
+  ["pi.codemode.models.classify", "Classify with a model"], ["pi.codemode.models.generateImages", "Generate images"],
+  ["code_search", "Search code structure"], ["open_office_viewer", "Open Office file"],
+  ["delete_current_workspace", "Delete this workspace"], ["list_credentials", "List granted credentials"],
+  ["spawn_agent", "Start agent"], ["send_message", "Message agent"], ["followup_task", "Assign follow-up"],
+  ["list_agents", "List agents"], ["interrupt_agent", "Interrupt agent"], ["wait_agent", "Wait for agents"],
+]);
+
+function readableToolName(name: string): string {
+  const words = name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_.-]+/g, " ").trim();
+  return words ? words[0]!.toUpperCase() + words.slice(1) : "Tool call";
+}
+
+function toolActionLabel(tool: ToolView): string {
+  if (isBashTool(tool.name)) return "Run shell command";
+  if (tool.name === "code_rewrite") return toolArgs(tool)?.dry_run === false ? "Rewrite code structure" : "Preview code rewrite";
+  if (tool.name === "code_review") return toolArgs(tool)?.action === "read" ? "Read review comments" : "List review comment batches";
+  const mcp = /^mcp__(.+?)__(.+)$/.exec(tool.name);
+  if (mcp) {
+    const action = mcp[2] === "resources_list" ? "List resources" : mcp[2] === "resource_read" ? "Read resource" : readableToolName(mcp[2]!);
+    return summaryHtml([action, readableToolName(mcp[1]!)]);
+  }
+  return toolActionLabels.get(tool.name) ?? readableToolName(tool.name.replace(/^pi\.codemode\./, ""));
+}
+
 function toolSummaryText(tool: ToolView): string {
-  if (tool.name === "present" && !agentToolPresentation(tool.name)) return presentSummary(tool);
-  return [agentToolPresentation(tool.name)?.displayName ?? (codemodeCallName(tool.name) || "tool"), toolSummaryHtml(tool)].filter(Boolean).join(" · ");
+  const custom = agentToolPresentation(tool.name);
+  if (!custom && tool.name === "present") return presentSummary(tool);
+  if (!custom && tool.name === "plan") return planSummary(tool);
+  const detail = custom?.summary(tool) ?? toolSummaryDetail(tool);
+  return summaryHtml([truncateOneLine(custom?.displayName ?? toolActionLabel(tool), 100), truncateOneLine(detail, 120)]);
 }
 
 interface ToolPresentation {
@@ -143,13 +188,13 @@ function lazyTranscriptItemFrame(ctx: AgentRenderContext, key: string): string {
  * A tool call's row, opening to its detail. A `nested` call, such as a script's, has no detail route: its detail is
  * inline and never paginated.
  */
-export function renderToolCard(ctx: AgentRenderContext, key: string, tool: ToolView, options: { open?: boolean; live?: boolean; nested?: boolean; timestamp?: number; tone?: "info"; summary?: string; autoOpen?: boolean; actionsHtml?: string } = {}): string {
+export function renderToolCard(ctx: AgentRenderContext, key: string, tool: ToolView, options: { open?: boolean; live?: boolean; nested?: boolean; timestamp?: number; tone?: "info"; summary?: string; summaryOnly?: boolean; autoOpen?: boolean; actionsHtml?: string } = {}): string {
   const liveDuration = isBashTool(tool.name) && tool.status === "running" && tool.issuedAt !== undefined && !ctx.readOnly;
   const timeout = numberArg(toolArgs(tool), "timeout") ?? 600;
   const label = {
     kind: "text" as const,
     text: options.summary ?? toolSummaryText(tool),
-    attributesHtml: liveDuration ? `data-controller="agent-elapsed" data-agent-elapsed-since-value="${tool.issuedAt}" data-agent-elapsed-prefix-value="${escapeHtml(tool.name)} · " data-agent-elapsed-suffix-value=" / ${formatDuration(timeout * 1000)}" data-agent-elapsed-format-value="duration"` : undefined,
+    attributesHtml: liveDuration ? `data-controller="agent-elapsed" data-agent-elapsed-since-value="${tool.issuedAt}" data-agent-elapsed-prefix-value="${escapeHtml(toolActionLabel(tool))} · " data-agent-elapsed-suffix-value=" / ${formatDuration(timeout * 1000)}" data-agent-elapsed-format-value="duration"` : undefined,
     textAttributesHtml: liveDuration ? 'data-agent-elapsed-target="time"' : undefined,
   };
   const labelOptions = {
@@ -160,8 +205,8 @@ export function renderToolCard(ctx: AgentRenderContext, key: string, tool: ToolV
   const active = tool.status === "streaming" || tool.status === "running";
   const content = transcriptRowContent(label, labelOptions);
   const timestamp = transcriptTimestampAttributes(tool.issuedAt ?? options.timestamp);
-  if (!toolPresentation(tool).showsDetail) {
-    return `<div class="agent-tool agent-tool-summary-only ${toolClass(tool.name)} active">${contentRowHtml({ ...content, element: { tag: "div", attributesHtml: timestamp }, primary: false })}</div>`;
+  if (options.summaryOnly || !toolPresentation(tool).showsDetail) {
+    return `<div class="agent-tool agent-tool-summary-only ${toolClass(tool.name)}${active ? " active" : ""}">${contentRowHtml({ ...content, element: { tag: "div", attributesHtml: timestamp }, primary: false })}</div>`;
   }
   const open = Boolean(options.open || active && options.autoOpen !== false);
   const lazy = !options.nested && !options.live && !active && !options.open;
@@ -353,10 +398,6 @@ function codemodeCalls(tool: ToolView): ToolView[] {
   });
 }
 
-/** Code mode's internal tools behind `models.*`, such as `pi.codemode.models.classify`, as scripts call them. */
-function codemodeCallName(name: string): string {
-  return name.replace(/^pi\.codemode\./, "");
-}
 const codemodeModelCall = /^pi\.codemode\.models\./;
 
 function codemodeOutput(tool: ToolView): { text: string; wallMs?: number } {
@@ -581,8 +622,13 @@ function pathSummary(tool: ToolView, range = ""): string {
 }
 
 function truncateOneLine(text: string, limit: number): string {
-  const oneLine = text.replaceAll("\n", " ");
-  return oneLine.length > limit ? `${oneLine.slice(0, limit)}…` : oneLine;
+  const oneLine = text.replace(/\s+/g, " ").trim();
+  if (oneLine.length <= limit) return oneLine;
+  // Truncate on a code point, not halfway through a surrogate pair.
+  let end = limit;
+  const last = oneLine.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end--;
+  return `${oneLine.slice(0, end)}…`;
 }
 
 function trimResult(tool: ToolView): string {
@@ -608,23 +654,9 @@ function getEditOperations(args: JsonObject | undefined): DiffOperation[] {
   return oldText !== undefined && newText !== undefined ? [{ oldText, newText }] : [];
 }
 
-function genericToolSummary(tool: ToolView): string {
-  const args = toolArgs(tool);
-  if (!args) return "";
-  const custom = agentToolPresentation(tool.name)?.summary(tool);
-  if (custom !== undefined) return custom;
-  const direct = stringArg(args, "command", "path", "file_path");
-  if (direct) return truncateOneLine(direct, 120);
-  const json = JSON.stringify(args);
-  return json && json !== "{}" ? truncateOneLine(json, 120) : "";
-}
-
 function genericParamsHtml(tool: ToolView): string {
   const args = toolArgs(tool);
-  if (!args) return "";
-  const values = Object.values(args);
-  if (values.length === 0) return "";
-  if (values.length === 1 && genericToolSummary(tool) === values[0]) return "";
+  if (!args || Object.keys(args).length === 0) return "";
   return codeBlockHtml(JSON.stringify(args, null, 2), "arguments.json", "agent-tool-code");
 }
 
