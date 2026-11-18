@@ -340,9 +340,13 @@ for (const transport of ["websocket", "sse"] as const) describe(transport, () =>
   test("an oversized but well-formed cache hint cannot poison the next workspace subscribe", async () => {
     const f = fixture();
     let hint: string | null = JSON.stringify({ region: "x".repeat(70_000) });
-    // SAFETY: Only the Element attribute interface the transport uses is exercised here.
-    const shown = { getAttribute: () => hint, removeAttribute: () => { hint = null; } } as Element;
-    f.client.subscribe({ channel: "shell" }, { shownIn: shown });
+    // This protocol fixture supplies only the attribute methods used by Cable.
+    const shown: Pick<Element, "getAttribute" | "removeAttribute"> = {
+      getAttribute: () => hint,
+      removeAttribute: () => { hint = null; },
+    };
+    // SAFETY: Cable reads and removes the cache attribute using only the two methods supplied above.
+    f.client.subscribe({ channel: "shell" }, { shownIn: shown as Element });
     const subscribe = await f.handshake();
     expect(subscribe).not.toHaveProperty("shown");
     expect(f.client.ready()).toBe(true);
