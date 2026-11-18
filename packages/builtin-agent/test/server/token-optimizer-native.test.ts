@@ -22,7 +22,7 @@ import { contentText, createModels, fauxProvider, fauxAssistantMessage, fauxTool
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { openBunDurableStorage } from "../../src/server/durable-sqlite.ts";
 import { openNodeJsonlStorage } from "@earendil-works/pi-durable/storage/jsonl/node";
-import { AgentDoc, AssistantEntry, LiveDoc, UserEntry, type AgentChange, type ConversationId, createRegistry, defineExtension, defineTool, Harness, MemoryStorage } from "@earendil-works/pi-durable";
+import { AgentDoc, AssistantEntry, LiveDoc, ToolResultEntry, UserEntry, type AgentChange, type ConversationId, createRegistry, defineExtension, defineTool, Harness, MemoryStorage } from "@earendil-works/pi-durable";
 import { Type } from "typebox";
 import { createWorkspaceCodemodeExtension } from "../../../codemode/src/server/extension.ts";
 import { createNativeTokenOptimizer, OptimizerNotice, tokenOptimizerIntegration } from "../../src/server/token-optimizer.ts";
@@ -510,6 +510,43 @@ test("optimizer display receipts redact and bound nested values without changing
   expect(JSON.stringify(receipt.data)).not.toContain("must-not-persist");expect(JSON.stringify(receipt.data)).not.toContain("another-secret");expect(JSON.stringify(receipt.data)).not.toContain("sk-abcdefghijklmnopqrstuv");
   expect(String(receipt.data.input.text)).toContain("[display truncated]");expect(JSON.stringify(input)).toBe(original);
   expect(receipt.model).toBeUndefined();expect(receipt.data.output).toMatchObject({cost:null,usage:null});
+});
+
+test.each(["memory","sqlite","jsonl"] as const)("native %s: learning resumes past a tool result whose call is at the checkpoint",async(kind)=>{
+  const f=await setup(kind);
+  f.fail("pytest: command not found");
+  f.faux.setResponses([fauxAssistantMessage([fauxToolCall("bash",{command:"pytest"})],{stopReason:"toolUse"}),fauxAssistantMessage("Earlier reply")]);
+  await(await f.conversation.submit({type:"input",content:"Check with pytest"},context)).wait(context);
+  const entries=await optimizerEntries(f.conversation,{after:0,upTo:Infinity});
+  const call=entries.find(entry=>AssistantEntry.is(entry)&&entry.model?.some(message=>message.role==="assistant"&&message.content.some(block=>block.type==="toolCall")))!;
+  expect(entries.some(entry=>entry.id>call.id&&ToolResultEntry.is(entry))).toBe(true);
+  const config=f.configuration.snapshot();Object.assign(config.policy,{enabled:true,mode:"active",microSkills:"envfacts",loop:"off"});await f.configuration.configure(config);
+  await f.harness.commit(async tx=>{
+    const session=(await tx.doc(SessionsDoc)).sessions[sessionKey(f.host.scope,f.host.id)]!;
+    session.learning={cutoff:String(call.id),credits:{confirms:[],contradicts:[],exercises:[]},ticks:0,lastProposalAt:null,requested:0,processed:0,lastRun:null,toolCounted:false};
+  },context);
+  f.fail("ruff: command not found");
+  f.faux.setResponses([fauxAssistantMessage([fauxToolCall("codemode",{code:"await tools.bash({command:'ruff'});"})],{stopReason:"toolUse"}),fauxAssistantMessage("Later reply")]);
+  await(await f.conversation.submit({type:"input",content:"Check with ruff"},context)).wait(context);
+  for(let n=0;n<100;n++) {
+    await settleLearning(f.harness);
+    const state=(await f.native.optimizer.status(f.host)).session;
+    if(state?.foldError||state?.learning?.processed)break;
+    await Bun.sleep(5);
+  }
+  const state=await f.native.optimizer.status(f.host);
+  expect(state.session?.foldError).toBeNull();
+  expect(state.session?.learning?.processed).toBe(1);
+  expect(Number(state.session?.learning?.cutoff)).toBeGreaterThan(call.id);
+  expect(state.knowledge?.environment.facts.map(fact=>fact.id)).toEqual(["absent_tool:ruff"]);
+  const trajectory=await f.native.domain.trajectory(f.host,null,String(call.id));
+  expect(trajectory.kind==="ready"&&trajectory.observations.map(observation=>observation.command)).toEqual(["ruff"]);
+});
+
+test("a tool result without a matching call or durable task is still unreadable",async()=>{
+  const f=await setup();
+  await f.harness.commit(tx=>tx.appendEntry(ToolResultEntry,f.conversation.id,{data:{diagnostics:[]},model:[{role:"toolResult",toolCallId:"missing",toolName:"bash",content:[],isError:false,timestamp:1}]}),context);
+  expect(await f.native.domain.trajectory(f.host,null)).toEqual({kind:"unreadable",reason:"Tool result has no visible originating arguments"});
 });
 
 test("a partial read result must not discard complete shell evidence from the same completed reply",async()=>{
