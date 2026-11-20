@@ -121,7 +121,10 @@ async function readSource(harness:Harness,conversation:Conversation,entries:read
     } else if (ToolResultEntry.is(entry)) for (const message of entry.model ?? []) if (message.role === "toolResult") {
       const source = calls.get(message.toolCallId);
       if (!source) {
-        if (await callPrecedesRange(harness,entry,message.toolCallId,after)) continue;
+        if (await callPrecedesRange(harness,entry,message.toolCallId,after)) {
+          discardInterruptedStarts(starts,entry,message,entry.data.diagnostics);
+          continue;
+        }
         return {kind:"unreadable" as const,reason:"Tool result has no visible originating arguments"};
       }
       if (source.name === "codemode") discardInterruptedStarts(starts,entry,message,entry.data.diagnostics);

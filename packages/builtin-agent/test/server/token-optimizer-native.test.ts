@@ -34,6 +34,7 @@ import { ids } from "@kintsugi/agent/server/render-context";
 import { OptimizerOperationEntry, recordOptimizerOperation } from "../../src/server/token-optimizer-operations.ts";
 import { TokenOptimizerConfiguration, tokenOptimizerConfiguration } from "../../src/server/token-optimizer-config.ts";
 import { codemodeCallEntry } from "../../src/server/codemode-call.ts";
+import { WorkspaceAdmission } from "../../src/server/durable-lifecycle.ts";
 function reviewedFact(knowledge:Knowledge,id:string,claim:string) {
   knowledge.distiller.facts.push({spec:{id,claim,detector:{scope:"ran_checks"}},life:{...createLifecycle(id,false,false),state:"ACTIVE",fire_num:4,fire_den:4}});
   knowledge.factReviews ??= {};knowledge.factReviews[`distilled:${id}`] = {decision:"approved",at:1,note:"Fixture review",claim:fingerprint(claim)};
@@ -589,7 +590,7 @@ test.each(["ordinary","one-shot"] as const)("the root waits for %s child evidenc
   } finally {tool.release();}
 });
 
-test("a final fold waits for a one-shot child even after the root session closes",async()=>{
+test.each([false,true])("a final fold waits for a one-shot child after root closure (missed settle event: %p)",async(missedEvent)=>{
   const f=await setup(),config=f.configuration.snapshot();Object.assign(config.policy,{enabled:true,mode:"active",microSkills:"envfacts",loop:"off"});await f.configuration.configure(config);
   const child=await subagent(f,"closing-child","Child instructions","closing-one-shot"),tool=f.hold();f.fail("ruff: command not found");
   f.faux.setResponses([fauxAssistantMessage([fauxToolCall("codemode",{code:"await tools.bash({command:'ruff'});"})],{stopReason:"toolUse"}),fauxAssistantMessage("Done")]);
@@ -597,7 +598,13 @@ test("a final fold waits for a one-shot child even after the root session closes
     const run=await child.submit({type:"input",content:"Check"},context);await tool.entered;
     await f.native.end(f.conversation.id);await settleLearning(f.harness);
     const pending=(await f.native.optimizer.status(f.host)).session;
-    tool.release();await run.wait(context);await f.native.optimizer.drained();await settleLearning(f.harness);
+    if (missedEvent) {
+      await f.harness.commit(async tx=>{(await tx.doc(WorkspaceAdmission)).closed.push(f.conversation.id);},context);
+      await f.native.detach();
+    }
+    tool.release();await run.wait(context);
+    if (missedEvent) await f.native.attach();
+    await f.native.optimizer.drained();await settleLearning(f.harness);
     const state=await f.native.optimizer.status(f.host);
     expect(pending?.folded).toBe(false);
     expect(state.session?.folded).toBe(true);expect(state.session?.foldError).toBeNull();
@@ -655,8 +662,11 @@ test("an aborted Code Mode wrapper does not poison newer evidence",async()=>{
   expect(await f.native.domain.trajectory(f.host,pinned)).toMatchObject({kind:"ready",cutoff:pinned,observations:[]});
   f.faux.setResponses([fauxAssistantMessage([fauxToolCall("codemode",{code:"await tools.bash({command:'ruff'});"})],{stopReason:"toolUse"}),fauxAssistantMessage("Done")]);
   await(await f.conversation.submit({type:"input",content:"Check again"},context)).wait(context);
-  const trajectory=await f.native.domain.trajectory(f.host,null);
-  expect(trajectory.kind==="ready"&&trajectory.observations.map(observation=>observation.command)).toEqual(["ruff"]);
+  const assistant=entries.find(entry=>AssistantEntry.is(entry)&&entry.model?.some(message=>message.role==="assistant"&&message.content.some(block=>block.type==="toolCall"&&block.name==="codemode")))!;
+  for (const after of [null,String(assistant.id)]) {
+    const trajectory=await f.native.domain.trajectory(f.host,null,after);
+    expect(trajectory.kind==="ready"&&trajectory.observations.map(observation=>observation.command)).toEqual(["ruff"]);
+  }
 });
 
 test("resuming an idle session requeues a persisted unfinished checkpoint request",async()=>{

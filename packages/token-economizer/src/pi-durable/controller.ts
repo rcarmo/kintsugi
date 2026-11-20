@@ -206,7 +206,12 @@ export function createTokenEconomizer(options:TokenEconomizerOptions) {
       const sessions = await options.harness().snapshot(SessionsDoc,BACKGROUND_CONTEXT);
       for (const host of Object.values(sessions?.hosts ?? {})) hosts.set(sessionKey(host.scope,host.id),host);
       const observer = recorder.attach();detachObserver = () => observer.detach();
-      for (const host of hosts.values()) await publication.wait({host,scope:host.scope,sessionKey:sessionKey(host.scope,host.id)});
+      for (const [key,host] of hosts) {
+        await publication.wait({host,scope:host.scope,sessionKey:key});
+        const row=sessions?.sessions[key];
+        // Closed roots will not receive sessionStarted after a restart. Their child may have already settled.
+        if (row && row.ended !== null) await lifecycle.resumePending(host);
+      }
     },
     async sessionStarted(host:HostSession,start:SessionStart & {carriedIds:string[]}) {
       const key = sessionKey(host.scope,host.id);hosts.set(key,host);conversations.set(host.conversationId,host);observed.set(key,observing(policyFor(key)));

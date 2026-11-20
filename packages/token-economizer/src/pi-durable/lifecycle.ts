@@ -228,7 +228,9 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
     async resumePending(host:HostSession) {
       if (!options.domain.incrementalLearning) return;
       const key = sessionKey(host.scope,host.id), row = (await options.harness().snapshot(SessionsDoc,BACKGROUND_CONTEXT))?.sessions[key];
-      if (row?.learning && (row.learning.requested > row.learning.processed || row.learning.finalRequested && !row.folded)) await enqueue(key,host,row.folded || row.ended === null && !row.learning.finalRequested);
+      if (!row) return;
+      const final = !row.folded && (row.ended !== null || row.learning?.finalRequested === true);
+      if (final || (row.learning?.requested ?? 0) > (row.learning?.processed ?? 0)) await enqueue(key,host,!final);
     },
     async sessionEnded(host: HostSession) {
       if (host.delegated) return;
