@@ -108,6 +108,8 @@ export function createCodemodeTemplates(templates: () => Promise<readonly Prompt
     ...tool,
     async execute(args, api, context) {
       const result = await tool.execute(args, api, context);
+      // A parked call will execute again; only a settled result can end the template run.
+      if (result.sleep !== undefined || result.wait !== undefined) return result;
       const endsRun = await templateEndsRun(api, harness(), context);
       return endsRun ? { ...result, control: { ...result.control, terminate: true } } : result;
     },
