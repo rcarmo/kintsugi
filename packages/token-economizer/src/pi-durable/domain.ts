@@ -47,6 +47,8 @@ export type HostDomain = {
   decode(result:ToolResultData): DecodedResult;
   catalogue(session: HostSession): Promise<CatalogueSnapshot>;
   setTools(session:HostSession,excluded:string[],expiresAt?:number):Promise<void>;
+  /** Root learning owner of a child that contributes evidence without running optimizer hooks. */
+  learningOwner?(conversationId:ConversationId):Promise<HostSession|null>;
   /** Hosts opting into incremental learning must honour the exclusive after cursor. */
   incrementalLearning?: boolean;
   trajectory(session: HostSession, cutoff: string | null, after?: string | null): Promise<Trajectory>;

@@ -104,11 +104,19 @@ export function createTokenEconomizer(options:TokenEconomizerOptions) {
     },BACKGROUND_CONTEXT);
   }
   async function onLive(id:ConversationId,live:LiveState) {
-    const host = await resolve(id);if (!host || host.delegated) return;
+    const host = await resolve(id);
+    if (options.domain.incrementalLearning && !live.run && (!host || host.parent)) {
+      const owner = options.domain.learningOwner ? await options.domain.learningOwner(id) : host ? learner(host) : null;
+      if (owner) await lifecycle.sourceSettled(owner,"child");
+    }
+    if (!host || host.delegated) return;
     const key = sessionKey(host.scope,host.id);if (!observingWork(policyFor(key))) return;
     const current = await options.harness().snapshot(RunDoc,key,BACKGROUND_CONTEXT);
     if (current?.guard && !current.closed && (!live.run || runIdentity(live.run) !== current.guard.runId || live.run.afterRun)) await closeRun(host,!live.runFailure || runIdentity(live.runFailure) !== current.guard.runId);
-    if (!host.parent && (!live.run || live.run.afterRun) && current?.guard?.runId) await lifecycle.runCompleted(host,current.guard.runId);
+    if (!host.parent && (!live.run || live.run.afterRun)) {
+      if (current?.guard?.runId) await lifecycle.runCompleted(host,current.guard.runId);
+      else if (!live.run) await lifecycle.sourceSettled(host,"ended");
+    }
     if (!live.run || live.run.afterRun || runIdentity(live.run) === null) return;
     await options.harness().commit(async tx => {
       const run = await tx.doc(RunDoc,key,null);if (!observingWork(policyFor(key))) return;
@@ -206,6 +214,7 @@ export function createTokenEconomizer(options:TokenEconomizerOptions) {
       if (!previous && prepared.section) await options.harness().commit(tx => tx.appendEntry(ContextSnapshotEntry,host.conversationId,{data:{sessionId:host.id,section:prepared.section,injectedIds:prepared.injectedIds}}),BACKGROUND_CONTEXT);
       await options.domain.setTools(host,prepared.frozenMask);
       await recorder.recover(host);
+      await lifecycle.resumePending(host);
       if (!previous && prepared.section && emitting(policyFor(key))) await notice({id:fingerprint(JSON.stringify([scopeKey(host.scope),"facts",prepared.section])),code:"facts-selected",text:`Added ${prepared.injectedIds.length === 1 ? "1 learned repository fact" : `${prepared.injectedIds.length} learned repository facts`} to this session. They’re hints, not guarantees.`,sessionId:host.id,runId:null});
       return prepared;
     },

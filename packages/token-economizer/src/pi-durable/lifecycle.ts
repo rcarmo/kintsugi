@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { defineExtension, defineTask, type Harness, type ConversationId, type JsonObject } from "@earendil-works/pi-durable";
+import { defineExtension, defineTask, type Harness, type ConversationId, type JsonObject, type Tx } from "@earendil-works/pi-durable";
 import { describeKnowledge } from "../core/describe.ts";
 import { emitting, observing, type Policy } from "../core/config.ts";
 import { claimFold, deferFold, endSession, finishFold, prepareSession, recoverableSessions, sessionKey, transcriptChanged, type LearningSession } from "../core/sessions.ts";
@@ -41,7 +41,12 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
       if (trajectory.kind === "later") {
         await runtime.commit(async tx => {
           const sessions = await tx.doc(SessionsDoc), knowledge = await tx.doc(KnowledgeDoc,scopeKey(host.scope),host.scope);
-          sessions.sessions[key] = deferFold(sessions.sessions[key],claim,runtime.now(),incremental); knowledge.foldClaim = null; knowledge.foldQueue = knowledge.foldQueue.filter(item => item !== key);
+          const row = sessions.sessions[key];
+          sessions.sessions[key] = deferFold(row,claim,runtime.now(),incremental); knowledge.foldClaim = null; knowledge.foldQueue = knowledge.foldQueue.filter(item => item !== key);
+          // A run or session may have ended after the read but before this commit. Its enqueue saw our claim.
+          const newRequest = (row.learning?.requested ?? 0) > (session.learning?.requested ?? 0)
+            || !row.folded && (row.ended !== null && session.ended === null || row.learning?.finalRequested === true && !session.learning?.finalRequested);
+          if (newRequest && observing(options.policy(key))) await scheduleFold(tx,knowledge,key,host,row.folded || row.ended === null && !row.learning?.finalRequested);
           return { status:"terminal",outcome:{status:"completed",result:null} };
         },context); return;
       }
@@ -108,8 +113,7 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
         }
         knowledge.foldQueue = knowledge.foldQueue.filter(item => item !== key);
         if (incremental && trajectory.kind === "ready" && observing(options.policy(key)) && (!row.folded && (row.ended !== null || row.learning?.finalRequested) || (row.learning?.requested ?? 0) > (row.learning?.processed ?? 0))) {
-          knowledge.foldQueue.push(key);
-          await tx.createTask(row.folded || row.ended === null && !row.learning?.finalRequested ? checkpointTask : task,{key,host,incremental:row.folded || row.ended === null && !row.learning?.finalRequested},{ownership:{kind:"conversation"},conversationId:options.backgroundOwner?.() ?? host.conversationId,background:true});
+          await scheduleFold(tx,knowledge,key,host,row.folded || row.ended === null && !row.learning?.finalRequested);
         }
         if (show) {
           const factRows = (source:Pick<Knowledge,"environment"|"distiller"|"factReviews">) => describeKnowledge(source.environment,source.distiller,source.factReviews).facts.map(fact => ({...fact,state:fact.source === "environment" ? source.environment.facts.find(row=>row.id===fact.id)!.life.state : source.distiller.facts.find(row=>row.spec.id===fact.id)!.life.state}));
@@ -146,20 +150,26 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
   });
   // A separate kind keeps older apps from interpreting a live checkpoint as a session end.
   const checkpointTask = defineTask({...task.definition,name:"token-economizer.checkpoint"});
+  async function scheduleFold(tx:Tx,knowledge:Pick<Knowledge,"foldQueue">,key:string,host:HostSession,incremental:boolean) {
+    knowledge.foldQueue.push(key);
+    await tx.createTask(incremental ? checkpointTask : task,{key,host,incremental},{ownership:{kind:"conversation"},conversationId:options.backgroundOwner?.() ?? host.conversationId,background:true});
+  }
   async function enqueue(key: string,host: HostSession,incremental = false) {
     await options.harness().commit(async tx => {
       const row = (await tx.doc(SessionsDoc)).sessions[key], knowledge = await tx.doc(KnowledgeDoc,scopeKey(host.scope),host.scope);
       if (!row || row.folded && !incremental || row.claim || knowledge.foldQueue.includes(key) || !observing(options.policy(key))) return;
-      knowledge.foldQueue.push(key);
-      await tx.createTask(incremental ? checkpointTask : task,{key,host,incremental},{ownership:{kind:"conversation"},conversationId:options.backgroundOwner?.() ?? host.conversationId,background:true});
+      await scheduleFold(tx,knowledge,key,host,incremental);
     },BACKGROUND_CONTEXT);
   }
-  async function requestCheckpoint(host:HostSession,runId:string|null) {
+  async function requestCheckpoint(host:HostSession,runId:string|null,source:"run"|"child"|"ended" = "run") {
       if (!options.domain.incrementalLearning || host.delegated || host.parent || !observing(options.policy(sessionKey(host.scope,host.id)))) return;
       const key = sessionKey(host.scope,host.id);
-      const changed = await options.harness().commit(async tx => {
+      const kind = await options.harness().commit(async tx => {
         const row = (await tx.doc(SessionsDoc)).sessions[key];
-        if (!row || row.ended !== null || runId !== null && row.learning?.lastRun === runId) return false;
+        if (!row || source === "ended" && row.ended === null || runId !== null && row.learning?.lastRun === runId) return null;
+        const final = !row.folded && (row.ended !== null || row.learning?.finalRequested === true);
+        const pending = final || (row.learning?.requested ?? 0) > (row.learning?.processed ?? 0);
+        if ((source !== "run" || row.ended !== null) && !pending) return null;
         if (!row.learning) {
           // Legacy folded journals lack per-fact credits. Conservatively protect all existing facts
           // from gaining another independent vote from this same logical session.
@@ -169,9 +179,10 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
         }
         if (row.folded && !row.claim) row.cutoff = null;
         if (row.folded) row.learning.finalRequested = false;
-        row.learning.requested++;if (runId !== null) row.learning.lastRun = runId;return true;
+        row.learning.requested++;if (runId !== null) row.learning.lastRun = runId;
+        return final ? "final" : "incremental";
       },BACKGROUND_CONTEXT);
-      if (changed) await enqueue(key,host,true);
+      if (kind) await enqueue(key,host,kind === "incremental");
   }
   return {
     extension: defineExtension({name:"token-economizer.sessions",tasks:[task,checkpointTask]}),
@@ -213,6 +224,12 @@ export function createSessionLifecycle(options: { harness: () => Harness; backgr
       return prepared;
     },
     async runCompleted(host:HostSession,runId:string) {await requestCheckpoint(host,runId);},
+    async sourceSettled(host:HostSession,source:"child"|"ended") {await requestCheckpoint(host,null,source);},
+    async resumePending(host:HostSession) {
+      if (!options.domain.incrementalLearning) return;
+      const key = sessionKey(host.scope,host.id), row = (await options.harness().snapshot(SessionsDoc,BACKGROUND_CONTEXT))?.sessions[key];
+      if (row?.learning && (row.learning.requested > row.learning.processed || row.learning.finalRequested && !row.folded)) await enqueue(key,host,row.folded || row.ended === null && !row.learning.finalRequested);
+    },
     async sessionEnded(host: HostSession) {
       if (host.delegated) return;
       const key = sessionKey(host.scope,host.id);

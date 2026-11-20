@@ -12,12 +12,12 @@ import { contextSection, fingerprint, judgeGoal, scopeKey, sessionKey, type Atta
 import { createSdkModelTransport, createTokenEconomizer, decodeArguments, decodeResult, detach, KnowledgeDoc, RunDoc, runIdentity, SessionsDoc, SteeringEntry, FactContextEntry, type HostDomain, type HostSession, type Knowledge } from "@kintsugi/token-economizer/pi-durable";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import type { Models } from "@earendil-works/pi-ai";
-import { AgentDoc, AssistantEntry, CompactionEntry, ResetEntry, ToolResultEntry, defineDoc, defineEntry, LiveDoc, SystemEntry, type LiveState, type AgentState, type Conversation, type ConversationId, type Harness, type RegistryReader } from "@earendil-works/pi-durable";
+import { AgentDoc, AssistantEntry, CompactionEntry, ResetEntry, ToolResultEntry, defineDoc, defineEntry, LiveDoc, SystemEntry, type LiveState, type AgentState, type Conversation, type ConversationId, type Harness, type RegistryReader, type Tx } from "@earendil-works/pi-durable";
 import { errorMessage, escapeHtml } from "@kintsugi/shared";
 import type { BuiltinAgentIntegration } from "./integrations.ts";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { carriedSnapshotIds, lastAssistantEntry, latestOptimizerEntry, nativeOptimizerTool, nativeOptimizerTrajectory, optimizerSections, optimizerMessageSections } from "./token-optimizer-source.ts";
+import { carriedSnapshotIds, lastAssistantEntry, latestOptimizerEntry, nativeOptimizerTool, nativeOptimizerTrajectory, optimizerSections, optimizerMessageSections, optimizerWatermark } from "./token-optimizer-source.ts";
 import { tokenOptimizerConfiguration, type TokenOptimizerConfiguration } from "./token-optimizer-config.ts";
 import { WorkspaceAdmission, durableStopEntry } from "./durable-lifecycle.ts";
 import { WorkspaceAgents } from "./durable-workspace.ts";
@@ -166,13 +166,28 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
       },context);
     },
     incrementalLearning:true,
+    async learningOwner(id) {
+      return options.harness().commit(async tx => {
+        const {agents}=await tx.doc(WorkspaceAgents);
+        const child=agents.find(row=>row.parentId && (row.durableId===id || row.branches?.includes(id)));
+        if (!child) return null;
+        const root=agents.find(row=>!row.parentId && row.agentId===child.rootId);
+        if (!root) return null;
+        const {id:epoch}=await tx.doc(NativeEpoch,root.durableId);
+        if (!epoch) return null;
+        const owner=(await tx.doc(NativeOptimizerSessions)).sessions[epoch]?.host;
+        return owner ? detach(owner) : null;
+      },context);
+    },
     async trajectory(host,cutoff,after) {
       const record = (await options.harness().snapshot(NativeOptimizerSessions,context))?.sessions[host.id];if (!record) return {kind:"absent",reason:"No native logical session record"};
-      const rootAgent = actor(host), agents = (await options.harness().snapshot(WorkspaceAgents,context))?.agents ?? [];
-      const descendants = agents.filter(row => row.parentId && row.rootId === rootAgent).flatMap(row => [...new Set([row.durableId,...row.branches ?? []])]);
-      return nativeOptimizerTrajectory(options.harness(),host,record.begin,record.end,cutoff,descendants,after);
+      return nativeOptimizerTrajectory(options.harness(),host,record.begin,record.end,cutoff,tx=>learningChildren(tx,host),after);
     },
   };
+  async function learningChildren(tx:Tx,host:HostSession):Promise<ConversationId[]> {
+    const rootAgent=actor(host), {agents}=await tx.doc(WorkspaceAgents);
+    return [...new Set(agents.filter(row=>row.parentId && row.rootId===rootAgent).flatMap(row=>[row.durableId,...row.branches ?? []]))].filter(id=>id!==host.conversationId);
+  }
   const transport = createSdkModelTransport(options.models);
   async function planFor(host:HostSession) {
     // Child Agents have separate plans/tasks; never borrow the root's objective.
@@ -236,9 +251,13 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
   }
   async function end(id:ConversationId) {
     const host = hosts.get(id);if (!host) return;
-    const conversation = (await options.harness().conversation(id,context))!, latest = await latestOptimizerEntry(conversation), live = await options.harness().snapshot(LiveDoc,id,context);
-    await options.harness().commit(async tx => {const row = (await tx.doc(NativeOptimizerSessions)).sessions[host.id];if (!live?.run) row.end ??= latest ?? row.begin;},context);
-    await optimizer.sessionEnded(host,!live?.run && !live?.runFailure);hosts.delete(id);
+    const normal = await options.harness().commit(async tx => {
+      const row=(await tx.doc(NativeOptimizerSessions)).sessions[host.id];
+      row.end ??= await optimizerWatermark(tx,id,await learningChildren(tx,host),row.begin,true);
+      const live=await tx.doc(LiveDoc,id);
+      return (!live.run || Boolean(live.run.afterRun)) && !live.runFailure;
+    },context);
+    await optimizer.sessionEnded(host,normal);hosts.delete(id);
   }
   return {optimizer,domain,start,end,
     async attach() {

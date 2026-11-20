@@ -3,11 +3,14 @@ import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import * as core from "../src/core/index.ts";
 import manifest from "../package.json";
+import workspace from "../../../package.json";
 const root = `${import.meta.dir}/..`;
 test("declared entry points exist and core exports load without a host", () => {
   for (const entry of Object.values(manifest.exports)) expect(existsSync(`${root}/${entry}`)).toBe(true);
   expect(core.defaultPolicy().enabled).toBe(false);
-  expect(manifest.peerDependencies["@earendil-works/pi-durable"]).toBe("1.5.2");
+  for (const dependency of ["@earendil-works/pi-durable", "@earendil-works/pi-ai", "@earendil-works/chord"] as const) {
+    expect(manifest.peerDependencies[dependency]).toBe(workspace.workspaces.catalog[dependency]);
+  }
 });
 test("core imports no host, SDK, filesystem, network or clock", async () => {
   const allowedDependencies = new Set(["typebox", "typebox/value", "re2js", "@noble/hashes/legacy.js", "@noble/hashes/sha2.js"]);

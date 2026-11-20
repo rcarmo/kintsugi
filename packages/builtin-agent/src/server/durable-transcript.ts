@@ -138,7 +138,11 @@ export function projectDurableTranscript(view: ConversationView): TranscriptItem
       const aborted = diagnostics.some(diagnostic => diagnostic.code === "aborted");
       let details = isToolViewDetails(message.details) ? message.details : undefined;
       if (aborted) details = isJsonObject(details) ? { ...details, aborted: true } : { aborted: true };
-      records.push({ kind: "toolResult", callId: message.toolCallId, text: toolResultText(message.content, diagnostics), images: images(message.content, imageEntryId, offset), timestamp: message.timestamp, isError: message.isError, details });
+      let text = toolResultText(message.content, diagnostics);
+      if (message.toolName === "read" && isJsonObject(message.details) && Value.Check(Type.String(), message.details.imageUnsupportedByModel)) {
+        text = [text, `The model used for this read (${message.details.imageUnsupportedByModel}) does not support images.`].filter(Boolean).join("\n\n");
+      }
+      records.push({ kind: "toolResult", callId: message.toolCallId, text, images: images(message.content, imageEntryId, offset), timestamp: message.timestamp, isError: message.isError, details });
       if (turn && runEndingCalls.has(message.toolCallId) && !aborted) {
         turnEnds.set(turn, { timestamp: message.timestamp, completed: true });
         pendingBoundary = true;

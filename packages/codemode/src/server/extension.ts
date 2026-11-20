@@ -1,7 +1,8 @@
 import { visibleMcpAgent } from "@kintsugi/builtin-agent/server/mcp-access";
 import { attributeModelToolUsage } from "@kintsugi/builtin-agent/server/model-tool-usage";
 import type { JsonValue } from "@earendil-works/chord/json";
-import { defineEntry, type Extension, type JsonObject, type NestedToolExecutionResult, type ToolExecutionApi } from "@earendil-works/pi-durable";
+import type { Context } from "@earendil-works/chord/context";
+import { defineEntry, type Extension, type JsonObject, type NestedToolCall, type NestedToolExecutionResult, type ToolExecutionApi } from "@earendil-works/pi-durable";
 import { CODEMODE_TOOL_NAME, createCodemodeExtension, createCodemodeTool, type CodemodeToolInput } from "@earendil-works/pi-durable/codemode";
 import { CodemodeSandbox, type CodemodeResult } from "@earendil-works/pi-codemode";
 import { Type } from "typebox";
@@ -68,25 +69,28 @@ function endSummary(end: CallEnd): string {
 
 /** A code mode call's API, recording each call its script makes, with a line of running output as it starts and ends. */
 function recordingCalls(api: ToolExecutionApi): ToolExecutionApi {
-  return {
-    ...api,
-    async executeTool(name, toolArgs, callContext, options) {
-      // Code mode names each call `c<VM call id>`, so a rerun after a restart reattaches to it.
-      const key = options?.key;
-      if (key === undefined) throw new Error("Code mode calls tools by key");
-      const record = (data: CallStart | CallEnd) => api.commit(async tx => {
-        await tx.appendEntry(codemodeCallEntry, api.conversationId, { data: { callId: api.callId, key, ...data } });
-      }, callContext);
-      const argumentsJson = displayJson(toolArgs);
-      await record(callStart(name, argumentsJson));
-      api.output(`started ${key}: ${name} ${argumentsJson.slice(0, 200)}\n`);
-      const result = await api.executeTool(name, toolArgs, callContext, options);
-      const end = callEnd(result);
-      await record(end);
-      api.output(`finished ${key}: ${endSummary(end)}\n`);
-      return result;
-    },
-  };
+  type NestedOptions = {readonly key?:string;readonly progress?:boolean};
+  function executeTool(name:string,toolArgs:JsonObject,callContext:Context,options?:NestedOptions & {readonly wait?:true}):Promise<NestedToolExecutionResult>;
+  function executeTool(name:string,toolArgs:JsonObject,callContext:Context,options:NestedOptions & {readonly wait:false}):Promise<NestedToolCall>;
+  async function executeTool(name:string,toolArgs:JsonObject,callContext:Context,options?:NestedOptions & {readonly wait?:boolean}) {
+    // The SDK's Code Mode waits for results. A non-waiting handle must not create an unmatched transcript start.
+    if (options?.wait === false) return api.executeTool(name,toolArgs,callContext,{...options,wait:false});
+    // Code mode names each call `c<VM call id>`, so a rerun after a restart reattaches to it.
+    const key = options?.key;
+    if (key === undefined) throw new Error("Code mode calls tools by key");
+    const record = (data: CallStart | CallEnd) => api.commit(async tx => {
+      await tx.appendEntry(codemodeCallEntry, api.conversationId, { data: { callId: api.callId, key, ...data } });
+    }, callContext);
+    const argumentsJson = displayJson(toolArgs);
+    await record(callStart(name, argumentsJson));
+    api.output(`started ${key}: ${name} ${argumentsJson.slice(0, 200)}\n`);
+    const result = await api.executeTool(name,toolArgs,callContext,{...options,wait:true});
+    const end = callEnd(result);
+    await record(end);
+    api.output(`finished ${key}: ${endSummary(end)}\n`);
+    return result;
+  }
+  return {...api,executeTool};
 }
 
 /**

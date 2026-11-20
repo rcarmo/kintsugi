@@ -1,7 +1,7 @@
 import { isDurableUserEntry } from "./durable-input.ts";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { contentText, type JsonObject, type Message } from "@earendil-works/pi-ai";
-import { AssistantEntry, LiveDoc, ToolResultEntry, ToolTask, type Conversation, type ConversationId, type Cursor, type EntryId, type EntryRecord, type Harness } from "@earendil-works/pi-durable";
+import { AssistantEntry, LiveDoc, ToolResultEntry, ToolTask, type Conversation, type ConversationId, type Cursor, type EntryId, type EntryRecord, type Harness, type ToolDiagnostic, type Tx } from "@earendil-works/pi-durable";
 import { ContextSnapshotEntry, FactContextEntry } from "@kintsugi/token-economizer/pi-durable";
 import { isJsonObject } from "@kintsugi/core";
 import { makeObservation, workEvidence, type ToolMapping } from "@kintsugi/token-economizer/core";
@@ -73,9 +73,27 @@ async function callPrecedesRange(harness:Harness,entry:EntryRecord,callId:string
   return task?.kind === ToolTask.definition.name && task.conversationId === entry.conversationId
     && Value.Check(modelCallOrigin,task.input) && task.input.callId === callId && task.input.assistant <= after;
 }
+/** Old cursors may split a Code Mode pair. Search only the parent task's visible pre-cursor range. */
+async function nestedCallPrecedesRange(conversation:Conversation,entry:EntryRecord,callId:string,key:string,after:number):Promise<boolean> {
+  if (!entry.byTaskId || entry.byTaskId >= after) return false;
+  let cursor:Cursor|undefined;
+  do {
+    const page = await conversation.entries({minEntryId:entryBound(entry.byTaskId),maxEntryId:entryBound(after)},200,cursor,context);
+    for (const candidate of page.items) if (candidate.byTaskId === entry.byTaskId && codemodeCallEntry.is(candidate) && candidate.data.callId === callId && candidate.data.key === key) return candidate.data.phase === "start";
+    cursor = page.next;
+  } while (cursor);
+  return false;
+}
+type NestedStarts = Map<string,{start:CallStart;entry:EntryRecord}>;
+/** A settled wrapper can be interrupted before it records the nested result. That start is not evidence. */
+function discardInterruptedStarts(starts:NestedStarts,entry:EntryRecord,message:Extract<Message,{role:"toolResult"}>,diagnostics:readonly ToolDiagnostic[]) {
+  if (!entry.byTaskId || message.toolName !== "codemode" || !message.isError) return;
+  if (!diagnostics.some(item => ["aborted","interrupted","uncertain","abandoned"].includes(item.code ?? ""))) return;
+  for (const [key,pending] of starts) if (pending.entry.byTaskId === entry.byTaskId && codemodeCallEntry.is(pending.entry) && pending.entry.data.callId === message.toolCallId) starts.delete(key);
+}
 /** One conversation's committed tool results within a session range. */
-async function readSource(harness:Harness,entries:readonly EntryRecord[],host:HostSession,after:number) {
-  const observed:Observation[] = [], calls = new Map<string,{name:string;args:JsonObject;runId:string}>(), starts = new Map<string,{start:CallStart;entry:EntryRecord}>();
+async function readSource(harness:Harness,conversation:Conversation,entries:readonly EntryRecord[],host:HostSession,after:number) {
+  const observed:Observation[] = [], calls = new Map<string,{name:string;args:JsonObject;runId:string}>(), starts:NestedStarts = new Map();
   let prompts = 0, activity = 0, answeredTurns = 0, answeredEnd = 0, awaitingAnswer = false;
   for (const entry of entries) {
     if (isDurableUserEntry(entry)) {prompts++;awaitingAnswer = true;}
@@ -92,7 +110,11 @@ async function readSource(harness:Harness,entries:readonly EntryRecord[],host:Ho
       const data = entry.data, key = JSON.stringify([entry.byTaskId,data.callId,data.key]);
       if (data.phase === "start") starts.set(key,{start:data,entry});
       else {
-        const source = starts.get(key);if (!source) return {kind:"unreadable" as const,reason:"Native nested result has no visible start"};
+        const source = starts.get(key);
+        if (!source) {
+          if (await nestedCallPrecedesRange(conversation,entry,data.callId,data.key,after)) continue;
+          return {kind:"unreadable" as const,reason:"Native nested result has no visible start"};
+        }
         const args = isJsonObject(source.start.arguments) ? source.start.arguments : null;
         capture(source.start.name,args,{name:source.start.name,structured:null,details:data.details ?? null,output:data.output ?? data.error ?? "",isError:data.isError,diagnostics:data.cancelled ? [{code:"aborted",message:data.error ?? "Cancelled"}] : []},String(entry.byTaskId),data.key,calls.get(data.callId)?.runId ?? "unknown",source.start.issuedAt ?? 0);starts.delete(key);
       }
@@ -102,16 +124,32 @@ async function readSource(harness:Harness,entries:readonly EntryRecord[],host:Ho
         if (await callPrecedesRange(harness,entry,message.toolCallId,after)) continue;
         return {kind:"unreadable" as const,reason:"Tool result has no visible originating arguments"};
       }
+      if (source.name === "codemode") discardInterruptedStarts(starts,entry,message,entry.data.diagnostics);
+      calls.delete(message.toolCallId);
       capture(source.name,source.args,{name:source.name,structured:null,details:JSON.parse(JSON.stringify(message.details ?? null)),output:contentText(message.content),isError:message.isError,diagnostics:entry.data.diagnostics.map(diagnostic => ({code:diagnostic.code ?? "",message:diagnostic.message}))},String(entry.byTaskId),null,source.runId,message.timestamp);
     }
   }
-  return {kind:"read" as const,observations:observed,prompts,activity,answeredTurns,answeredEnd,unfinished:starts.size > 0};
+  return {kind:"read" as const,observations:observed,prompts,activity,answeredTurns,answeredEnd,unfinished:starts};
+}
+/** Read the shared journal bound and the live states from the same committed snapshot. */
+export async function optimizerWatermark(tx:Tx,root:ConversationId,children:readonly ConversationId[],after:number,waitForIdle:boolean):Promise<number|null> {
+  let newest=after;
+  for (const id of [root,...children]) {
+    if (!await tx.conversation(id)) continue;
+    const entry=await tx.latestEntryId(id) ?? after;
+    if (waitForIdle && (id === root || entry > after)) {
+      const live=await tx.doc(LiveDoc,id);
+      if (live.run && !live.run.afterRun) return null;
+    }
+    newest=Math.max(newest,entry);
+  }
+  return newest;
 }
 /**
  * Reads only the active fork's committed native source; never executes a tool or imports abandoned history. Subagent
  * and one-shot descendants contribute tool results from the same period (entry IDs are journal-wide), never prompts.
  */
-export async function nativeOptimizerTrajectory(harness:Harness,host:HostSession,begin:number,end:number|null,cutoff:string|null,descendants:readonly ConversationId[] = [],after?:string|null):Promise<Trajectory> {
+export async function nativeOptimizerTrajectory(harness:Harness,host:HostSession,begin:number,end:number|null,cutoff:string|null,descendants:(tx:Tx)=>Promise<ConversationId[]>,after?:string|null):Promise<Trajectory> {
   const conversation = await harness.conversation(host.conversationId,context);if (!conversation) return {kind:"absent",reason:"Conversation is absent"};
   if (after != null) {
     const value = Number(after);if (!Number.isSafeInteger(value) || value < 0) throw new Error("Invalid optimizer learning cursor");
@@ -119,22 +157,44 @@ export async function nativeOptimizerTrajectory(harness:Harness,host:HostSession
   }
   let maximum = end ?? Infinity;
   if (cutoff !== null) {const value = Number(cutoff);if (!Number.isSafeInteger(value) || value < 0) throw new Error("Invalid saved optimizer source cutoff");maximum = Math.min(maximum,value);}
-  // Freeze the source boundary before scanning: another prompt may already be appending entries.
-  const latest = await latestOptimizerEntry(conversation);
-  maximum = Math.min(maximum,latest ?? begin);
-  const root = await readSource(harness,await optimizerEntries(conversation,{after:begin,upTo:maximum}),host,begin);
+  // A new journal-wide boundary must cover children as well as the root. Check live state and
+  // capture the newest visible entry together. A saved bound already pins its source range.
+  const {children,latest} = await harness.commit(async tx => {
+    const children=await descendants(tx);
+    return {children,latest:await optimizerWatermark(tx,host.conversationId,children,begin,!Number.isFinite(maximum))};
+  },context);
+  if (latest === null) return {kind:"later",reason:"Agent or subagent run is still recording learning evidence"};
+  maximum = Math.min(maximum,latest);
+  const root = await readSource(harness,conversation,await optimizerEntries(conversation,{after:begin,upTo:maximum}),host,begin);
   if (root.kind === "unreadable") return root;
-  if (root.unfinished) return (await harness.snapshot(LiveDoc,host.conversationId,context))?.run ? {kind:"later",reason:"Native calls are still running"} : {kind:"unreadable",reason:"Ended trajectory contains an unfinished native call"};
-  const observations = [...root.observations];let activity = root.activity;
-  for (const id of descendants) {
+  if (root.unfinished.size && maximum < latest) {
+    // Legacy saved upper bounds can end between a nested start and end. Look ahead only to
+    // confirm pairing; results beyond the pinned boundary cannot become evidence for this fold.
+    let cursor:Cursor|undefined;
+    do {
+      const page = await conversation.entries({order:"ascending",minEntryId:entryBound(maximum),maxEntryId:entryBound(latest)},200,cursor,context);
+      for (const entry of page.items) {
+        if (entry.id <= maximum) continue;
+        if (codemodeCallEntry.is(entry) && entry.data.phase === "end") root.unfinished.delete(JSON.stringify([entry.byTaskId,entry.data.callId,entry.data.key]));
+        if (ToolResultEntry.is(entry)) for (const message of entry.model ?? []) if (message.role === "toolResult") discardInterruptedStarts(root.unfinished,entry,message,entry.data.diagnostics);
+      }
+      cursor = page.next;
+    } while (cursor && root.unfinished.size);
+  }
+  if (root.unfinished.size) return {kind:"unreadable",reason:"Trajectory boundary contains an unfinished native call"};
+  const observations = [...root.observations], seen = new Set(observations.map(observation => observation.id));let activity = root.activity;
+  for (const id of children) {
     const child = await harness.conversation(id,context);if (!child) continue;
-    const read = await readSource(harness,await optimizerEntries(child,{after:begin,upTo:maximum}),host,begin);
+    const read = await readSource(harness,child,await optimizerEntries(child,{after:begin,upTo:maximum}),host,begin);
     // A descendant's unreadable history must not cost the root its learning; skip that conversation.
     if (read.kind === "unreadable") continue;
-    if (read.unfinished && (await harness.snapshot(LiveDoc,id,context))?.run) return {kind:"later",reason:"A subagent is still running"};
-    observations.push(...read.observations);activity = Math.max(activity,read.activity);
+    for (const observation of read.observations) {
+      if (seen.has(observation.id)) continue;
+      seen.add(observation.id);observations.push(observation);
+    }
+    activity = Math.max(activity,read.activity);
   }
-  const result:Trajectory = {kind:"ready",cutoff:String(Math.min(maximum,latest ?? begin)),observations,prompts:root.prompts,transcriptActivity:activity};
+  const result:Trajectory = {kind:"ready",cutoff:String(Math.max(begin,maximum)),observations,prompts:root.prompts,transcriptActivity:activity};
   if (root.answeredTurns) result.work = workEvidence(root.observations.slice(0,root.answeredEnd),root.answeredTurns,host.repositoryRoot);
   return result;
 }

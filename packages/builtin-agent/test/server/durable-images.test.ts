@@ -62,7 +62,8 @@ test("shared read registry resolves each conversation's model profile and preser
       expect(image.data).not.toBe(png);
       expect(text).not.toContain("does not support images");
     } else {
-      expect(text).toContain("does not support images");
+      expect(text).not.toContain("does not support images");
+      expect(result.model?.find(message => message.role === "toolResult")?.details).toMatchObject({ imageUnsupportedByModel: "text" });
       expect(image.data).toBe(png);
     }
     entries.push({ modelId, result });
