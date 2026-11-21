@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { readCgroupResourceCounter, unavailableResourceCounter, type ResourceCounter } from "../../../packages/core/src/resource-metrics.ts";
 import { workspaceOomGroupKills } from "./workspace-oom-events.ts";
 import { createKeyedOperationQueue, readTextIfExists, writeJsonAtomic } from "../../../packages/core/src/index.ts";
+import { resourcePolicyVersion } from "../../../packages/shared/src/system-version.ts";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 import { workspaceResourceLimitsSchema, workspaceResourceChangeSchema, workspaceMemoryPolicyChangeSchema, workspaceMemoryPolicySchema, type WorkspaceMemoryPolicyChange, type WorkspaceMemoryPolicySnapshot, type WorkspaceResourceChange, type WorkspaceResourceSnapshot, type WorkspaceResourceUsage, type WorkspaceResourceLimits } from "../../../packages/shared/src/workspace-resources.ts";
@@ -125,7 +126,7 @@ export function createWorkspaceResourceControl(options: { memory: number; cpus: 
     if (!existsSync(join(directory,".."))) return;
     const path = join(directory,"resource-policy.json");
     const previous = await readTextIfExists(path);
-    if (previous !== undefined && Value.Parse(Type.Object({version:Type.Integer({minimum:1,maximum:3})}),JSON.parse(previous)).version >= version) return;
+    if (previous !== undefined && Value.Parse(Type.Object({version:Type.Integer({minimum:1,maximum:resourcePolicyVersion})}),JSON.parse(previous)).version >= version) return;
     await writeJsonAtomic(path,{version},{mode:0o600}); await chown(path,1000,1000);
   }
   async function markParked(id: string) {

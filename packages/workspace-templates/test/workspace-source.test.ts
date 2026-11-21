@@ -128,6 +128,20 @@ describe("workspace source preparation", () => {
     }
   });
 
+  test.skipIf(process.platform !== "linux")("copies a cached template into a worktree on a different filesystem", async () => {
+    const repo = await createRemote();
+    tempRoots.push(repo.root);
+    const bounded = await mkdtemp("/dev/shm/kintsugi-source-test-");
+    tempRoots.push(bounded);
+    expect((await stat(bounded)).dev).not.toBe((await stat(dataDir)).dev);
+    await prepareWorkspaceSource({ workspaceId: "default-layout", gitUrl: repo.remote, branch: null });
+    const worktreePath = join(bounded, "work");
+    const limited = await prepareWorkspaceSource({ workspaceId: "bounded-layout", gitUrl: repo.remote, branch: null, worktreePath });
+    expect(limited.worktreePath).toBe(worktreePath);
+    expect(await Bun.file(join(worktreePath, "file.txt")).text()).toBe("one\n");
+    expect((await run(["git", "status", "--porcelain"], { cwd: worktreePath })).stdout).toBe("");
+  });
+
   test("uses the first pushed commit for later workspaces while the original stays unborn", async () => {
     const root = await mkdtemp(join(tmpdir(), "kintsugi-empty-source-test-"));
     tempRoots.push(root);

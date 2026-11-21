@@ -35,6 +35,7 @@ export class PopupPosition {
   private readonly toggle = (): void => {
     if (!this.menu.matches(":popover-open")) { this.stop(); return; }
     this.position();
+    this.menu.addEventListener("scroll", this.updateOverflow);
     this.visibility.observe(this.trigger);
     this.resize.observe(this.trigger);
     this.resize.observe(this.menu);
@@ -48,6 +49,7 @@ export class PopupPosition {
   private stop(): void {
     this.visibility.disconnect();
     this.resize.disconnect();
+    this.menu.removeEventListener("scroll", this.updateOverflow);
     document.removeEventListener("scroll", this.scroll, true);
     window.removeEventListener("resize", this.position);
     this.viewport.removeEventListener("resize", this.position);
@@ -79,7 +81,14 @@ export class PopupPosition {
     const x = clamp(anchor.left + anchor.width / 2 - position.left, 0, this.menu.offsetWidth);
     const y = clamp(anchor.top + anchor.height / 2 - position.top, 0, this.menu.offsetHeight);
     this.menu.style.transformOrigin = `${x}px ${y}px`;
+    this.updateOverflow();
     this.menu.style.visibility = "visible";
+  };
+
+  private readonly updateOverflow = (): void => {
+    const hint = this.menu.querySelector<HTMLElement>(":scope > .popup-menu-more");
+    if (!hint) return;
+    hint.hidden = this.menu.scrollHeight - this.menu.clientHeight - Math.max(0, this.menu.scrollTop) <= 1;
   };
 
   /** Prefer the nearest container that fits both controls, then the viewport. */

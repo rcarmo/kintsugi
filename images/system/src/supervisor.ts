@@ -17,6 +17,8 @@ import { createReleaseRegistry, releaseDockerConfig } from "./release-registry.t
 import { createReleaseRequests, prepareRelease } from "./releases.ts";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
+import { createWorkspaceDisks } from "./workspace-disks.ts";
+import { workspaceDiskRoot } from "../../../packages/shared/src/workspace-disk.ts";
 import { createWorkspaceNetworkControl } from "./workspace-network.ts";
 import { readStorageDriver, storageContainerdConfig, assertStorageSupport } from "../../../packages/core/src/storage-driver.ts";
 import { filesystemFailure } from "./filesystems.ts";
@@ -361,6 +363,8 @@ async function replace(request: Replacement) {
       "kintsugi.role=app",
       "--mount",
       "type=bind,src=/data/app,dst=/data/app",
+      "--mount",
+      `type=bind,src=${workspaceDiskRoot},dst=${workspaceDiskRoot},bind-propagation=rslave`,
       "--mount",
       "type=bind,src=/run/kintsugi-system/storage.json,dst=/etc/kintsugi/storage.json,readonly",
       ...(storageDriver === "erofs" ? ["--mount", "type=bind,src=/data/erofs-cache,dst=/data/erofs-cache"] : []),
@@ -773,7 +777,13 @@ async function initialize() {
   resources = await initializeResources();
   const network = await createWorkspaceNetworkControl(resources.buildClientsCgroupParent);
   workspaceResources = createWorkspaceResourceControl({ pids: resources.policy.pids, memory: resources.policy.memory, cpus: resources.effectiveCpus, swap: resources.swapBudget, swapSupported: resources.swapSupported, systemMemory: resources.effectiveMemory, cgroupParent: resources.workloadsCgroupParent, meterDocker: (signal, ...args) => command(["docker", ...args], undefined, 10_000, signal), docker: (...args) => command(["docker", ...args], undefined, 10_000) });
-  await startHostService({ workspaceCounters: (ids, signal) => workspaceResources!.counters(ids, signal), resourceControl: request => {
+  // Prepare private mounts before Docker restores containers or the app sees their bind paths.
+  if (!existsSync("/dev/loop-control")) await command(["mknod", "-m", "0660", "/dev/loop-control", "c", "10", "237"]);
+  const disks = createWorkspaceDisks({ command: args => command(args, undefined, 60_000),
+    containerExists: async id => Boolean((await docker("ps", "-aq", "--filter", `name=^/kintsugi-${id.replaceAll(".", "\\.")}$`)).trim()),
+  });
+  await disks.initialize((id, error) => log(`Could not restore disk for workspace ${id}: ${String(error)}`));
+  await startHostService({ diskControl: request => request.action === "grow" ? disks.grow(request.workspaceId, request.limitGiB) : disks[request.action](request.workspaceId), workspaceCounters: (ids, signal) => workspaceResources!.counters(ids, signal), resourceControl: request => {
     if (request.operation === "resource-policy") return request.action === "configure" ? workspaceResources!.configurePolicy(request.changes) : workspaceResources!.policy();
     if (request.action === "inspect") return workspaceResources!.inspect(request.workspaceId);
     if (request.action === "configure") return workspaceResources!.configure(request.workspaceId, request.changes);
@@ -781,9 +791,6 @@ async function initialize() {
     return workspaceResources!.admit(request.workspaceId, request.recover ?? false);
   }, root: dirname(dirname(resources.commandsCgroup)), effectiveMemory: resources.effectiveMemory, network });
   await chown(hostSocketPath, 1000, 1000);
-  // Privileged containers only copy device nodes the host /dev already has; some
-  // VMs lack loop-control until first use. Opening it autoloads the loop driver.
-  if (storageDriver === "erofs" && !existsSync("/dev/loop-control")) await command(["mknod", "-m", "0660", "/dev/loop-control", "c", "10", "237"]);
   await writeFile("/run/kintsugi-system/storage.json", JSON.stringify({ driver: storageDriver }));
   await writeFile("/run/kintsugi-system/containerd.toml", storageContainerdConfig(await readFile("/etc/containerd/config.toml", "utf8"), storageDriver));
   daemon(["containerd", "--config", "/run/kintsugi-system/containerd.toml"]);

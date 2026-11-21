@@ -46,3 +46,30 @@ test("saved task defaults and overrides fence pre-task-policy app and System ima
   expect(await requiredAppResourceStateVersion(root)).toBe(3);
  }finally{await rm(root,{recursive:true,force:true});}
 });
+
+test("published workspace disk images fence downgrades even without app metadata", async () => {
+  const root = await mkdtemp(join(tmpdir(), "orphan-disk-compatibility-"));
+  try {
+    const images = join(root, "supervisor/workspace-disks");
+    await mkdir(images, { recursive: true });
+    await writeFile(join(images, "workspace.ext4.new"), "unpublished");
+    await writeFile(join(images, "unrelated.txt"), "unrelated");
+    expect(await requiredResourceStateVersion(root)).toBe(0);
+    await writeFile(join(images, "workspace.ext4"), "published image fixture");
+    expect(await requiredResourceStateVersion(root)).toBe(4);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("managed disk state requires disk-aware app and System images", async () => {
+  const root = await mkdtemp(join(tmpdir(), "disk-resource-compatibility-"));
+  try {
+    const metadata = join(root, "app/workspaces/new/metadata");
+    await mkdir(metadata, { recursive: true });
+    await writeFile(join(metadata, "resource-policy.json"), JSON.stringify({ version: 4 }));
+    const required = await requiredResourceStateVersion(root);
+    expect(required).toBe(4);
+    expect(() => assertResourceStateCompatible(required, { [resourcePolicyVersionLabel]: "3" })).toThrow();
+    expect(() => assertResourceStateCompatible(required, { [resourcePolicyVersionLabel]: "4" }, { [systemVersionLabel]: "7" })).toThrow();
+    expect(() => assertResourceStateCompatible(required, { [resourcePolicyVersionLabel]: "4" }, { [systemVersionLabel]: "8" })).not.toThrow();
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const installer = (await Bun.file(new URL("./install.sh", import.meta.url)).text()).replace("no_updater=0", "no_updater=1");
 
@@ -816,6 +819,35 @@ test("saved workspace resource allocations refuse incompatible app/System replac
     const result=run({installed:true,resourceDataVersion:1,...target});expect(result.status).not.toBe(0);expect(result.output).toContain("resource-aware");expect(result.output).not.toContain("DOCKER stop --time 120");expect(result.output).not.toContain("DOCKER rm kintsugi-system");
   }
   expect(run({installed:true,resourceDataVersion:1,systemCompatibility:"3",appResourceCompatibility:"1"}).status).toBe(0);
+});
+
+test("installer requires compatible images when only the workspace disk survives", async () => {
+  const root = await mkdtemp(join(tmpdir(), "kintsugi-install-disk-"));
+  try {
+    const images = join(root, "supervisor/workspace-disks");
+    await mkdir(images, { recursive: true });
+    const source = installer.split("<<'INSTALLER_CONFIG_JS'\n")[1]!.split("\nINSTALLER_CONFIG_JS\n")[0]!.replaceAll("'/data/", `'${root}/`);
+    function resourceVersion() {
+      const result = Bun.spawnSync([process.execPath, "-e", source, "resource-data-version"]);
+      expect(result.stderr.toString()).toBe("");
+      expect(result.exitCode).toBe(0);
+      return Number(result.stdout.toString());
+    }
+    await writeFile(join(images, "orphan.ext4.new"), "unpublished");
+    expect(resourceVersion()).toBe(0);
+    await writeFile(join(images, "orphan.ext4"), "published image fixture");
+    expect(resourceVersion()).toBe(4);
+    for (const action of ["update", "rollback"]) {
+      const args = ["--non-interactive", "--confirm-replace", "--action", action];
+      for (const target of [{ systemCompatibility: "7", appResourceCompatibility: "4" }, { systemCompatibility: "8", appResourceCompatibility: "3" }]) {
+        const incompatible = run({ installed: true, resourceDataVersion: 4, ...target }, args);
+        expect(incompatible.status).not.toBe(0);
+        expect(incompatible.output).toContain("resource-aware");
+        expect(incompatible.output).not.toContain("DOCKER stop --time 120");
+      }
+      expect(run({ installed: true, resourceDataVersion: 4, systemCompatibility: "8", appResourceCompatibility: "4" }, args).status).toBe(0);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test("saved task settings require reader 3 and System 5 before update or rollback",()=>{

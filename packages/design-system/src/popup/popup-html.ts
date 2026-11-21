@@ -19,5 +19,5 @@ export function popupHtml(options: PopupOptions): string {
     type: "button",
     ...options.trigger,
     attributesHtml: `data-popup-menu-trigger aria-haspopup="menu" aria-expanded="false" aria-controls="${escapeHtml(options.id)}" popovertarget="${escapeHtml(options.id)}" ${options.trigger.attributesHtml ?? ""}`,
-  })}${popupMenuHtml({ id: options.id, label: options.label, contentHtml: options.contentHtml, placement: options.placement ?? "below", attributesHtml: `${options.width === "content" ? 'data-popup-menu-width="content" ' : ""}${options.menuAttributesHtml ?? ""}` })}</span>`;
+  })}${popupMenuHtml({ id: options.id, label: options.label, contentHtml: `${options.contentHtml}<span class="popup-menu-more" aria-hidden="true" hidden></span>`, placement: options.placement ?? "below", attributesHtml: `${options.width === "content" ? 'data-popup-menu-width="content" ' : ""}${options.menuAttributesHtml ?? ""}` })}</span>`;
 }

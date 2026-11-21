@@ -62,6 +62,23 @@ test("uninstall inventory deduplicates labels and data, includes parked and orph
   expect(await uninstallPlan(docker, dataDir)).toEqual(plan);
 });
 
+test("inventory includes orphaned managed disks and deduplicates in-progress images", async () => {
+  const { root, dataDir } = await fixture();
+  const { docker, commands } = daemon();
+  const previous = await uninstallPlan(docker, dataDir);
+  const images = join(root, "supervisor", "workspace-disks");
+  await mkdir(images, { recursive: true });
+  for (const name of ["active.ext4", "disk-only.ext4", "disk-only.ext4.new", "incomplete.ext4.new", "unrelated.log"]) {
+    await writeFile(join(images, name), "synthetic image marker");
+  }
+  const plan = await uninstallPlan(docker, dataDir);
+  expect(plan.workspaceCount).toBe(5);
+  expect(plan.token).not.toBe(previous.token);
+  await expect(uninstallManagedResources({ token: previous.token, docker, dataDir, progress: async () => {} })).rejects.toThrow("Workspace inventory changed");
+  expect(commands.some(args => args[0] === "rm")).toBe(false);
+  expect(await readFile(join(images, "disk-only.ext4"), "utf8")).toBe("synthetic image marker");
+});
+
 test("inventory uses container IDs for legacy unlabelled workspace identities and does not require app data", async () => {
   const { root } = await fixture();
   const docker = async () => "123456789abcdef\t\nabcdef123456789\tparked";
@@ -87,7 +104,7 @@ test("uninstall stops writers, deletes all private-daemon resources and app stat
   expect(commands.find(args => args[0] === "rm")).toEqual(["rm", "--force", "--volumes", "app-container", "active-container", "parked-container"]);
   expect(commands.find(args => args[0] === "volume" && args[1] === "rm")).toEqual(["volume", "rm", "workspace-data", "nested-docker"]);
   expect(commands).toContainEqual(["builder", "prune", "--all", "--force"]);
-  expect(progress.at(-1)).toBe("Verifying managed resources are gone");
+  expect(progress.indexOf("Verifying managed resources are gone")).toBeLessThan(progress.indexOf("Deleting projects, settings, credentials, conversations, and shared files"));
   await expect(readFile(join(dataDir, "settings.json"))).rejects.toMatchObject({ code: "ENOENT" });
   expect(await readFile(join(root, "unrelated"), "utf8")).toBe("keep me");
 });
@@ -116,4 +133,5 @@ test("cleanup does not report success when Docker leaves managed resources behin
   const { docker } = daemon({ leaveContainer: true });
   const plan = await uninstallPlan(docker, dataDir);
   await expect(uninstallManagedResources({ token: plan.token, docker, dataDir, progress: async () => {} })).rejects.toThrow("Managed Docker resources remain");
+  expect(await readFile(join(dataDir, "settings.json"), "utf8")).toBe("important settings");
 });

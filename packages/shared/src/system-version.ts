@@ -1,12 +1,14 @@
 /** Kintsugi's app/System contract, independent of image tags and upstream's version numbers. */
-export const systemVersion = 7;
+export const systemVersion = 8;
+export const workspaceDiskSystemVersion = 8;
 /** Optional feature gate; existing app functions still require only version zero. */
 export const listedHostsSystemVersion = 2;
 /** App capability for reading persisted listed-host policy snapshots. */
 export const networkPolicyVersion = 2;
 export const networkPolicyVersionLabel = "org.kintsugi.network-policy-version";
 /** Reader for persisted workspace resource allocations; independent of network policy format. */
-export const resourcePolicyVersion = 3;
+export const workspaceDiskResourceVersion = 4;
+export const resourcePolicyVersion = workspaceDiskResourceVersion;
 export const resourcePolicyVersionLabel = "org.kintsugi.resource-policy-version";
 export const resourceControlSystemVersion = 3;
 export const workspaceMemoryPolicySystemVersion = 4;
@@ -26,6 +28,7 @@ export const requiredSystemVersionLabel = "org.kintsugi.required-system-version"
 // 5: editable default and per-workspace process/thread limits.
 // 6: live System and selected-workspace resource counters.
 // 7: host-available RAM and isolated, bounded workspace telemetry probes.
+// 8: System-owned bounded workspace disks.
 const maximumVersion = 2_147_483_647;
 
 export function parseSystemVersion(value: string | undefined): number {

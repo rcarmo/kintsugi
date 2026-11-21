@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { readdir, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { isNotFoundError } from "../../../packages/core/src/fs.ts";
+import { workspaceDiskIdPattern, workspaceDiskImageDirectory, workspaceDiskImageSuffix } from "../../../packages/shared/src/workspace-disk.ts";
 
 export const uninstallSocketPath = "/run/kintsugi-system/uninstall.sock";
 export type UninstallState = { state: "running" | "failed" | "complete"; description: string };
@@ -18,9 +20,17 @@ export async function uninstallPlan(docker: Docker, dataDir = "/data/app"): Prom
     for (const entry of await readdir(join(dataDir, "workspaces"), { withFileTypes: true })) {
       if (entry.isDirectory() && !entry.name.endsWith(".lock")) ids.add(entry.name);
     }
-  } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-  }
+  } catch (error) { if (!isNotFoundError(error)) throw error; }
+  // A failed or interrupted provisioning/deletion can leave a disk without app metadata.
+  try {
+    const images = await readdir(join(dirname(dataDir), "supervisor", workspaceDiskImageDirectory));
+    for (const image of images) {
+      const name = image.endsWith(".new") ? image.slice(0, -4) : image;
+      if (!name.endsWith(workspaceDiskImageSuffix)) continue;
+      const id = name.slice(0, -workspaceDiskImageSuffix.length);
+      if (workspaceDiskIdPattern.test(id)) ids.add(id);
+    }
+  } catch (error) { if (!isNotFoundError(error)) throw error; }
   const token = createHash("sha256").update(JSON.stringify([...ids].sort())).digest("hex");
   return { token, workspaceCount: ids.size };
 }
@@ -52,12 +62,12 @@ export async function uninstallManagedResources(options: {
   await progress("Deleting managed images and build caches");
   await docker("builder", "prune", "--all", "--force");
   await docker("image", "prune", "--all", "--force");
-  await progress("Deleting projects, settings, credentials, conversations, and shared files");
-  await rm(dataDir, { recursive: true, force: true });
-  // Image/containerd caches and Tailscale state disappear with the outer installation volume.
   await progress("Verifying managed resources are gone");
   if (lines(await docker("ps", "-aq")).length || lines(await docker("volume", "ls", "-q")).length ||
       lines(await docker("network", "ls", "--filter", "type=custom", "-q")).length ||
       lines(await docker("image", "ls", "-q")).length)
     throw new Error("Managed Docker resources remain. The installation volume has not been removed; run --uninstall again.");
+  await progress("Deleting projects, settings, credentials, conversations, and shared files");
+  await rm(dataDir, { recursive: true, force: true });
+  // Workspace disk images, shared image caches and Tailscale state disappear with the outer volume after System stops.
 }

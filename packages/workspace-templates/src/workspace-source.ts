@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { platform } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   kintsugiDataPath,
   runCommand,
@@ -286,14 +286,17 @@ function warnRegularCopy(dir: string): void {
 }
 
 async function copyWorkspaceTemplate(src: string, dest: string, supportProbeDir: string): Promise<void> {
-  if (await detectReflinkSupport(supportProbeDir)) {
+  // A quota disk is a different filesystem, even when the template store supports reflinks.
+  const [source, destination] = await Promise.all([stat(src), stat(dirname(dest))]);
+  const sameFilesystem = source.dev === destination.dev;
+  if (sameFilesystem && await detectReflinkSupport(supportProbeDir)) {
     const args = reflinkCopyArgs(src, dest);
     if (!args) throw new KintsugiCoreError("cow_unavailable", `copy-on-write workspace copies are not supported on ${platform()}`);
     await requireCommand("cp", args, { errorCode: "cow_unavailable" });
     return;
   }
 
-  warnRegularCopy(supportProbeDir);
+  if (sameFilesystem) warnRegularCopy(supportProbeDir);
   const args = regularCopyArgs(src, dest);
   if (!args) throw new KintsugiCoreError("copy_unavailable", `workspace template copies are not supported on ${platform()}`);
   await requireCommand("cp", args, { errorCode: "copy_unavailable" });
@@ -326,7 +329,7 @@ export async function prepareWorkspaceSource(options: { workspaceId: string; git
       const entries = await readdir(worktreePath);
       if (entries.length > 0) throw new KintsugiCoreError("workspace_source_exists", `workspace source is not empty: ${worktreePath}`);
     }
-    const tmpWorkPath = join(cleanupPath, `work.tmp-${process.pid}-${Date.now()}`);
+    const tmpWorkPath = join(dirname(worktreePath), `work.tmp-${process.pid}-${Date.now()}`);
     await rm(tmpWorkPath, { recursive: true, force: true });
     const logPath = join(cleanupPath, `project-provision-${Date.now()}.log`);
 

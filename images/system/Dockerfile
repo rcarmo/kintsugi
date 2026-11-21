@@ -9,7 +9,7 @@ RUN test -x /usr/local/bin/kintsugi-image-transfer || ln -s /usr/local/bin/agent
 # Profiling needs host kernel support/permissions; installing systemd only supplies
 # its diagnostic commands (the container still runs the Kintsugi supervisor).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    atop bpfcc-tools bpftrace btop coreutils dnsutils htop iftop \
+    atop bpfcc-tools bpftrace btop coreutils dnsutils e2fsprogs htop iftop \
     iotop-c iproute2 iputils-ping linux-perf lsof mtr-tiny ncdu nethogs \
     nftables procps psmisc smem strace sysstat systemd tcpdump tmux util-linux \
     && rm -rf /var/lib/apt/lists/*

@@ -1,10 +1,11 @@
 import { kintsugiEnv, workspaceResourceControlAvailable } from "@kintsugi/core";
 import { hostRequest } from "@kintsugi/host/control";
+import { prepareWorkspaceDisk, requireWorkspaceDiskControl, removeWorkspaceDisk } from "./disk.ts";
 import { createHash } from "node:crypto";
 import { workspaceHomeMounts } from "./home.ts";
 import { workspaceImagePreloader } from "./preload.ts";
 import type { WorkspaceImageConfigureEvent } from "./events.ts";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { assertStorageSupport, readStorageDriver, KintsugiCoreError, kintsugiDataPath, createProcessFileLock, dockerHostKintsugiDataPath, getKintsugiRuntimeContext, invalidArguments, isJsonObject, readTextIfExists, requireDocker, runDocker, runDockerBuffer, withManagedDockerCommand, withCommandSignal, waitForCommand, shellQuote, writeJsonAtomic, type KintsugiEventBus, type CommandInput, type JsonObject } from "@kintsugi/core";
 import { runTerminalProcess, tailTerminalOutput, tailTerminalText, terminalOutputDisplayBytes } from "@kintsugi/observable-terminal/server";
@@ -73,17 +74,25 @@ function workspaceNetworkName(id: string): string { return `kintsugi-workspace-$
 function workspaceBridgeName(id: string): string { return `atw-${createHash("sha256").update(id).digest("hex").slice(0, 11)}`; }
 function formatDeleteBlockedMessage(id: string, issues: JsonObject[]): string { return `workspace ${id} has delete blockers:\n${issues.map((issue) => `- ${JSON.stringify(issue)}`).join("\n")}\nuse --force to delete anyway`; }
 
-async function createWorkspaceWorkDir(id: string): Promise<{ worktreePath: string; dockerHostWorktreePath: string }> {
+async function createWorkspaceWorkDir(id: string): Promise<{ worktreePath: string; dockerHostWorktreePath: string; diskDockerPath?: string }> {
   const runtime = getKintsugiRuntimeContext();
   const worktreePath = kintsugiDataPath(runtime, "workspaces", id, "work");
   const dockerHostWorktreePath = dockerHostKintsugiDataPath(runtime, "workspaces", id, "work");
-  if (await Bun.file(worktreePath).exists()) throw new KintsugiCoreError("workspace_source_exists", `workspace source already exists: ${worktreePath}`);
+  const existing = await lstat(worktreePath, { throwIfNoEntry: false });
+  if (existing && !existing.isSymbolicLink() && !existing.isDirectory()) throw new KintsugiCoreError("workspace_source_exists", `workspace source already exists: ${worktreePath}`);
+  // A worktree already created on the legacy layout must never be moved here.
+  if (!existing?.isDirectory()) {
+    const disk = await prepareWorkspaceDisk(id);
+    if (disk) return { worktreePath: disk.checkout, dockerHostWorktreePath: disk.checkout, diskDockerPath: disk.docker };
+    if (existing?.isSymbolicLink()) throw new Error("Workspace disk is unavailable. Update Kintsugi System.");
+  }
   await mkdir(worktreePath, { recursive: true });
   return { worktreePath, dockerHostWorktreePath };
 }
 
 async function deleteWorkspaceWorkDir(id: string): Promise<void> {
   const runtime = getKintsugiRuntimeContext();
+  await removeWorkspaceDisk(id);
   await rm(kintsugiDataPath(runtime, "workspaces", id), { recursive: true, force: true });
 }
 
@@ -450,7 +459,7 @@ export async function createWorkspace(options: { id: string; events: KintsugiEve
       await mkdir(join(sockets, "helper"), { recursive: true, mode: 0o700 });
       activePlan.mounts.push({ type: "bind", source: dockerHostKintsugiDataPath(getKintsugiRuntimeContext(), "workspace-sockets", id, "helper"), target: "/run/kintsugi-helper" });
       await mkdir(sockets, { recursive: true });
-      activePlan.mounts.push({ type: "volume", target: "/data" });
+      activePlan.mounts.push(source.diskDockerPath ? { type: "bind", source: source.diskDockerPath, target: "/data" } : { type: "volume", target: "/data" });
       if (await readStorageDriver() === "erofs") activePlan.mounts.push({ type: "bind", source: "/data/erofs-cache", target: "/data/erofs-cache", readonly: true });
       activePlan.mounts.push({ type: "bind", source: dockerHostKintsugiDataPath(getKintsugiRuntimeContext(), "workspace-sockets", id), target: "/run/kintsugi-parent", readonly: true });
       await events.emit("workspace_plan_prepare", { workspaceId: id, init, context, workHostPath: source.worktreePath, workContainerPath: workspaceRoot, plan: activePlan });
@@ -581,6 +590,7 @@ export async function listWorkspaces(options: { inspectImages?: boolean; events?
 
 export async function deleteWorkspace(id: string, options: DeleteWorkspaceOptions = {}): Promise<null> {
   assertValidWorkspaceId(id);
+  await requireWorkspaceDiskControl(id);
   let containerExists = true;
   if (options.force) {
     const labels = await inspectLabels(id).catch((error) => {
@@ -702,5 +712,6 @@ export async function prepareWorkspaceRuntime(id: string, report: (detail: strin
   await workspaceImagePreloader.install(images, workspaceContainerName(id), report, activity);
 }
 
+export { inspectWorkspaceDisk, growWorkspaceDisk } from "./disk.ts";
 export { inspectWorkspaceResources, configureWorkspaceResources, workspaceMemoryPolicyAvailable, inspectWorkspaceMemoryPolicy, configureWorkspaceMemoryPolicy } from "./resources.ts";
 export { inspectResourceCounters } from "./resource-metrics.ts";

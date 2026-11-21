@@ -10,7 +10,7 @@ import { domId, type LiveRegion } from "@kintsugi/shared";
 import { changesDeletionReview, deletionReviewCommitResponse, deletionReviewFileResponse, clearDeletionReview } from "./deletion.ts";
 import { refreshChanges } from "./refresh.ts";
 import { commitLinkLabel, openCommitLink } from "./commit-links.ts";
-import type { JsonValue } from "@kintsugi/core";
+import { waitForCommand, withCommandSignal, type JsonValue } from "@kintsugi/core";
 import { Icons } from "@kintsugi/design-system/icons";
 import { escapeHtml, parseCommitLinkSpec, turboStreamResponse, type WorkspaceModule } from "@kintsugi/shared";
 import { matchRoute, response, textResponse } from "@kintsugi/shared/http";
@@ -19,7 +19,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { collectUnchangedPaths, readUnchangedContents, readUnchangedFile, unchangedMediaType, type ChangesFile, type UnchangedFile } from "./diff.ts";
 import { canEditFile } from "../editing.ts";
-import { renderEditModel, renderUnchangedFile, renderUnchangedPaths, changesBodyId, comparisonId, errorId, historyContentId, renderChanges, renderChangesTitle, renderChangesFile, renderComparison, renderError, renderHistory, renderDiff, noticeId, renderNotice } from "./render.ts";
+import { renderChangesOpening, renderEditModel, renderUnchangedFile, renderUnchangedPaths, changesBodyId, comparisonId, errorId, historyContentId, renderChanges, renderChangesTitle, renderChangesFile, renderComparison, renderError, renderHistory, renderDiff, noticeId, renderNotice } from "./render.ts";
 import type { DiffEndpoints } from "../history.ts";
 import { workspaceChangeBuckets, type ChangeBucket } from "./buckets.ts";
 import { ChangesPublication } from "./publication.ts";
@@ -30,22 +30,41 @@ const referenceSchema = Type.Object({ type: Type.Literal("changes") });
 /** Buckets are re-read whenever the whole view or a new comparison renders, so saved settings show up on the next refresh. */
 type ChangesState = ChangesPublication<ChangesSnapshot> & { buckets: readonly ChangeBucket[]; clients: Map<string, number> };
 let invalidateWorkspace: (workspaceId: string) => void;
-const states = new Map<string, Promise<ChangesState>>();
+type ChangesLoad = { result: Promise<ChangesState>; cancel: AbortController; state?: ChangesState; failed?: true };
+const states = new Map<string, ChangesLoad>();
+
+function loadChanges(workspaceId: string): ChangesLoad {
+  const existing = states.get(workspaceId);
+  if (existing) return existing;
+  const cancel = new AbortController();
+  const signal = AbortSignal.any([cancel.signal, AbortSignal.timeout(60_000)]);
+  // The live surface can confirm immediately; repository capture has its own deadline.
+  const result = withCommandSignal(signal, async () => {
+    const root = workspaceRepository(workspaceId);
+    const [snapshot, buckets] = await waitForCommand(Promise.all([captureChanges(root), workspaceChangeBuckets(workspaceId)]));
+    const clients = new Map<string, number>();
+    return Object.assign(new ChangesPublication(snapshot, {
+      capture: previous => states.get(workspaceId) === load ? refreshChanges(root, previous) : Promise.resolve(previous),
+      published: () => { if (states.get(workspaceId) !== load) return; clients.clear(); invalidateWorkspace(workspaceId); },
+    }), { buckets, clients });
+  });
+  const load: ChangesLoad = { result, cancel };
+  states.set(workspaceId, load);
+  void result.then(state => {
+    if (states.get(workspaceId) !== load) return;
+    load.state = state;
+    invalidateWorkspace(workspaceId);
+  }, error => {
+    if (states.get(workspaceId) !== load) return;
+    console.error(`Could not open Changes for workspace ${workspaceId}`, error);
+    load.failed = true;
+    invalidateWorkspace(workspaceId);
+  });
+  return load;
+}
+
 function current(workspaceId: string): Promise<ChangesState> {
-  let state = states.get(workspaceId);
-  if (!state) {
-    state = Promise.all([captureChanges(workspaceRepository(workspaceId)), workspaceChangeBuckets(workspaceId)]).then(([snapshot, buckets]) => {
-      const clients = new Map<string, number>(), root = workspaceRepository(workspaceId);
-      return Object.assign(new ChangesPublication(snapshot, {
-        // A removed workspace's late refresh has no one to show it to.
-        capture: previous => states.get(workspaceId) === state ? refreshChanges(root, previous) : Promise.resolve(previous),
-        published: () => { if (states.get(workspaceId) !== state) return; clients.clear(); invalidateWorkspace(workspaceId); },
-      }), { buckets, clients });
-    });
-    states.set(workspaceId, state);
-    void state.catch(() => { if (states.get(workspaceId) === state) states.delete(workspaceId); });
-  }
-  return state;
+  return loadChanges(workspaceId).result;
 }
 const unchangedPaths = new WeakMap<ChangesSnapshot, Promise<Set<string>>>();
 function unchanged(workspaceId: string, snapshot: ChangesSnapshot): Promise<Set<string>> {
@@ -100,7 +119,8 @@ export const kintsugiServerModule: WorkspaceModule = {
     },
     identity: () => "workspace",
     async render({ workspaceId }) {
-      const state = await current(workspaceId);
+      const { state, failed } = loadChanges(workspaceId);
+      if (!state) return renderChangesOpening(workspaceId, failed === true);
       state.buckets = await workspaceChangeBuckets(workspaceId);
       return renderChanges(workspaceId, state.snapshot, state.buckets);
     },
@@ -109,6 +129,16 @@ export const kintsugiServerModule: WorkspaceModule = {
   openApiPaths: reviewDeliveryOpenApiPaths,
   staticFiles: { "/deletion.css": { url: new URL("../client/deletion.css", import.meta.url), contentType: "text/css; charset=utf-8" }, "/changes.css": { url: new URL("../client/style.css", import.meta.url), contentType: "text/css; charset=utf-8" } },
   routes: [{ async handle(request, url, context) {
+    const retry = matchRoute(url, /^\/workspaces\/([^/]+)\/changes\/retry$/);
+    if (retry) {
+      if (request.method !== "POST") return textResponse("Method not allowed", { status: 405 });
+      const workspaceId = retry[0]!;
+      if (states.get(workspaceId)?.failed) {
+        states.delete(workspaceId);
+        invalidateWorkspace(workspaceId);
+      }
+      return turboStreamResponse("");
+    }
     const review = await handleReviewDelivery(request, url, async workspaceId => (await current(workspaceId)).snapshot);
     if (review) return review;
     const linkRoute = matchRoute(url, /^\/workspaces\/([^/]+)\/changes\/(open|commit-label)$/);
@@ -328,13 +358,21 @@ export const kintsugiServerModule: WorkspaceModule = {
     context.events.on("workspace_agent_turn_finished", async ({ workspaceId }) => {
       // Do not scan repositories for workspaces whose Changes view has never been opened.
       const pending = states.get(workspaceId);
-      if (pending) await (await pending).changed();
+      if (pending && !pending.failed) {
+        const state = await pending.result.catch(() => undefined); // Initial failure is reported by the loader.
+        await state?.changed();
+      }
     });
     context.events.on("workspace_delete_inspect", ({ workspaceId, issues }) => {
       const uncopied = reviewComments.list(workspaceId).filter(comment => comment.copiedRevision !== comment.revision);
       if (uncopied.length) issues.push({ kind: "uncopied_review_comments", message: `${uncopied.length} review comments haven’t been copied. Deleting this workspace will delete them.`, count: uncopied.length });
     });
-    context.onWorkspaceRemoved(workspaceId => { states.delete(workspaceId); changesEdits.delete(workspaceId); clearDeletionReview(workspaceId); reviewComments.delete(workspaceId); reviewDeliveries.delete(workspaceId); });
+    context.onWorkspaceRemoved(workspaceId => {
+      const load = states.get(workspaceId);
+      states.delete(workspaceId);
+      load?.cancel.abort();
+      changesEdits.delete(workspaceId); clearDeletionReview(workspaceId); reviewComments.delete(workspaceId); reviewDeliveries.delete(workspaceId);
+    });
   },
   attachToWorkspace() {
     // Attaching a closed view must not put repository capture on the workspace's critical path.

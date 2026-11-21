@@ -8,6 +8,27 @@
 .popup-menu-anchor > .button { min-width: 0; max-width: 100%; }
 .popup-menu-anchor > .button > .button__caption { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .popup-menu { visibility: hidden; }
+.popup-menu-more:not([hidden]) {
+  display: block;
+  position: sticky;
+  inset-block-end: 0;
+  block-size: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+.popup-menu-more::after {
+  content: "";
+  position: absolute;
+  inset-block-end: 2px;
+  inset-inline: 0;
+  margin-inline: auto;
+  inline-size: 5px;
+  block-size: 5px;
+  border: solid var(--text-muted);
+  border-width: 0 1px 1px 0;
+  opacity: .55;
+  transform: rotate(45deg);
+}
 
 .popup-menu .content-row.is-danger { color: var(--danger); }
 .popup-menu .content-row.is-danger:not(:disabled):not([aria-disabled="true"]):hover,

@@ -20,6 +20,7 @@ export class HostService {
   constructor(private readonly sample: () => Promise<HostSample>, private readonly socketName = "kintsugi-host", private readonly network?: (request: Extract<HostCommand, { operation: "network" }>) => Promise<HostResult>) {}
 
   meters?: (workspaceIds: readonly string[]) => Promise<ResourceSnapshot>;
+  diskControl?: (request: Extract<HostCommand, { operation: "disk" }>) => Promise<HostResult>;
   resourceControl?: (request: Extract<HostCommand, { operation: "resources" | "resource-policy" }>) => Promise<HostResult>;
 
   private async list(): Promise<HostTerminal[]> {
@@ -47,6 +48,10 @@ export class HostService {
         if (!this.resourceControl) throw new Error("Workspace resource control is unavailable");
         return this.resourceControl(request);
       }
+      case "disk": {
+        if (!this.diskControl) throw new Error("Workspace disk control is unavailable");
+        return this.diskControl(request);
+      }
       case "network": {
         if (!this.network) throw new Error("Workspace network control is unavailable");
         return this.network(request);
@@ -73,7 +78,7 @@ export class HostService {
 }
 
 /** Only the app receives this socket mount. No privileged API on the public supervisor listener. */
-export async function startHostService(options: { workspaceCounters?: (ids: readonly string[], signal: AbortSignal) => Promise<Record<string, ResourceCounter>>; resourceControl?: (request: Extract<HostCommand, { operation: "resources" | "resource-policy" }>) => Promise<HostResult>; root: string; effectiveMemory: number; socketPath?: string; tmuxSocketName?: string; network?: (request: Extract<HostCommand, { operation: "network" }>) => Promise<HostResult> }) {
+export async function startHostService(options: { diskControl?: HostService["diskControl"]; workspaceCounters?: (ids: readonly string[], signal: AbortSignal) => Promise<Record<string, ResourceCounter>>; resourceControl?: (request: Extract<HostCommand, { operation: "resources" | "resource-policy" }>) => Promise<HostResult>; root: string; effectiveMemory: number; socketPath?: string; tmuxSocketName?: string; network?: (request: Extract<HostCommand, { operation: "network" }>) => Promise<HostResult> }) {
   const socketPath = options.socketPath ?? hostSocketPath;
   const socketName = options.tmuxSocketName ?? "kintsugi-host";
   await mkdir(dirname(socketPath), { recursive: true });
@@ -81,6 +86,7 @@ export async function startHostService(options: { workspaceCounters?: (ids: read
   await tmux(socketName, "-f", "/dev/null", "start-server", ";", "set-option", "-g", "exit-empty", "off");
   const service = new HostService(() => sampleHost(options.root, options.effectiveMemory), socketName, options.network);
   service.resourceControl = options.resourceControl;
+  service.diskControl = options.diskControl;
   const workspaceCounters = options.workspaceCounters;
   const workspaceProbe = workspaceCounters ? createWorkspaceCounterProbe(workspaceCounters, { onError: error => console.error("Workspace resource inspection unavailable", error) }) : undefined;
   if (workspaceProbe) service.meters = async ids => {

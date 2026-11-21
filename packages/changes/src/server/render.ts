@@ -48,6 +48,11 @@ export function renderNotice(workspaceId: string, historyId: string, message?: s
   return `<div id="${noticeId(workspaceId, historyId)}">${message ? `<div class="changes-diff-endpoints-error" role="alert"><span>${escapeHtml(message)}</span>${dismiss}</div>` : ""}</div>`;
 }
 
+export function renderChangesOpening(workspaceId: string, failed: boolean): string {
+  if (!failed) return `<div class="changes-empty" role="status"><span><span class="changes-spinner" aria-hidden="true"></span> Loading changes…</span></div>`;
+  return `<div class="changes-empty"><form method="post" action="/workspaces/${encodeURIComponent(workspaceId)}/changes/retry" data-turbo="true"><p>Couldn’t load changes.</p>${buttonHtml({ type: "submit", variant: "secondary", content: { kind: "caption", caption: "Try again" } })}</form></div>`;
+}
+
 export function renderChanges(workspaceId: string, snapshot: ChangesSnapshot, buckets: readonly ChangeBucket[], pickerOpen = false): string {
   const history = snapshot.history;
   const pickerId = domId("changes", history.id, "picker");

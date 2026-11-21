@@ -1282,7 +1282,7 @@ export function createWebApp(deps: WebAppDeps): WebApp {
       const entry = requireWorkspace(params[0]!);
       return handleWorkspaceResources(request, entry.id, deps.workspaceResourceBackend);
     }
-    if ((params = matchRoute(url, /^\/workspaces\/([^/]+)\/properties(?:\/(?:resources|network|dns))?$/))) {
+    if ((params = matchRoute(url, /^\/workspaces\/([^/]+)\/properties(?:\/(?:resources|disk|network|dns))?$/))) {
       const entry = requireWorkspace(params[0]!);
       return handleWorkspaceProperties(request, url, entry.id, workspaceTitle(entry), html => surfacePage({kind: "module-modal", dialogHtml: html}), deps.workspaceResourceBackend);
     }

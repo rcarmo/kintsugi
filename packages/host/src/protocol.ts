@@ -1,6 +1,7 @@
 import type { ResourceSnapshot } from "@kintsugi/core/resource-metrics";
 import type { HostMetricId } from "./diagnostics.ts";
 import { workspaceResourceChangeSchema, workspaceMemoryPolicyChangeSchema, type WorkspaceMemoryPolicySnapshot, type WorkspaceResourceSnapshot } from "@kintsugi/shared/workspace-resources";
+import { workspaceDiskIdPattern, workspaceDiskSizeSchema, type WorkspaceDiskSnapshot } from "@kintsugi/shared/workspace-disk";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 export const hostSocketPath = "/run/kintsugi-host/control.sock";
@@ -13,6 +14,7 @@ export interface HostResults {
   meters: ResourceSnapshot;
   network: WorkspaceNetworkPolicy;
   resources: null | WorkspaceResourceSnapshot;
+  disk: null | WorkspaceDiskSnapshot;
   "resource-policy": WorkspaceMemoryPolicySnapshot;
   list: HostTerminal[];
   create: HostTerminal;
@@ -21,7 +23,10 @@ export interface HostResults {
 }
 export type HostResult = HostResults[keyof HostResults];
 const terminalId = Type.String({ pattern: "^host-[a-f0-9-]{36}$" });
+const diskWorkspaceId = Type.String({ pattern: workspaceDiskIdPattern.source });
 const requestSchema = Type.Union([
+  Type.Object({ operation: Type.Literal("disk"), action: Type.Union([Type.Literal("prepare"), Type.Literal("inspect"), Type.Literal("remove")]), workspaceId: diskWorkspaceId }, { additionalProperties: false }),
+  Type.Object({ operation: Type.Literal("disk"), action: Type.Literal("grow"), workspaceId: diskWorkspaceId, limitGiB: workspaceDiskSizeSchema }, { additionalProperties: false }),
   Type.Object({ operation: Type.Literal("meters"), workspaceIds: Type.Array(Type.String({ pattern: "^[a-zA-Z0-9][a-zA-Z0-9_.-]*$" }), { maxItems: 32 }) }, { additionalProperties: false }),
   Type.Object({ operation: Type.Literal("resource-policy"), action: Type.Literal("inspect") }, { additionalProperties: false }),
   Type.Object({ operation: Type.Literal("resource-policy"), action: Type.Literal("configure"), changes: workspaceMemoryPolicyChangeSchema }, { additionalProperties: false }),
