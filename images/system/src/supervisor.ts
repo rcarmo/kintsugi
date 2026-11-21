@@ -484,8 +484,8 @@ const server = Bun.serve({
       return Response.json({
         ...installationStatus({
           activity: healthy && !appResponding ? { description: "Checking Kintsugi is healthy" } : activity,
-          failure: failure ?? connectionProblem(),
-          stopping, busy, appResponding, hostname: tailnetHost, appliedRoute,
+          failure: (recoveringHealth ? undefined : failure) ?? connectionProblem(),
+          recoveringHealth, stopping, busy, appResponding, hostname: tailnetHost, appliedRoute,
           connectionState, authUrl, connectionAction: httpsAction, logs,
           localOrigin: accessOrigin(),
           proxyMode: persisted.accessMode === "proxy",

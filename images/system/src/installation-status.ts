@@ -2,6 +2,7 @@ export type Activity = { description: string; percent?: number };
 export type InstallationStatus = {
   state: "starting" | "ready" | "failed";
   activity: Activity;
+  recoveringHealth?: true;
   appUrl?: string;
   supervisorUrl?: string;
   action?: { description: string; url?: string };
@@ -16,6 +17,7 @@ export function installationStatus(input: {
   proxyMode?: boolean;
   localOrigin?: string;
   failure?: string;
+  recoveringHealth?: boolean;
   stopping: boolean;
   busy: boolean;
   appResponding: boolean;
@@ -30,10 +32,12 @@ export function installationStatus(input: {
   const localSupervisor = input.proxyMode ? undefined : input.localOrigin?.replace("//kintsugi.", "//system.kintsugi.");
   const supervisorUrl = !input.localMode && !input.connectionAction && hostname && appliedRoute.startsWith(`${hostname}:`)
     ? `https://${hostname}:8443` : localSupervisor;
-  const ready = input.appResponding && !input.busy && !input.stopping && !input.failure &&
+  const terminal = Boolean(input.failure || input.stopping);
+  const recoveringHealth = !terminal && input.recoveringHealth === true;
+  const ready = input.appResponding && !input.busy && !terminal && !recoveringHealth &&
     (input.localMode || !input.connectionAction) &&
     (input.localMode ? !!input.localOrigin : !!hostname && appliedRoute === `${hostname}:3000`);
-  const state = input.failure || input.stopping ? "failed" : ready ? "ready" : "starting";
+  const state = terminal ? "failed" : ready ? "ready" : "starting";
   let action: InstallationStatus["action"];
   if (!input.localMode && input.connectionAction) {
     action = input.connectionAction;
@@ -51,13 +55,15 @@ export function installationStatus(input: {
   return {
     state,
     activity: state === "failed" ? { description: input.failure ?? "Kintsugi services stopped" }
+      : recoveringHealth ? { description: "Kintsugi stopped responding to health checks. Waiting for it to recover." }
       : ready ? { description: "Your Kintsugi is ready!" }
       : action ? { description: "Waiting for your private connection" }
       : input.appResponding && !input.busy ? { description: "Connecting Kintsugi securely" }
       : input.activity,
+    recoveringHealth: recoveringHealth ? true : undefined,
     appUrl: ready ? input.localMode ? input.localOrigin : `https://${hostname}` : undefined,
     supervisorUrl,
-    action: state === "failed" ? undefined : action,
+    action: terminal || recoveringHealth ? undefined : action,
     diagnostics: state === "failed" ? {
       description: supervisorUrl ? "Open the supervisor for full logs and recovery options." : "The supervisor is not reachable over your private connection yet. Recent System logs:",
       lines: supervisorUrl ? [] : input.logs.slice(-12),

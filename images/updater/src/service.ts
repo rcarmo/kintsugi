@@ -15,10 +15,10 @@ import { createReleaseRegistry } from "../../system/src/release-registry.ts";
 import { resolveImage, type PlannedImage } from "../../../packages/update/src/server/registry.ts";
 
 export interface CommandResult { code: number; stdout: string; stderr?: string }
-export type UpdaterCommand = (args: string[]) => Promise<CommandResult>;
-const execute: UpdaterCommand = async args => {
+export type UpdaterCommand = (args: string[], timeoutMs?: number) => Promise<CommandResult>;
+const execute: UpdaterCommand = async (args, timeoutMs = 45 * 60_000) => {
   const child = Bun.spawn(args, { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  const timer = setTimeout(() => child.kill(), 45 * 60_000);
+  const timer = setTimeout(() => child.kill(), timeoutMs);
   // Never reflect Docker/installer output: it may contain registry credentials or user data.
   const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
   clearTimeout(timer); return { code, stdout, stderr };
@@ -55,10 +55,13 @@ export class InstallationUpdater {
   private async diagnostic(message: string) {
     await appendFile(join(this.options.directory, "diagnostics.log"), `${new Date().toISOString()} ${message}\n`, { mode: 0o600 });
   }
-  private async run(args: string[]) {
-    const result = await this.command(args);
+  private async commandFailure(operation: string, result: CommandResult) {
+    await this.diagnostic(`${operation} exited ${result.code}\n${result.stdout}\n${result.stderr ?? ""}`);
+  }
+  private async run(args: string[], timeoutMs?: number) {
+    const result = await this.command(args, timeoutMs);
     if (result.code !== 0) {
-      await this.diagnostic(`${args[0]} exited ${result.code}\n${result.stdout}\n${result.stderr ?? ""}`);
+      await this.commandFailure(args[0]!, result);
       throw Error("Installation operation failed; inspect private host diagnostics.");
     }
     return result.stdout.trim();
@@ -98,8 +101,8 @@ export class InstallationUpdater {
       || Boolean(image.RepoDigests?.some(reference => reference === plan.reference || reference.endsWith("@" + (plan.indexDigest ?? plan.reference.split("@")[1]))));
   }
   private async inspectPair(app: string, system: string, data: string): Promise<void> {
-    const systemImage = Value.Parse(Type.Array(imageMetadata), JSON.parse(await this.run(["docker", "image", "inspect", system])))[0];
-    const appImage = Value.Parse(Type.Array(imageMetadata), JSON.parse(await this.run(["docker", "exec", this.name, "docker", "image", "inspect", app])))[0];
+    const systemImage = Value.Parse(Type.Array(imageMetadata), JSON.parse(await this.run(["docker", "image", "inspect", system], 10_000)))[0];
+    const appImage = Value.Parse(Type.Array(imageMetadata), JSON.parse(await this.run(["docker", "exec", this.name, "docker", "image", "inspect", app], 10_000)))[0];
     if (!appImage || !systemImage) throw Error("Retained image pair is unavailable.");
     assertImagePairCompatible(appImage.Config.Labels, systemImage.Config.Labels);
     assertNetworkStateCompatible(await requiredNetworkStateVersion(data), appImage.Config.Labels, systemImage.Config.Labels);
@@ -170,17 +173,26 @@ const current = await this.installation();
         await this.persist();
         throw Error(this.state.message);
       }
+      const previousContainer = await this.run(["docker", "inspect", "--format", "{{.Id}}", this.name]);
       this.state = { ...this.state, phase: "updating", message: "Replacing System and app. Running workspaces will restart." }; await this.persist();
       this.operation = (async () => {
         try {
           await this.run(["bash", this.options.installer, "--non-interactive", "--action", "update", "--confirm-replace", "--app-image", plan.app, "--system-image", plan.system, "--preserve-release-selection"]);
           this.state = { ...this.state, phase: "succeeded", retainedPlan: plan, message: "System and app are healthy. Installation update complete." };
-        } catch {
+        } catch (error) {
+          await this.diagnostic("Update failed: " + String(error));
           this.state = { ...this.state, phase: "failed", message: "Installation update failed. Inspect host diagnostics; rollback restores retained images, not app data." };
-          const outer = await this.command(["docker", "inspect", "--format", "{{.Image}}", this.name]);
-          if (outer.code !== 0 || outer.stdout.trim() !== plan.previousSystem) {
-            try { await this.verifyRollback(current.data, plan); await this.run(["bash", this.options.installer, "--non-interactive", "--action", "rollback", "--confirm-replace"]); this.state = { ...this.state, phase: "rolled-back", retainedPlan: undefined, message: "Update failed; retained System/app images restored. Persisted app data was not rolled back." }; }
-            catch { this.state = { ...this.state, phase: "failed", message: "Update and image recovery failed. Host intervention is required." }; }
+          try {
+            const outer = await this.run(["docker", "inspect", "--format", "{{.Id}}", this.name], 10_000);
+            // Even an app-only change in the paired installer replaces the outer container.
+            if (outer !== previousContainer) {
+              await this.verifyRollback(current.data, plan);
+              await this.run(["bash", this.options.installer, "--non-interactive", "--action", "rollback", "--confirm-replace"]);
+              this.state = { ...this.state, phase: "rolled-back", retainedPlan: undefined, message: "Update failed; retained System/app images restored. Persisted app data was not rolled back." };
+            }
+          } catch (recoveryError) {
+            await this.diagnostic("Automatic image recovery failed: " + String(recoveryError));
+            this.state = { ...this.state, phase: "failed", message: "Update and image recovery failed. Inspect private host diagnostics." };
           }
         }
         await this.persist(); if (this.state.phase === "succeeded") this.options.updated?.();
@@ -190,13 +202,43 @@ const current = await this.installation();
   private async verifyRollback(data: string, plan: InstallationPlan) {
     const history = Value.Parse(Type.Object({ previousSystemImage: Type.String(), previousAppImage: Type.String() }), JSON.parse(await readFile(join(data, "supervisor/installer.json"), "utf8")));
     if (history.previousSystemImage !== plan.previousSystem || history.previousAppImage !== plan.previousApp) throw Error("Retained image pair no longer matches this update plan.");
-    await this.inspectPair(plan.previousApp, plan.previousSystem, data);
+    // A stopped System owns the only copy of the nested image store. Start that same container,
+    // with its existing mounts, limits and configuration, and wait for Docker, not app health.
+    const status = await this.run(["docker", "inspect", "--format", "{{.State.Status}}", this.name], 10_000);
+    const stopped = status === "exited" || status === "created";
+    if (!stopped && status !== "running") throw Error(`Cannot validate rollback images while System is ${status}.`);
+    if (stopped) await this.run(["docker", "start", this.name], 60_000);
+    try {
+      if (stopped) {
+        const until = performance.now() + 60_000;
+        const probe = ["docker", "exec", this.name, "docker", "info"];
+        for (;;) {
+          const result = await this.command(probe, 3_000);
+          if (result.code === 0) break;
+          const state = await this.run(["docker", "inspect", "--format", "{{.State.Status}}", this.name], 3_000);
+          if (state !== "running" || performance.now() >= until) {
+            await this.commandFailure("Nested Docker readiness probe", result);
+            throw Error(state === "running" ? "Nested Docker did not become ready for rollback within 60 seconds." : `System is ${state}; nested Docker is unavailable for rollback.`);
+          }
+          await Bun.sleep(1000);
+        }
+      }
+      await this.inspectPair(plan.previousApp, plan.previousSystem, data);
+    } catch (error) {
+      if (stopped) {
+        try { await this.run(["docker", "stop", "--time", "120", this.name], 130_000); }
+        catch (cleanupError) { await this.diagnostic("Could not restore stopped System after rollback check: " + String(cleanupError)); }
+      }
+      throw error;
+    }
   }
   async rollback() {
     if (this.checking || this.starting || this.operation || (!this.state.retainedPlan && (this.state.phase !== "failed" || !this.state.plan))) throw Error("No failed installation update is available to roll back.");
     this.starting = true; try {
       const data = await this.run(["docker", "inspect", "--format", '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}', this.name]);
-      await this.verifyRollback(data, this.state.phase === "failed" ? this.state.plan! : this.state.retainedPlan!);
+      const plan = (this.state.phase === "failed" ? this.state.plan : undefined) ?? this.state.retainedPlan!;
+      try { await this.verifyRollback(data, plan); }
+      catch (error) { await this.diagnostic("Rollback preflight failed: " + String(error)); throw error; }
       this.state = { ...this.state, phase: "updating", message: "Restoring the retained System/app image pair…" }; await this.persist();
       this.operation = (async () => { try { await this.run(["bash", this.options.installer, "--non-interactive", "--action", "rollback", "--confirm-replace"]); this.state = { ...this.state, phase: "rolled-back", retainedPlan: undefined, message: "Retained System/app images restored. Persisted app data was not rolled back." }; } catch { this.state = { ...this.state, phase: "failed", message: "Rollback failed. Host intervention is required." }; } await this.persist(); })().finally(() => { this.operation = undefined; }); return this.snapshot();
     } finally { this.starting = false; }

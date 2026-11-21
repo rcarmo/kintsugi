@@ -470,6 +470,7 @@ supervisor_status() {
       console.log([
         s.state, clean(a.description), a.percent === undefined ? "" : Math.floor(a.percent),
         appUrl, clean(s.action?.description ?? ""), url(s.action?.url),
+        s.state === "starting" && s.recoveringHealth === true ? "recovering" : "",
         ...(s.diagnostics?.lines ?? []).map(clean),
       ].join("\n"));
     } catch (error) {
@@ -499,7 +500,7 @@ wait_for_system() {
   stop_on_failure=1
   local reply previous="" activity_start=$SECONDS start=$SECONDS description="Waiting for the supervisor" percent="" code pid status_file tick
   status_file="${log_file}.status"
-  local request_connect=0 last_action="" current_action app_url
+  local request_connect=0 last_action="" current_action app_url recovery_start=-1
   local -a fields
   if [ "$action" = connect ] && [ "$access_mode" != localhost ]; then request_connect=1; fi
   while true; do
@@ -524,6 +525,7 @@ wait_for_system() {
       description="${fields[1]}"
       percent="${fields[2]:-}"
       app_url="${fields[3]:-}"
+      if [ "${fields[6]:-}" = recovering ] && [ "$recovery_start" -lt 0 ]; then recovery_start=$SECONDS; fi
       current_action="${fields[4]:-}"$'\n'"${fields[5]:-}"
       if [ "${fields[0]}" != failed ] && [ -n "${fields[4]:-}" ] && [ "$current_action" != "$last_action" ]; then
         finish_line
@@ -537,7 +539,7 @@ wait_for_system() {
         failed)
           finish_line
           printf '\n  %s! %s%s\n' "$amber" "$description" "$reset" >&2
-          if [ "${#fields[@]}" -gt 6 ]; then printf '  %s\n' "${fields[@]:6}" >&2; fi
+          if [ "${#fields[@]}" -gt 7 ]; then printf '  %s\n' "${fields[@]:7}" >&2; fi
           exit 1 ;;
       esac
     else
@@ -546,6 +548,9 @@ wait_for_system() {
     fi
     if [ "${description%% · *}" != "$previous" ]; then activity_start=$SECONDS; previous="${description%% · *}"; fi
     status "$description" "$((SECONDS-activity_start))s" "$percent"
+    if [ "$recovery_start" -ge 0 ] && [ "$((SECONDS-recovery_start))" -ge 60 ]; then
+      fail "Kintsugi stopped responding to health checks and did not recover within 60 seconds."
+    fi
     [ "$((SECONDS-start))" -lt 2400 ] || fail "Kintsugi did not finish starting within 40 minutes."
     for ((tick=0; tick<10; tick++)); do
       status "$description" "$((SECONDS-activity_start))s" "$percent"

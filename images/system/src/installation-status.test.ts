@@ -8,6 +8,20 @@ const input = {
   connectionState: "Running", logs: ["App exited with code 1"],
 };
 
+test("health recovery stays pending until the app responds, but terminal failures still win", () => {
+  const input = { activity: { description: "Kintsugi needs attention" }, localMode: true, localOrigin: "http://kintsugi.localhost:5000", stopping: false, busy: false, appResponding: false, appliedRoute: "", connectionState: "", logs: [] };
+  const pending = installationStatus({ ...input, recoveringHealth: true });
+  expect(pending.state).toBe("starting");
+  expect(pending.recoveringHealth).toBe(true);
+  expect(pending.activity.description).toContain("stopped responding to health checks");
+  expect(pending.appUrl).toBeUndefined();
+  expect(pending.action).toBeUndefined();
+  expect(installationStatus({ ...input, appResponding: true, recoveringHealth: true }).state).toBe("starting");
+  expect(installationStatus({ ...input, appResponding: true }).state).toBe("ready");
+  expect(installationStatus({ ...input, recoveringHealth: true, failure: "Startup failed" }).state).toBe("failed");
+  expect(installationStatus({ ...input, recoveringHealth: true, stopping: true }).state).toBe("failed");
+});
+
 test("System owns destinations and only releases the app URL after health and routing", () => {
   const status = installationStatus(input);
   expect(status.state).toBe("ready");

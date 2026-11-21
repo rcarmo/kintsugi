@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 const installer = (await Bun.file(new URL("./install.sh", import.meta.url)).text()).replace("no_updater=0", "no_updater=1");
 
-function run(options: { resourceDataVersion?: number; appResourceCompatibility?: string; rememberedLimits?: string; hostMemoryAvailable?: number; currentMemoryPercent?: string; resourceLimits?: string; hostMemory?: number; hostCpus?: number; networkDataVersion?: number; systemCompatibility?: string; appNetworkCompatibility?: string; hostUpdater?: boolean; systemd?: boolean; tmpfilesFails?: boolean; savedStorageDriver?: string; storageCompatible?: boolean; erofsMissing?: boolean; savedRepository?: string; savedHostname?: string; appPrepareFails?: boolean; savedRegistry?: boolean; rollbackAvailable?: boolean; installerCompatible?: boolean; promptRepository?: string; promptHostname?: string; systemState?: "restarting" | "exited"; portMappings?: string; nonRoot?: boolean; denySudo?: boolean; mac?: boolean; wsl?: boolean; installed?: boolean; old?: boolean; legacyAtelier?: boolean; legacyVolumeOnly?: boolean; legacyPreSystem?: boolean; legacyDownloadFails?: boolean; legacyDelegateFails?: boolean; pullFails?: boolean; pullDenied?: boolean; appFails?: boolean; retryUpdateRequest?: boolean; rejectUpdateRequest?: boolean; pendingHealth?: boolean; missingFilesystem?: boolean; loadable?: boolean; uninstallAnswer?: string; uninstallFails?: boolean; uninstallRequestFails?: boolean; inventoryFails?: boolean; volumeOnly?: boolean; volumeRemovalFails?: boolean; initiallyStopped?: boolean } = {}, args: string[] = []) {
+function run(options: { healthRecovery?: "transient" | "persistent"; resourceDataVersion?: number; appResourceCompatibility?: string; rememberedLimits?: string; hostMemoryAvailable?: number; currentMemoryPercent?: string; resourceLimits?: string; hostMemory?: number; hostCpus?: number; networkDataVersion?: number; systemCompatibility?: string; appNetworkCompatibility?: string; hostUpdater?: boolean; systemd?: boolean; tmpfilesFails?: boolean; savedStorageDriver?: string; storageCompatible?: boolean; erofsMissing?: boolean; savedRepository?: string; savedHostname?: string; appPrepareFails?: boolean; savedRegistry?: boolean; rollbackAvailable?: boolean; installerCompatible?: boolean; promptRepository?: string; promptHostname?: string; systemState?: "restarting" | "exited"; portMappings?: string; nonRoot?: boolean; denySudo?: boolean; mac?: boolean; wsl?: boolean; installed?: boolean; old?: boolean; legacyAtelier?: boolean; legacyVolumeOnly?: boolean; legacyPreSystem?: boolean; legacyDownloadFails?: boolean; legacyDelegateFails?: boolean; pullFails?: boolean; pullDenied?: boolean; appFails?: boolean; retryUpdateRequest?: boolean; rejectUpdateRequest?: boolean; pendingHealth?: boolean; missingFilesystem?: boolean; loadable?: boolean; uninstallAnswer?: string; uninstallFails?: boolean; uninstallRequestFails?: boolean; inventoryFails?: boolean; volumeOnly?: boolean; volumeRemovalFails?: boolean; initiallyStopped?: boolean } = {}, args: string[] = []) {
   const pinned = `sha256:${"c".repeat(64)}`;
   const logPath = `/tmp/kintsugi-install-test-${crypto.randomUUID()}.log`;
   const mock = `
@@ -122,7 +122,12 @@ docker() {
       fi
       if [[ "$*" == *3001/status* ]]; then
         if [ "${options.retryUpdateRequest ? 1 : 0}" -eq 1 ] && [ ! -e "${logPath}.update-accepted" ]; then
-          printf 'failed\\nSaved app failed to start\\n\\n\\n\\n\\nOld app exited\\n'
+          printf 'failed\\nSaved app failed to start\\n\\n\\n\\n\\n\\nOld app exited\\n'
+          return
+        fi
+        if [ "${options.healthRecovery ? 1 : 0}" -eq 1 ] && { [ "${options.healthRecovery === "persistent" ? 1 : 0}" -eq 1 ] || [ ! -e "${logPath}.checked" ]; }; then
+          touch "${logPath}.checked"
+          printf 'starting\\nKintsugi stopped responding to health checks. Waiting for it to recover.\\n\\n\\n\\n\\nrecovering\\n'
           return
         fi
         if [ "${options.pendingHealth ? 1 : 0}" -eq 1 ] && [ ! -e "${logPath}.checked" ]; then
@@ -130,7 +135,7 @@ docker() {
           printf 'starting\\nAn activity the installer has never heard of\\n42\\n'
           return
         fi
-        printf '${options.appFails ? 'failed\\nApp health failed\\n\\n\\n\\n\\nApp exited' : 'ready\\nKintsugi is ready\\n\\nhttps://app.example/custom-path\\n\\n\\n'}\\n'
+        printf '${options.appFails ? 'failed\\nApp health failed\\n\\n\\n\\n\\n\\nApp exited' : 'ready\\nKintsugi is ready\\n\\nhttps://app.example/custom-path\\n\\n\\n'}\\n'
         return
       fi ;;
     'logs --tail') echo 'supervisor startup failed: io.weight unavailable';;
@@ -146,7 +151,8 @@ docker() {
       'IFS= read -r -t 120 "$1" <"$prompt_input"',
       `if [ "$1" = action ]; then action=update; elif [ "$1" = source_repository ]; then source_repository=${JSON.stringify(options.promptRepository ?? "")}; elif [ "$1" = tailscale_hostname ]; then tailscale_hostname=${JSON.stringify(options.promptHostname ?? "")}; else answer=${JSON.stringify(options.uninstallAnswer ?? (options.installed ? "yes" : "1"))}; fi`,
     );
-  const result = Bun.spawnSync([process.platform === "darwin" ? "/bin/bash" : "bash", "-c", mock + script, "installer", ...args], { stdin: "ignore" });
+  const fixtureScript = options.healthRecovery === "persistent" ? script.replace('"$((SECONDS-recovery_start))" -ge 60', '"$((SECONDS-recovery_start))" -ge 0') : script;
+  const result = Bun.spawnSync([process.platform === "darwin" ? "/bin/bash" : "bash", "-c", mock + fixtureScript, "installer", ...args], { stdin: "ignore" });
   const log = Bun.spawnSync(["cat", logPath]).stdout.toString();
   const hostTrace = Bun.spawnSync(["cat", `${logPath}.host`]).stdout.toString();
   const tmpfiles = Bun.spawnSync(["cat", `${logPath}.tmpfiles`]).stdout.toString();
@@ -374,6 +380,23 @@ for (const action of ["open", "connect"]) {
   });
 }
 
+
+test("an update waits through transient health recovery before reporting readiness", () => {
+  const result = run({ installed: true, healthRecovery: "transient" }, ["--action", "update"]);
+  expect(result.status).toBe(0);
+  expect(result.output).toContain("Waiting for it to recover");
+  expect(result.output).toContain("Open https://app.example/custom-path");
+  expect(result.output.match(/DOCKER stop --time 120 kintsugi-system/g)).toHaveLength(1);
+  expect(result.output).not.toContain("Stopping Kintsugi services after installation failure");
+});
+
+test("persistent health recovery has a bounded handoff and reports why it failed", () => {
+  const result = run({ installed: true, healthRecovery: "persistent" }, ["--action", "update"]);
+  expect(result.status).toBe(1);
+  expect(result.output).toContain("stopped responding to health checks and did not recover within 60 seconds");
+  expect(result.output).toContain("Stopping Kintsugi services after installation failure");
+  expect(result.output).not.toContain("Open https://app.example/custom-path");
+});
 
 test("update prepares and pins the app before replacing System", () => {
   const result = run({ installed: true }, ["--action", "update"]);

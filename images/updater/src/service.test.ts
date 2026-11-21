@@ -12,7 +12,7 @@ async function fixture(action: (updater: InstallationUpdater, directory: string,
     calls.push(args);
     if (override) { const response = await override(args); if (response.code !== 75) return response; }
     let stdout = "";
-    if (args[1] === "inspect") stdout = args[3]?.includes(".Mounts") ? directory : old;
+    if (args[1] === "inspect") stdout = args[3]?.includes(".Mounts") ? directory : args[3] === "{{.State.Status}}" ? "running" : old;
     if (args.includes("image") && args.includes("inspect")) stdout = JSON.stringify([{ Id: old, Config: { Labels: { "org.opencontainers.image.revision": "old", "kintsugi.installer-config": "1", "kintsugi.host-updater": "1", "kintsugi.deployment-config": "1" } } }]);
     if (args[1] === "exec" && args[3] === "docker" && args[4] === "inspect") stdout = old;
     return { code: 0, stdout };
@@ -64,6 +64,70 @@ test("host update failures stay visible and do not expose subprocess output", ()
 }, async args => args[0] === "bash" ? { code: 1, stdout: "SECRET private registry token" } : { code: 75, stdout: "" }));
 
 
+for (const mode of ["automatic", "explicit", "incompatible", "missing-image", "engine-exits"] as const) {
+  test(`${mode} rollback from a stopped replacement validates the retained pair and keeps diagnostics private`, async () => {
+    let replaced = false, running = true, probes = 0, restored = false;
+    await fixture(async (updater, directory, calls) => {
+      await mkdir(join(directory, "supervisor"));
+      await writeFile(join(directory, "supervisor/installer.json"), JSON.stringify({ previousSystemImage: old, previousAppImage: old }));
+      await writeFile(join(directory, "app/keep.txt"), "persisted");
+      const plan = (await updater.check()).plan!;
+      const releaseSelection = await readFile(join(directory, "app/update.json"), "utf8");
+      await updater.prepare(plan.id); await updater.wait();
+      await updater.apply(plan.id); await updater.wait();
+      if (mode === "explicit") {
+        running = false;
+        expect((await updater.rollback()).phase).toBe("updating"); await updater.wait();
+      }
+      const start = calls.findIndex(args => args[1] === "start");
+      const ready = calls.findLastIndex(args => args.join(" ") === "docker exec kintsugi-system docker info");
+      const inspect = calls.findLastIndex(args => args.join(" ") === `docker exec kintsugi-system docker image inspect ${old}`);
+      const rollback = calls.findIndex(args => args[0] === "bash" && args.includes("rollback"));
+      expect(start).toBeGreaterThan(-1); expect(ready).toBeGreaterThan(start);
+      if (mode === "incompatible" || mode === "missing-image" || mode === "engine-exits") {
+        expect(rollback).toBe(-1); expect(updater.snapshot().phase).toBe("failed"); expect(running).toBe(false);
+        const diagnostics = await readFile(join(directory, "state/diagnostics.log"), "utf8");
+        expect(diagnostics).toContain("candidate health failure");
+        expect(diagnostics).toContain("Automatic image recovery failed");
+        const reason = { incompatible: "needs installation compatibility version 999", "missing-image": "No such image", "engine-exits": "nested Docker is unavailable for rollback" };
+        expect(diagnostics).toContain(reason[mode]);
+        expect(JSON.stringify(updater.snapshot())).not.toContain("candidate health failure");
+      } else {
+        expect(inspect).toBeGreaterThan(ready); expect(rollback).toBeGreaterThan(inspect);
+        expect(updater.snapshot().phase).toBe("rolled-back"); expect(restored).toBe(true);
+        if (mode === "automatic") expect(probes).toBe(2);
+      }
+      expect(await readFile(join(directory, "app/keep.txt"), "utf8")).toBe("persisted");
+      expect(await readFile(join(directory, "app/update.json"), "utf8")).toBe(releaseSelection);
+      expect(calls.some(args => args.includes("volume") || args.includes("prune"))).toBe(false);
+    }, async args => {
+      if (args[0] === "bash" && args.includes("update")) {
+        replaced = true;
+        if (mode === "explicit") return { code: 0, stdout: "" };
+        running = false;
+        return { code: 1, stdout: "candidate health failure" };
+      }
+      if (args[0] === "bash" && args.includes("rollback")) { restored = true; return { code: 0, stdout: "" }; }
+      // The failed update replaced the container even if it used the same System image.
+      if (args[1] === "inspect" && args[3] === "{{.Id}}") return { code: 0, stdout: replaced ? "candidate-container" : "original-container" };
+      if (args[1] === "inspect" && args[3] === "{{.State.Status}}") return { code: 0, stdout: running ? "running" : "exited" };
+      if (args[1] === "start") { running = true; return { code: 0, stdout: "" }; }
+      if (args[1] === "stop") { running = false; return { code: 0, stdout: "" }; }
+      if (args[1] === "exec" && !running) return { code: 1, stdout: "", stderr: "container is not running" };
+      if (args[1] === "exec" && args[4] === "info") {
+        probes++;
+        if (mode === "engine-exits") running = false;
+        return { code: !running || mode === "automatic" && probes === 1 ? 1 : 0, stdout: "", stderr: "engine not ready" };
+      }
+      if (replaced && args[1] === "exec" && args[4] === "image" && args.at(-1) === old) {
+        if (mode === "incompatible") return { code: 0, stdout: JSON.stringify([{ Id: old, Config: { Labels: { "org.kintsugi.required-system-version": "999" } } }]) };
+        if (mode === "missing-image") return { code: 1, stdout: "", stderr: `No such image: ${old}` };
+      }
+      return { code: 75, stdout: "" };
+    });
+  });
+}
+
 test("the successful retained pair survives subsequent checks and can be rolled back", () => fixture(async (updater, directory) => {
   await mkdir(join(directory, "supervisor")); await writeFile(join(directory, "supervisor/installer.json"), JSON.stringify({ previousSystemImage: old, previousAppImage: old }));
   const plan = (await updater.check()).plan!; await updater.prepare(plan.id); await updater.wait(); await updater.apply(plan.id); await updater.wait();
@@ -94,7 +158,7 @@ test("failed replacement recovers only the installer-recorded prior pair", async
     expect(updater.snapshot().phase).toBe("rolled-back"); expect(calls.some(args => args[0] === "bash" && args.includes("rollback"))).toBe(true);
   }, async args => {
     if (args[0] === "bash" && args.includes("update")) { changed = true; return { code: 1, stdout: "failed" }; }
-    if (changed && args[1] === "inspect" && args[3] === "{{.Image}}") return { code: 0, stdout: systemDigest };
+    if (changed && args[1] === "inspect" && args[3] === "{{.Id}}") return { code: 0, stdout: systemDigest };
     return { code: 75, stdout: "" };
   });
 });
