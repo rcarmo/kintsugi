@@ -44,9 +44,8 @@ export function durableWorkspaceTool<TParams extends TSchema>(
             failures.push(error);
           });
         }, identity));
-        // A capability may itself await workspace deletion, which joins this
-        // invocation. Cancel the waiter, not the external effect, to break that
-        // cycle. Unsafe effects retain native interrupted/uncertain semantics.
+        // Cancel the waiter even if the capability does not settle on abort.
+        // Unsafe effects retain native interrupted/uncertain semantics.
         const observed = operation.catch(error => {
           if (context.abortSignal?.aborted) console.error(`[durable tool ${tool.name}] operation failed after cancellation`, error);
           throw error;

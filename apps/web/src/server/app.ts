@@ -36,7 +36,6 @@ import {
   launchComposerCommand,
   placeLiveRegions,
   type CableIdentifier,
-  type DeleteCurrentWorkspaceResult,
   type GlobalSidebarContributionRegistry,
   type LiveRegion,
   type LiveRegionDigests,
@@ -111,7 +110,6 @@ export interface WebApp {
   subscribeShell(listener: (html: string) => void): Promise<import("@kintsugi/shared").CableChannelSubscription>;
   subscribeResources(identifier: CableIdentifier, listener: (html: string) => void): import("@kintsugi/shared").CableChannelSubscription;
   subscribeSurface(identifier: CableIdentifier, listener: (html: string) => void, shown?: LiveRegionDigests): Promise<import("@kintsugi/shared").CableChannelSubscription>;
-  deleteCurrentWorkspaceFromAgent(workspaceId: string, force: boolean): Promise<DeleteCurrentWorkspaceResult>;
   resumeWorkspaceDeletions(): void;
   provisioning: WorkspaceProvisioning;
   createWorkView(workspaceId: string, reference: WorkspaceWorkViewReference): Promise<void>;
@@ -875,10 +873,6 @@ export function createWebApp(deps: WebAppDeps): WebApp {
     return deletion.destroyAll(workspaces.map((workspace) => workspace.id));
   }
 
-  function deleteCurrentWorkspaceFromAgent(id: string, force: boolean): Promise<DeleteCurrentWorkspaceResult> {
-    return deletion.request(id, { force });
-  }
-
   function sshTrustPanel(workspaceId: string, records: { line: string; fingerprint: string }[], host: string, port: number, changed: boolean, action: string): string {
     const server = port === 22 ? host : `${host}:${port}`;
     const keys = records.map(({ line, fingerprint }) => `<p><label><input type="checkbox" name="key" value="${escapeHtml(line)}" checked> <strong>${escapeHtml(line.split(" ")[1] ?? "SSH key")}</strong> <code>${escapeHtml(fingerprint)}</code></label></p>`).join("");
@@ -1359,7 +1353,6 @@ export function createWebApp(deps: WebAppDeps): WebApp {
     },
     subscribeSurface,
     invalidateWorkspace,
-    deleteCurrentWorkspaceFromAgent,
     resumeWorkspaceDeletions: deletion.resume,
     provisioning,
     createWorkView,

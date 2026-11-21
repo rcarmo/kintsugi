@@ -303,7 +303,7 @@ export interface SettingsContribution {
   handleAction?(context: SettingsActionContext): Promise<Response | undefined>;
 }
 
-export interface DeleteCurrentWorkspaceResult {
+export interface WorkspaceDeletionResult {
   deleted: boolean;
   blocked: boolean;
   details?: unknown;
@@ -345,7 +345,6 @@ export interface WorkspaceServerModuleContext {
   createWorkView(workspaceId: string, reference: WorkspaceWorkViewReference): Promise<void>;
   presentWorkView(workspaceId: string, reference: WorkspaceWorkViewReference): Promise<void>;
   invalidateWorkspace(workspaceId: string): void;
-  deleteCurrentWorkspace(workspaceId: string, force: boolean): Promise<DeleteCurrentWorkspaceResult>;
   registerSocketHandler(handler: WorkspaceServerSocketHandler): void;
   publishWorkspacePort(workspaceId: string, port: number, protocol?: "http" | "https", hostname?: string): Promise<string>;
   /** Origin serving workspace files; append an absolute path to load a file. */

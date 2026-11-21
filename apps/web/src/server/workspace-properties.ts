@@ -1,6 +1,6 @@
 import { Value } from "typebox/value";
 import { readJsonObject, type JsonObject } from "@kintsugi/core";
-import { escapeHtml, errorMessage, workspaceModuleModalFrameId } from "@kintsugi/shared";
+import { domId, escapeHtml, errorMessage, workspaceModuleModalFrameId } from "@kintsugi/shared";
 import { workspaceResourceChangeSchema, type WorkspaceResourceChange, type WorkspaceResourceSnapshot } from "@kintsugi/shared/workspace-resources";
 import { GiB, workspaceDiskSizeSchema, type WorkspaceDiskSnapshot } from "@kintsugi/shared/workspace-disk";
 import { networkModeSchema, parseNetworkConfiguration } from "@kintsugi/shared/network-policy";
@@ -8,6 +8,7 @@ import { inspectWorkspaceDisk, growWorkspaceDisk, inspectWorkspaceResources, con
 import { buttonHtml } from "@kintsugi/design-system/button";
 import { actionLinkHtml } from "@kintsugi/design-system/action-link";
 import { dialogHtml } from "@kintsugi/design-system/dialog";
+import { destructiveConfirmationHtml } from "@kintsugi/design-system/destructive-confirmation";
 import { disclosureHtml } from "@kintsugi/design-system/disclosure";
 import { Icons } from "@kintsugi/design-system/icons";
 import { jsonResponse, response, stream, update, wantsStream } from "@kintsugi/shared/http";
@@ -24,6 +25,8 @@ const e=escapeHtml;
 const bytes=(n:number|undefined)=>n===undefined?"Unavailable":`${(n/MiB).toLocaleString(undefined,{maximumFractionDigits:1})} MiB`;
 const dockerBytes=(n:number)=>n===0?"Unlimited at container level":n<0?"Unlimited":bytes(n);
 const row=(name:string,value:string)=>`<dt>${e(name)}</dt><dd>${e(value)}</dd>`;
+const readings=(...rows:string[])=>`<dl class="workspace-properties-readings">${rows.join("")}</dl>`;
+const more=(text:string,bodyHtml:string)=>disclosureHtml({summary:{kind:"compact",label:{kind:"text",text}},bodyHtml});
 const submit=(caption:string)=>buttonHtml({type:"submit",variant:"primary",content:{kind:"caption",caption}});
 export function parseResourceChange(value: JsonObject): WorkspaceResourceChange {
   if(!Value.Check(workspaceResourceChangeSchema,value))throw new Error("Use finite RAM bytes, non-negative additional swap bytes, positive CPU cores and an optional integer task limit of at least 128. Unknown settings are not accepted.");
@@ -59,14 +62,64 @@ async function renderProperties(id:string,title:string,backend:WorkspaceResource
   const pendingDisk = disk?.requestedLimitGiB ? `<p role="status">The requested ${disk.requestedLimitGiB} GiB limit is not applied yet. Retry to finish growing the disk.</p>` : "";
   const diskForm = disk ? `<dl class="workspace-properties-readings">${row("Disk used / limit",`${gib(disk.usedBytes)} / ${gib(disk.limitGiB * GiB)}`)}${row("Free on workspace disk",gib(disk.availableBytes))}</dl>${pendingDisk}<form method="post" action="${base}/disk" data-turbo="true" class="form-stack"><label class="settings-field"><span class="settings-field-label">Disk limit (GiB)</span><input class="text-field" name="limitGiB" type="number" required min="${diskTarget}" max="1024" step="1" value="${diskTarget}"></label><p>Includes workspace files, local caches and workspace Docker data. Shared files and images are separate. Disks can grow, but not shrink.</p>${submit("Grow disk")}</form>` : `<p>${e(diskError || "No managed disk. This workspace keeps its existing storage.")}</p>`;
   const refresh=actionLinkHtml({href:base,variant:"secondary",content:{kind:"caption",caption:"Refresh"},attributesHtml:'data-turbo-stream="true"'});
-  const details=s?`<dl class="workspace-properties-readings">${row("Container",s.containerId)}${row("Image",s.image)}${row("State",s.state.status)}${row("Current / peak memory",`${bytes(s.usage.memory)} / ${bytes(s.usage.memoryPeak)}`)}${row("Current additional swap",bytes(s.usage.swap))}${row("CPU use / effective quota",`${s.usage.cpuCores?.toFixed(2)??"Unavailable"} / ${s.usage.effectiveCpus?.toFixed(2)??"Unavailable"} cores`)}${row("Saved RAM / effective hard cap",`${bytes(s.desired.memory)} / ${bytes(s.usage.effectiveMemory)}`)}${row("Docker RAM / total RAM + swap",`${dockerBytes(s.applied.memory)} / ${s.applied.memorySwap===0?"Docker default":dockerBytes(s.applied.memorySwap)}`)}${row("Effective additional swap cap",bytes(s.usage.effectiveAdditionalSwap))}${row("Saved CPU / Docker CPU",`${s.desired.cpus} / ${s.applied.cpus||"Unlimited"} cores`)}${row("Current tasks / effective task ceiling",`${s.usage.tasks??"Unavailable"} / ${s.usage.effectivePids??"Unavailable"}`)}${row("Saved / Docker task limit",`${s.desired.pids} / ${s.applied.pids||"Unlimited"}`)}${row("CPU affinity",s.affinity||"All permitted CPUs")}${row("OOM kills / restart count",`${s.oomKills} / ${s.state.restartCount}`)}${row("Last exit / restart policy",`${s.lastExit?.code??(s.state.finishedAt.startsWith("0001-")?"No recorded exit":s.state.exitCode)}${s.state.oomKilled?" (OOM)":""} / ${s.state.restartPolicy||"Unavailable"}`)}${row("Last finish / failure source",`${s.lastExit?.finishedAt??(!s.state.finishedAt||s.state.finishedAt.startsWith("0001-")?"No recorded exit":s.state.finishedAt)} / ${s.lastExit?.reason??s.restartSource??"None recorded"}`)}${row("Configuration",s.inSync?"Desired and Docker settings match":s.pending?"Desired settings are not applied; refresh and retry":"Desired and Docker settings differ")}</dl>${s.failure?`<p class="settings-error" role="alert">${e(s.failure)}</p>`:""}${s.applied.memory===0||s.applied.memorySwap<0?'<p class="settings-error">Unlimited container limits can exhaust shared resources. Parent caps still apply; use finite limits.</p>':""}`:`<p class="settings-error" role="alert">${e(unavailable)}</p>`;
+  const usage = s ? readings(
+    row("State",s.state.status),
+    row("RAM used / peak",`${bytes(s.usage.memory)} / ${bytes(s.usage.memoryPeak)}`),
+    row("Additional swap used",bytes(s.usage.swap)),
+    row("CPU use / effective quota",`${s.usage.cpuCores?.toFixed(2)??"Unavailable"} / ${s.usage.effectiveCpus?.toFixed(2)??"Unavailable"} cores`),
+    row("Tasks used / effective limit",`${s.usage.tasks??"Unavailable"} / ${s.usage.effectivePids??"Unavailable"}`),
+  ) : `<p class="settings-error" role="alert">${e(unavailable)}</p>`;
+  const diagnostics = s ? more("Container and restart details",readings(
+    row("Container",s.containerId), row("Image",s.image), row("CPU affinity",s.affinity||"All permitted CPUs"),
+    row("OOM kills / restart count",`${s.oomKills} / ${s.state.restartCount}`),
+    row("Last exit / restart policy",`${s.lastExit?.code??(s.state.finishedAt.startsWith("0001-")?"No recorded exit":s.state.exitCode)}${s.state.oomKilled?" (OOM)":""} / ${s.state.restartPolicy||"Unavailable"}`),
+    row("Last finish / failure source",`${s.lastExit?.finishedAt??(!s.state.finishedAt||s.state.finishedAt.startsWith("0001-")?"No recorded exit":s.state.finishedAt)} / ${s.lastExit?.reason??s.restartSource??"None recorded"}`),
+  )) : "";
+  const limitStatus = s ? `<p>${s.inSync?"Saved limits match Docker settings.":s.pending?"Saved limits are not applied. Refresh and retry.":"Saved limits differ from Docker settings."}</p>${s.failure?`<p class="settings-error" role="alert">${e(s.failure)}</p>`:""}${s.applied.memory===0||s.applied.memorySwap<0?'<p class="settings-error">Unlimited container limits can exhaust shared resources. Parent caps still apply; use finite limits.</p>':""}` : "";
+  const appliedLimits = s ? readings(
+    row("Saved RAM / effective hard cap",`${bytes(s.desired.memory)} / ${bytes(s.usage.effectiveMemory)}`),
+    row("Docker RAM / total RAM + swap",`${dockerBytes(s.applied.memory)} / ${s.applied.memorySwap===0?"Docker default":dockerBytes(s.applied.memorySwap)}`),
+    row("Effective additional swap cap",bytes(s.usage.effectiveAdditionalSwap)),
+    row("Saved CPU / Docker CPU",`${s.desired.cpus} / ${s.applied.cpus||"Unlimited"} cores`),
+    row("Saved / Docker task limit",`${s.desired.pids} / ${s.applied.pids||"Unlimited"}`),
+  ) : "";
   const resourceForm=s?`<form method="post" action="${base}/resources" data-turbo="true" class="form-stack"><label class="settings-field"><span class="settings-field-label">RAM limit (MiB)</span><input class="text-field" name="memoryMiB" type="number" min="6" step="1" value="${e((proposal?.memory??s.desired.memory)/MiB)}" required></label><label class="settings-field"><span class="settings-field-label">Additional swap (MiB)</span><input class="text-field" name="additionalSwapMiB" type="number" min="0" step="1" value="${e((proposal?.additionalSwap??s.desired.memorySwap-s.desired.memory)/MiB)}" required></label><p>Zero disables additional swap. Docker's memory-swap value is RAM plus this allowance; it is not extra RAM. Shared workload swap capacity: ${bytes(s.capacity.additionalSwapBudget)}.</p><label class="settings-field"><span class="settings-field-label">CPU limit (cores)</span><input class="text-field" name="cpus" type="number" min="0.01" step="0.01" max="${e(s.capacity.cpus)}" value="${e(proposal?.cpus??s.desired.cpus)}" required></label>${s.capacity.pidsBudget!==undefined?`<label class="settings-field"><span class="settings-field-label">Task limit (processes and threads)</span><input class="text-field" name="pids" type="number" min="128" max="${e(s.capacity.pidsBudget)}" step="1" value="${e(proposal?.pids??s.desired.pids)}" required></label><p>Task limits share the installation ceiling of ${e(s.capacity.pidsBudget)}. Stop processes before lowering the limit below current usage. Legacy workspace services pick up corrected task defaults on their next cold start.</p>`:""}<p>Live changes do not restart the workspace. Lowering RAM below current usage may kill processes.</p><label><input type="checkbox" name="acknowledgeMemoryReduction"> I understand a RAM reduction may kill workspace processes.</label>${submit("Apply resource limits")}</form>`:"";
   const capacity=s?`<dl class="workspace-properties-readings">${row("Host RAM / currently available",`${bytes(s.capacity.hostMemory)} / ${bytes(s.capacity.hostAvailable)}`)}${row("System RAM budget",bytes(s.capacity.systemMemory))}${row("Maximum RAM limit per workspace",bytes(s.capacity.workspaceBudget))}${row("Other RAM limits (sum, not reserved)",bytes(s.capacity.otherMemory))}${row("Other additional swap limits (sum, not reserved)",bytes(s.capacity.otherAdditionalSwap))}${row("Other CPU limits (shared capacity)",`${s.capacity.otherCpus??0} cores`)}${row("System CPU capacity",`${s.capacity.cpus} cores`)}</dl><p>Management/build headroom is excluded from the per-workspace RAM maximum. RAM, swap and CPU limits may overlap; they do not reserve capacity. Actual usage shares the installation's workload caps.</p>`:"";
   const labels={off:"Off — public internet only",lan:"Local LAN — configured CIDRs",private:"Routed private networks",hosts:"Listed hosts only — exact TCP destinations"};
-  const networkReadings=`<dl class="workspace-properties-readings">${row("Desired / applied network mode",`${labels[mode]} / ${labels[applied.mode]}`)}${row("Applied permitted CIDRs",applied.cidrs.join(", ")||"None")}${row("Applied exact TCP hosts",(applied.destinations??[]).map(d=>`${d.host}:${d.port}`).join(", ")||"None")}${row("Desired / applied DNS forwarders",`${config.dns.join(", ")||"Docker default"} / ${applied.dns.join(", ")||"Docker default"}`)}${row("Desired / applied search domains",`${config.search.join(", ")||"None"} / ${applied.search.join(", ")||"None"}`)}${row("Restart required",restart?"Yes — park/unpark to apply network changes":"No pending network changes")}${row("Container addresses",s?.addresses.map(v=>`${v.network}: ${[v.ipv4,v.ipv6].filter(Boolean).join(", ")}`).join("; ")||"Unavailable")}${row("Published ports",s?.publishedPorts.map(p=>`${p.hostIp}:${p.hostPort} → ${p.containerPort}`).join("; ")||"None reported")}${row("Declared container ports",s?.exposedPorts.join(", ")||"None reported")}</dl>`;
+  const networkStatus = readings(
+    row("Saved / applied LAN access",`${labels[mode]} / ${labels[applied.mode]}`),
+    row("Restart required",restart?"Yes — park and unpark after saving":"No"),
+  );
+  const appliedNetwork = more("Applied routes and DNS",readings(
+    row("Applied permitted CIDRs",applied.cidrs.join(", ")||"None"),
+    row("Applied exact TCP hosts",(applied.destinations??[]).map(d=>`${d.host}:${d.port}`).join(", ")||"None"),
+    row("Saved / applied DNS forwarders",`${config.dns.join(", ")||"Docker default"} / ${applied.dns.join(", ")||"Docker default"}`),
+    row("Saved / applied search domains",`${config.search.join(", ")||"None"} / ${applied.search.join(", ")||"None"}`),
+  ));
   const networkForm=`<form method="post" action="${base}/network" data-turbo="true" class="form-stack"><label class="settings-field"><span class="settings-field-label">Workspace LAN access</span><select class="popup-select" data-controller="popup-select" name="mode" aria-label="Workspace LAN access">${Object.entries(labels).map(([key,label])=>`<option value="${key}"${key===mode?" selected":""}>${e(label)}</option>`).join("")}</select></label><p>Saving changes desired policy only. Park/unpark applies it and closes terminal and VS Code views. Management, peer, tailnet and metadata exclusions remain enforced.</p>${submit("Save workspace network")}</form>`;
   const installationForm=`<form method="post" action="${base}/dns" data-turbo="true" class="form-stack"><p>These are installation-wide settings. Changes can affect every workspace using LAN access or custom DNS, after its next park/unpark.</p><label class="settings-field"><span class="settings-field-label">Installation LAN CIDRs</span><textarea class="textarea" name="cidrs" rows="3">${e(config.cidrs.join("\n"))}</textarea></label><label class="settings-field"><span class="settings-field-label">DNS forwarder IP addresses</span><textarea class="textarea" name="dns" rows="2">${e(config.dns.join("\n"))}</textarea></label><label class="settings-field"><span class="settings-field-label">DNS search domains</span><input class="text-field" name="search" value="${e(config.search.join(" "))}"></label><label><input type="checkbox" name="confirmGlobalNetworkChange" required> Apply these installation-wide network settings.</label>${submit("Save installation network")}</form>`;
-  return dialogHtml({element:{id:"workspace_properties_dialog",attributesHtml:"data-dialog-auto-show"},iconHtml:Icons.Settings,titleCaption:`Properties: ${title}`,bodyHtml:`<div class="workspace-properties"><div class="workspace-properties-toolbar">${refresh}</div>${error?`<p class="settings-error" role="alert">${e(error)}</p>`:""}${notice?`<p role="status">${e(notice)}</p>`:""}<section><h3>Runtime and limits</h3>${details}${resourceForm}</section><section><h3>Disk</h3>${diskForm}</section>${capacity?disclosureHtml({summary:{kind:"compact",label:{kind:"text",text:"Capacity and other limits"}},bodyHtml:capacity}):""}<section><h3>Network</h3>${networkReadings}${networkForm}</section>${disclosureHtml({summary:{kind:"compact",label:{kind:"text",text:"Installation LAN and DNS settings"}},bodyHtml:installationForm})}</div>`});
+  const deleteConfirmation = destructiveConfirmationHtml({
+    id: domId("properties_delete_workspace", id),
+    trigger: { type: "button", variant: "danger", content: { kind: "caption", caption: "Delete workspace" } },
+    confirmCaption: "Yes, delete",
+    cancelCaption: "Cancel",
+  });
+  const deleteSection = `<section><h3>Delete this workspace</h3><p>This permanently removes the workspace and its local files. Save anything you want to keep first.</p><form method="post" action="/workspaces/${encodeURIComponent(id)}/delete" data-turbo="true" data-turbo-frame="_top" data-action="turbo:submit-end->dialog#submitted">${deleteConfirmation}</form></section>`;
+  return dialogHtml({
+    element:{id:"workspace_properties_dialog",attributesHtml:"data-dialog-auto-show"},
+    iconHtml:Icons.Settings,
+    titleCaption:`Properties: ${title}`,
+    bodyHtml:`<div class="workspace-properties">
+      ${error?`<p class="settings-error" role="alert">${e(error)}</p>`:""}
+      ${notice?`<p role="status">${e(notice)}</p>`:""}
+      <section><div class="workspace-properties-toolbar"><h3>Overview</h3>${refresh}</div>${usage}${diagnostics}</section>
+      ${s?`<section><h3>Resource limits</h3>${limitStatus}${resourceForm}${more("Applied limits and shared capacity",appliedLimits+capacity)}</section>`:""}
+      <section><h3>Storage</h3>${diskForm}</section>
+      <section><h3>Workspace network</h3>${networkStatus}${networkForm}${appliedNetwork}</section>
+      <section><h3>Installation settings</h3>${more("LAN and DNS for all workspaces",installationForm)}</section>
+      ${deleteSection}
+    </div>`,
+  });
 }
 
 export async function handleWorkspaceProperties(request:Request,url:URL,id:string,title:string,modalPage:(html:string)=>Promise<Response>,backend=defaultWorkspaceResourceBackend):Promise<Response>{

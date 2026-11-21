@@ -31,7 +31,7 @@ interface ParsedPromptFrontmatter {
 
 const promptDirs = [".kintsugi/prompts", ".pi/prompts"] as const;
 
-const builtinLandPrompt = "Commit and push your work, rebasing when necessary. When successful, delete this workspace.";
+const builtinLandPrompt = "Commit and push your work, rebasing when necessary. When successful, report what was pushed.";
 
 function parseFrontmatter(markdown: string): ParsedPromptFrontmatter {
   if (!markdown.startsWith("---\n")) return { frontmatter: {}, body: markdown };

@@ -9,7 +9,7 @@ import { observableTerminalStaticFiles } from "@kintsugi/observable-terminal/ser
 import { workspacePortBackend, type WorkspaceDockerMount, type WorkspaceInitInstruction } from "@kintsugi/workspace";
 import { mkdir } from "node:fs/promises";
 import { sessionShareDir, sessionShareKeyForInit, sessionShareMountPath } from "./session-share.ts";
-import { createDeleteCurrentWorkspaceTool, registerWorkspaceAgentTool } from "./tools.ts";
+import { registerWorkspaceAgentTool } from "./tools.ts";
 import { usageOpenApiPaths } from "./usage-openapi.ts";
 import { handleUsageRequest, renderUsagePaneAction } from "./usage-web.ts";
 import { handleWorkspaceResourceRequest, workspaceFileEndpoint } from "./workspace-files.ts";
@@ -67,6 +67,5 @@ export const agentWorkspaceModule: WorkspaceModule = {
       return await workspacePortBackend(app.workspaceId, Number(portMatch[1]), `${requestUrl.pathname}${requestUrl.search}`);
     });
     subscribeWorkspaceAgentBusy(({ workspaceId, agentKey, busy }) => context.registry.setAgentBusy(workspaceId, agentKey, busy));
-    registerWorkspaceAgentTool("delete_current_workspace", (workspaceId) => createDeleteCurrentWorkspaceTool(workspaceId, async (force) => await context.deleteCurrentWorkspace(workspaceId, force)));
   },
 };

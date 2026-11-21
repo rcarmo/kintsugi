@@ -1,5 +1,5 @@
 import type { KintsugiEventBus } from "@kintsugi/core";
-import type { DeleteCurrentWorkspaceResult, WorkspaceWorkViewReference } from "@kintsugi/shared";
+import type { WorkspaceWorkViewReference } from "@kintsugi/shared";
 import { Type, type TSchema } from "typebox";
 import { defineWorkspaceTool, type WorkspaceTool } from "./workspace-tool.ts";
 
@@ -66,38 +66,6 @@ function createPresentTool(workspaceId: string, options: WorkspaceAgentToolOptio
       if (!presenter) throw new Error(`unknown presentation kind: ${params.kind}`);
       return await presenter.execute(toolCallId, params);
     },
-  });
-}
-
-export async function executeDeleteCurrentWorkspace(
-  workspaceId: string,
-  deleteCurrentWorkspace: (force: boolean) => Promise<DeleteCurrentWorkspaceResult>,
-  force: boolean,
-) {
-  const result = await deleteCurrentWorkspace(force);
-  if (result.blocked) {
-    return {
-      content: [{ type: "text" as const, text: "Current workspace was not deleted because the delete safety checks found outstanding local changes." }],
-      details: { workspaceId, ...result },
-    };
-  }
-  return {
-    content: [{ type: "text" as const, text: `Current workspace ${workspaceId} deletion has been scheduled. The agent execution context is now being torn down.` }],
-    details: { workspaceId, ...result },
-  };
-}
-
-export function createDeleteCurrentWorkspaceTool(workspaceId: string, deleteCurrentWorkspace: (force: boolean) => Promise<DeleteCurrentWorkspaceResult>): WorkspaceTool<any, any> {
-  return defineWorkspaceTool({
-    name: "delete_current_workspace",
-    label: "Delete Current Workspace",
-    description: "Permanently delete this agent's current Kintsugi workspace. This tears down the execution context the agent has been doing all of its work in, including the workspace container and local files/changes that have not been preserved elsewhere. The agent cannot choose another workspace; this tool always deletes only its own current workspace. Execute this only when the user has explicitly requested deletion of this workspace.",
-    parameters: Type.Object({
-      force: Type.Boolean({
-        description: "Set to false to run the existing workspace delete safety checks and report outstanding local changes instead of deleting when they are present. Set to true only when the user explicitly requested force deletion.",
-      }),
-    }),
-    execute: (_toolCallId: string, params: { force: boolean }) => executeDeleteCurrentWorkspace(workspaceId, deleteCurrentWorkspace, params.force),
   });
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Type } from "typebox";
-import { createKintsugiControlTools, executeDeleteCurrentWorkspace, registerWorkspacePresenter } from "../../src/server/tools.ts";
+import { createKintsugiControlTools, registerWorkspacePresenter } from "../../src/server/tools.ts";
 
 describe("workspace agent tools", () => {
   test("only the built-in agent's present tool teaches embed URLs", () => {
@@ -45,19 +45,5 @@ describe("workspace agent tools", () => {
       unregisterBrowser();
       unregisterTerminal();
     }
-  });
-
-  test("delete current workspace tool reports blocked safety checks", async () => {
-    const result = await executeDeleteCurrentWorkspace("abc", async (force) => ({
-      deleted: false,
-      blocked: !force,
-      details: { workspaceId: "abc", issues: [{ repo: "demo", uncommittedPaths: ["wip.txt"] }] },
-    }), false);
-
-    const content = result.content[0];
-    expect(content?.type).toBe("text");
-    if (content?.type !== "text") throw new Error("expected text content");
-    expect(content.text).toContain("was not deleted");
-    expect(result.details).toMatchObject({ workspaceId: "abc", deleted: false, blocked: true });
   });
 });

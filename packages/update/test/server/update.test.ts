@@ -23,7 +23,6 @@ function context() {
       createWorkView: async () => {},
       presentWorkView: async () => {},
       invalidateWorkspace: () => {},
-      deleteCurrentWorkspace: async () => ({ deleted: false, blocked: false }),
       registerSocketHandler: () => {},
       publishWorkspacePort: async () => { throw new Error("not used"); },
       publishWorkspaceFiles: async () => { throw new Error("not used"); },

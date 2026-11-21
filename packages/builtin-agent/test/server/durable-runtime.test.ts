@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
-import { createRegistry, defineExtension, defineTool, configure, type AgentChange } from "@earendil-works/pi-durable";
+import { createRegistry, defineExtension, defineTool, configure, ToolResultEntry, type AgentChange } from "@earendil-works/pi-durable";
 import { Type } from "typebox";
 import { KintsugiCoreError, createKintsugiEventBus } from "@kintsugi/core";
 import type { WorkspaceAgentToolOptions } from "@kintsugi/agent/server/tools";
@@ -738,34 +738,19 @@ test.each(["offline", "commit-crash"] as const)("Stop %s boundary withdraws stee
   expect(JSON.stringify((await restored.history({}, 100, undefined, context)).items)).not.toContain("Withdraw this steering");
 });
 
-test("self-deleting workspace capability releases its invocation so durable deletion cannot join itself", async () => {
-  const { runtime, faux, registry, open } = await setup();
-  const { durableWorkspaceTool } = await import("../../src/server/durable-tools.ts");
-  const deleted = Promise.withResolvers<void>();
-  let executions = 0;
-  registry.install(defineExtension({ name: "self-delete", tools: [durableWorkspaceTool({
-    name: "delete_current_workspace", label: "Delete", description: "Delete this workspace", parameters: Type.Object({}),
-    async execute() {
-      executions++;
-      await runtime.delete();
-      deleted.resolve();
-      return { content: [{ type: "text", text: "Must not commit a success after abort" }], details: undefined };
-    },
-  })] }));
-  faux.setResponses([fauxAssistantMessage([fauxToolCall("delete_current_workspace", {})], { stopReason: "toolUse" })]);
+test("an old or invented workspace deletion tool call cannot delete the workspace", async () => {
+  const { runtime, faux } = await setup();
+  faux.setResponses([
+    fauxAssistantMessage([fauxToolCall("delete_current_workspace", { force: true })], { stopReason: "toolUse" }),
+    fauxAssistantMessage("The tool is unavailable."),
+  ]);
   const agent = await runtime.agent(record);
-  await agent.submit({ requestId: "self-delete", text: "Delete this workspace" });
-  await deleted.promise;
-  expect((await runtime.admission())?.deleted).toBe(true);
-  expect(JSON.stringify((await agent.history({}, 100, undefined, context)).items)).not.toContain("Must not commit a success");
-  await runtime.suspend();
-  const reopened = await open();
-  await reopened.resume();
-  expect(executions).toBe(1);
-  expect(faux.state.callCount).toBe(1);
-  await expect((await reopened.agent(record)).submit({ requestId: "no", text: "No" })).rejects.toThrow("deleted");
+  const submission = await agent.submit({ requestId: "unavailable-delete-tool", text: "Try the old deletion tool" });
+  expect((await submission.wait(context)).status).toBe("done");
+  const results = (await agent.history({}, 100, undefined, context)).items.filter(ToolResultEntry.is);
+  expect(results.flatMap(entry => entry.data.diagnostics)).toContainEqual(expect.objectContaining({ code: "tool_unavailable" }));
+  expect((await runtime.admission())?.deleted).not.toBe(true);
 });
-
 
 test("Stop does not signal another root's active tool", async () => {
   const { runtime, faux, registry } = await setup();

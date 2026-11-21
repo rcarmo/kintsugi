@@ -139,7 +139,6 @@ for (const module of workspaceModules) {
     createWorkView: (workspaceId, reference) => app.createWorkView(workspaceId, reference),
     presentWorkView: (workspaceId, reference) => app.presentWorkViewFromAgent(workspaceId, reference),
     invalidateWorkspace: workspaceId => app.invalidateWorkspace(workspaceId),
-    deleteCurrentWorkspace: (workspaceId, force) => app.deleteCurrentWorkspaceFromAgent(workspaceId, force),
     registerSocketHandler: (handler) => socketHandlers.push(handler),
     publishWorkspacePort: (workspaceId, port, protocol, hostname) => pathPreviews.publishPort(workspaceId, port, protocol, hostname),
     publishWorkspaceFiles: (workspaceId) => pathPreviews.publishFiles(workspaceId),

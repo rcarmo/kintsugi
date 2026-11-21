@@ -135,7 +135,7 @@ const toolActionLabels = new Map([
   ["codemode", "Run script"], ["agent", "Run a one-shot agent"],
   ["pi.codemode.models.classify", "Classify with a model"], ["pi.codemode.models.generateImages", "Generate images"],
   ["code_search", "Search code structure"], ["open_office_viewer", "Open Office file"],
-  ["delete_current_workspace", "Delete this workspace"], ["list_credentials", "List granted credentials"],
+  ["list_credentials", "List granted credentials"],
   ["spawn_agent", "Start agent"], ["send_message", "Message agent"], ["followup_task", "Assign follow-up"],
   ["list_agents", "List agents"], ["interrupt_agent", "Interrupt agent"], ["wait_agent", "Wait for agents"],
 ]);

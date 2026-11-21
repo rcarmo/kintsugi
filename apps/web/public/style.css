@@ -657,9 +657,12 @@ body[data-live-ready="true"] .browser-transport-status { display: none; }
 }
 
 .workspace-properties { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
-.workspace-properties-toolbar { display: flex; justify-content: flex-end; }
+.workspace-properties-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .workspace-properties section { min-width: 0; }
+.workspace-properties section > h3 { margin: 0 0 12px; }
+.workspace-properties-toolbar h3 { margin: 0; }
 .workspace-properties section + section { border-top: 1px solid var(--line); padding-top: 16px; }
+.workspace-properties section > form + details { margin-top: 12px; }
 .workspace-properties-readings { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(0, 2fr); gap: 6px 16px; margin: 12px 0 20px; }
 .workspace-properties-readings dt { color: var(--text); }
 .workspace-properties-readings dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }

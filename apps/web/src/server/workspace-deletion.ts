@@ -1,5 +1,5 @@
 import { KintsugiCoreError, withCommandSignal, type JsonValue } from "@kintsugi/core";
-import { errorMessage, type DeleteCurrentWorkspaceResult, type WorkspaceDeletionAssessment } from "@kintsugi/shared";
+import { errorMessage, type WorkspaceDeletionResult, type WorkspaceDeletionAssessment } from "@kintsugi/shared";
 import type { WorkspaceDeletionState, WorkspaceRegistry } from "./workspace-registry.ts";
 
 /** Owns deletion assessment, confirmation, retries, and restart recovery. */
@@ -46,12 +46,12 @@ export function createWorkspaceDeletion(options: {
     }
   }
 
-  function schedule(id: string, forced: boolean): DeleteCurrentWorkspaceResult {
+  function schedule(id: string, forced: boolean): WorkspaceDeletionResult {
     void destroy(id, forced);
     return { deleted: true, blocked: false };
   }
 
-  async function check(id: string, confirmedFingerprint?: string): Promise<DeleteCurrentWorkspaceResult> {
+  async function check(id: string, confirmedFingerprint?: string): Promise<WorkspaceDeletionResult> {
     await setState(id, { status: "checking" });
     try {
       await options.cancelPreparation(id);
@@ -70,7 +70,7 @@ export function createWorkspaceDeletion(options: {
     return schedule(id, false);
   }
 
-  async function request(id: string, input: { force?: boolean; fingerprint?: string } = {}): Promise<DeleteCurrentWorkspaceResult> {
+  async function request(id: string, input: { force?: boolean; fingerprint?: string } = {}): Promise<WorkspaceDeletionResult> {
     const entry = requireWorkspace(id);
     if (input.fingerprint !== undefined) {
       if (entry.phase.deletion?.status !== "blocked" || entry.phase.deletion.fingerprint !== input.fingerprint) throw new KintsugiCoreError("workspace_not_ready", "The deletion assessment is no longer current");

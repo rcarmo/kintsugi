@@ -10,6 +10,7 @@ import { agentAttachmentDraftId, findStagedAttachment, stageAttachment } from "@
 import { readInitialPromptDraft, stageInitialPrompt } from "../../src/server/initial-prompt-draft.ts";
 import { publishWorkspaceAgentBusy } from "@kintsugi/agent/server";
 import { agentWorkspaceModule } from "@kintsugi/agent/server";
+import { createKintsugiControlTools } from "@kintsugi/agent/server/tools";
 
 function deferred() {
   let resolve!: () => void;
@@ -58,6 +59,9 @@ test("a Subagent finishing while its parent works does not request workspace att
   } as any;
   agentWorkspaceModule.initialize!(context);
   builtinAgentWorkspaceModule.initialize!(context);
+  const tools = createKintsugiControlTools("workspace-1", { agentId: root.agentId }).map(tool => tool.name);
+  expect(tools).toContain("plan");
+  expect(tools).not.toContain("delete_current_workspace");
 
   // The delegated conversation is not a top-level workspace Agent tab.
   publishWorkspaceAgentBusy({ workspaceId: "workspace-1", agentKey: `agent:${root.agentId}`, busy: true });
