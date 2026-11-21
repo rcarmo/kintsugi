@@ -1,6 +1,8 @@
 import { isDurableUserEntry } from "./durable-input.ts";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import { contentText, type JsonObject, type Message } from "@earendil-works/pi-ai";
+import { ownedSlice } from "@earendil-works/chord/delta";
+import { setImmediate as yieldToLoop } from "node:timers/promises";
+import { contentText, type Message } from "@earendil-works/pi-ai";
 import { AssistantEntry, LiveDoc, ToolResultEntry, ToolTask, type Conversation, type ConversationId, type Cursor, type EntryId, type EntryRecord, type Harness, type ToolDiagnostic, type Tx } from "@earendil-works/pi-durable";
 import { ContextSnapshotEntry, FactContextEntry } from "@kintsugi/token-economizer/pi-durable";
 import { isJsonObject } from "@kintsugi/core";
@@ -9,7 +11,7 @@ import { decodeArguments, decodeResult } from "@kintsugi/token-economizer/pi-dur
 import { runnerVerdict, statusOfTests } from "@kintsugi/token-economizer/core";
 import type { HostSession, Trajectory, ToolResultData } from "@kintsugi/token-economizer/pi-durable";
 import type { Observation } from "@kintsugi/token-economizer/core";
-import { codemodeCallEntry, type CallStart } from "./codemode-call.ts";
+import { codemodeCallEntry } from "./codemode-call.ts";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 export function nativeOptimizerTool(name:string):ToolMapping {
@@ -20,50 +22,56 @@ export function nativeOptimizerTool(name:string):ToolMapping {
   if (["grep","glob","search_history","grep_history","code_search"].includes(name)) return {semantic:"search",readOnly:true};
   return {semantic:"other",readOnly:false};
 }
-/** A forward scan bounded to one optimizer session. */
-type EntryRange = {order:"ascending";minEntryId?:EntryId;maxEntryId?:EntryId};
 // SAFETY: Optimizer session bounds are persisted copies of committed entry IDs and are used only as scan bounds.
 const entryBound = (value:number) => value as EntryId;
+type EntryReader = Pick<Conversation,"entries">;
+/** Keep only the current page of decoded history and let other requests run before fetching the next page. */
+async function* entryStream(conversation:EntryReader,query:Parameters<Conversation["entries"]>[0]):AsyncGenerator<EntryRecord> {
+  let cursor:Cursor|undefined;
+  do {
+    const page = await conversation.entries(query,32,cursor,context);
+    yield* page.items;
+    cursor = page.next;
+    if (cursor) await yieldToLoop();
+  } while (cursor);
+}
 /** Entries after `after` (exclusive) up to `upTo` (inclusive), oldest first; never the whole history unless asked. */
-export async function optimizerEntries(conversation:Conversation,bounds:{after:number;upTo:number}):Promise<EntryRecord[]> {
-  const entries:EntryRecord[] = [];let cursor:Cursor|undefined;
-  const query:EntryRange = {order:"ascending"};
-  if (bounds.after > 0) query.minEntryId = entryBound(bounds.after);
-  if (Number.isFinite(bounds.upTo)) query.maxEntryId = entryBound(bounds.upTo);
-  do {const page = await conversation.entries(query,500,cursor,context);entries.push(...page.items.filter(entry => entry.id > bounds.after));cursor = page.next;} while (cursor);
-  return entries;
+export async function* optimizerEntries(conversation:EntryReader,{after,upTo}:{after:number;upTo:number}):AsyncGenerator<EntryRecord> {
+  if (after >= upTo) return;
+  const query = {order:"ascending" as const,minEntryId:after > 0 ? entryBound(after) : undefined,maxEntryId:Number.isFinite(upTo) ? entryBound(upTo) : undefined};
+  for await (const entry of entryStream(conversation,query)) if (entry.id > after) yield entry;
 }
 /** The newest visible entry ID, without reading the transcript. */
 export async function latestOptimizerEntry(conversation:Conversation):Promise<number|null> {
   return (await conversation.entries({},1,undefined,context)).items[0]?.id ?? null;
 }
 /** The newest assistant entry, searching backwards; one tool round at most in practice. */
-export async function lastAssistantEntry(conversation:Conversation):Promise<EntryRecord|undefined> {
-  let cursor:Cursor|undefined;
-  do {
-    const page = await conversation.entries({},200,cursor,context), found = page.items.find(entry => AssistantEntry.is(entry));
-    if (found) return found;
-    cursor = page.next;
-  } while (cursor);
+export async function lastAssistantEntry(conversation:EntryReader):Promise<EntryRecord|undefined> {
+  for await (const entry of entryStream(conversation,{})) if (AssistantEntry.is(entry)) return entry;
   return undefined;
 }
 /** The fact IDs recorded with a carried section, searching backwards from the newest entry. */
-export async function carriedSnapshotIds(conversation:Conversation,section:string):Promise<string[]> {
-  let cursor:Cursor|undefined;
-  do {
-    const page = await conversation.entries({},200,cursor,context);
-    for (const entry of page.items) if ((ContextSnapshotEntry.is(entry) || FactContextEntry.is(entry)) && entry.data.section === section) return entry.data.injectedIds;
-    cursor = page.next;
-  } while (cursor);
+export async function carriedSnapshotIds(conversation:EntryReader,section:string):Promise<string[]> {
+  for await (const entry of entryStream(conversation,{})) {
+    if ((ContextSnapshotEntry.is(entry) || FactContextEntry.is(entry)) && entry.data.section === section) return entry.data.injectedIds;
+  }
   return [];
+}
+function applyOptimizerSections(sections:Record<string,string>,messages:readonly Message[]) {
+  for (const message of messages) if (message.role === "system") for (const [key,value] of Object.entries(message.sections ?? {})) {if (value === null) delete sections[key];else sections[key] = value;}
 }
 export function optimizerMessageSections(messages:readonly Message[]) {
   const sections:Record<string,string> = {};
-  for (const message of messages) if (message.role === "system") for (const [key,value] of Object.entries(message.sections ?? {})) {if (value === null) delete sections[key];else sections[key] = value;}
+  applyOptimizerSections(sections,messages);
   return sections;
 }
 export function optimizerSections(entries:readonly EntryRecord[]) {
-  return optimizerMessageSections(entries.flatMap(entry => FactContextEntry.is(entry) ? [{role:"system" as const,content:"",sections:{"token-economizer":entry.data.section},timestamp:0}] : [...entry.model ?? []]));
+  const sections:Record<string,string> = {};
+  for (const entry of entries) {
+    if (FactContextEntry.is(entry)) sections["token-economizer"] = entry.data.section;
+    else if (entry.model) applyOptimizerSections(sections,entry.model);
+  }
+  return sections;
 }
 const modelCallOrigin = Type.Object({kind:Type.Literal("model"),callId:Type.String(),assistant:Type.Integer({minimum:1,maximum:Number.MAX_SAFE_INTEGER})});
 /** Verify a boundary-straddling result by task ID without reading pre-checkpoint arguments. */
@@ -76,47 +84,45 @@ async function callPrecedesRange(harness:Harness,entry:EntryRecord,callId:string
 /** Old cursors may split a Code Mode pair. Search only the parent task's visible pre-cursor range. */
 async function nestedCallPrecedesRange(conversation:Conversation,entry:EntryRecord,callId:string,key:string,after:number):Promise<boolean> {
   if (!entry.byTaskId || entry.byTaskId >= after) return false;
-  let cursor:Cursor|undefined;
-  do {
-    const page = await conversation.entries({minEntryId:entryBound(entry.byTaskId),maxEntryId:entryBound(after)},200,cursor,context);
-    for (const candidate of page.items) if (candidate.byTaskId === entry.byTaskId && codemodeCallEntry.is(candidate) && candidate.data.callId === callId && candidate.data.key === key) return candidate.data.phase === "start";
-    cursor = page.next;
-  } while (cursor);
+  for await (const candidate of entryStream(conversation,{minEntryId:entryBound(entry.byTaskId),maxEntryId:entryBound(after)})) {
+    if (candidate.byTaskId === entry.byTaskId && codemodeCallEntry.is(candidate) && candidate.data.callId === callId && candidate.data.key === key) return candidate.data.phase === "start";
+  }
   return false;
 }
-type NestedStarts = Map<string,{start:CallStart;entry:EntryRecord}>;
+type CallArguments = ReturnType<typeof decodeArguments>;
+const noArguments:CallArguments = {command:"",targets:[],coverage:"partial"};
+type NestedStarts = Map<string,{task:EntryRecord["byTaskId"];callId:string;name:string;args:CallArguments;issuedAt:number}>;
 /** A settled wrapper can be interrupted before it records the nested result. That start is not evidence. */
 function discardInterruptedStarts(starts:NestedStarts,entry:EntryRecord,message:Extract<Message,{role:"toolResult"}>,diagnostics:readonly ToolDiagnostic[]) {
   if (!entry.byTaskId || message.toolName !== "codemode" || !message.isError) return;
   if (!diagnostics.some(item => ["aborted","interrupted","uncertain","abandoned"].includes(item.code ?? ""))) return;
-  for (const [key,pending] of starts) if (pending.entry.byTaskId === entry.byTaskId && codemodeCallEntry.is(pending.entry) && pending.entry.data.callId === message.toolCallId) starts.delete(key);
+  for (const [key,pending] of starts) if (pending.task === entry.byTaskId && pending.callId === message.toolCallId) starts.delete(key);
 }
 /** One conversation's committed tool results within a session range. */
-async function readSource(harness:Harness,conversation:Conversation,entries:readonly EntryRecord[],host:HostSession,after:number) {
-  const observed:Observation[] = [], calls = new Map<string,{name:string;args:JsonObject;runId:string}>(), starts:NestedStarts = new Map();
+async function readSource(harness:Harness,conversation:Conversation,host:HostSession,after:number,upTo:number) {
+  const observed:Observation[] = [], calls = new Map<string,{name:string;args:CallArguments;runId:string}>(), starts:NestedStarts = new Map();
   let prompts = 0, activity = 0, answeredTurns = 0, answeredEnd = 0, awaitingAnswer = false;
-  for (const entry of entries) {
+  for await (const entry of optimizerEntries(conversation,{after,upTo})) {
     if (isDurableUserEntry(entry)) {prompts++;awaitingAnswer = true;}
     if (AssistantEntry.is(entry)) for (const message of entry.model ?? []) if (message.role === "assistant") {
       if (awaitingAnswer && message.stopReason === "stop" && message.content.some(block => block.type === "text" && block.text.trim()) && !message.content.some(block => block.type === "toolCall")) {answeredTurns++;answeredEnd = observed.length;awaitingAnswer = false;}
-      for (const call of message.content) if (call.type === "toolCall") calls.set(call.id,{name:call.name,args:call.arguments,runId:String(entry.byTaskId ?? "unknown")});
+      for (const call of message.content) if (call.type === "toolCall") calls.set(call.id,{name:call.name,args:decodeArguments(call.arguments),runId:String(entry.byTaskId ?? "unknown")});
     }
-    function capture(name:string,args:JsonObject|null,result:ToolResultData,outer:string,nested:string|null,runId:string,at:number) {
+    function capture(name:string,args:CallArguments,result:ToolResultData,outer:string,nested:string|null,runId:string,at:number) {
       const mapping = nativeOptimizerTool(name);if (mapping.semantic === "wrapper") return;
-      const decoded = decodeResult(result), arguments_ = args === null ? {command:"",targets:[],coverage:"partial" as const} : decodeArguments(args), status = mapping.semantic === "shell" ? statusOfTests(arguments_.command) : null, verdict = runnerVerdict(decoded.output);
-      observed.push(makeObservation({source:{conversation:String(entry.conversationId),outerCall:outer,nestedKey:nested,phase:"result"},sessionId:host.id,runId,tool:name,mapping,completedNonProcess:mapping.semantic !== "shell",command:arguments_.command,targets:arguments_.targets,output:decoded.output.slice(-16_384),isError:result.isError,exitCode:decoded.exitCode,timedOut:decoded.timedOut,aborted:decoded.aborted,coverage:decoded.output.length > 16_384 || arguments_.coverage === "partial" ? "partial" : decoded.coverage,at,verification:status === null ? null : verdict !== null ? verdict ? "failed" : "passed" : status === "own" && decoded.exitCode !== null ? decoded.exitCode === 0 ? "passed" : "failed" : null}));activity = Math.max(activity,at);
+      const decoded = decodeResult(result), status = mapping.semantic === "shell" ? statusOfTests(args.command) : null, verdict = runnerVerdict(decoded.output);
+      observed.push(makeObservation({source:{conversation:String(entry.conversationId),outerCall:outer,nestedKey:nested,phase:"result"},sessionId:host.id,runId,tool:name,mapping,completedNonProcess:mapping.semantic !== "shell",command:args.command,targets:args.targets,output:ownedSlice(decoded.output,Math.max(0,decoded.output.length-16_384)),isError:result.isError,exitCode:decoded.exitCode,timedOut:decoded.timedOut,aborted:decoded.aborted,coverage:decoded.output.length > 16_384 || args.coverage === "partial" ? "partial" : decoded.coverage,at,verification:status === null ? null : verdict !== null ? verdict ? "failed" : "passed" : status === "own" && decoded.exitCode !== null ? decoded.exitCode === 0 ? "passed" : "failed" : null}));activity = Math.max(activity,at);
     }
     if (codemodeCallEntry.is(entry)) {
       const data = entry.data, key = JSON.stringify([entry.byTaskId,data.callId,data.key]);
-      if (data.phase === "start") starts.set(key,{start:data,entry});
+      if (data.phase === "start") starts.set(key,{task:entry.byTaskId,callId:data.callId,name:data.name,args:isJsonObject(data.arguments) ? decodeArguments(data.arguments) : noArguments,issuedAt:data.issuedAt ?? 0});
       else {
         const source = starts.get(key);
         if (!source) {
           if (await nestedCallPrecedesRange(conversation,entry,data.callId,data.key,after)) continue;
           return {kind:"unreadable" as const,reason:"Native nested result has no visible start"};
         }
-        const args = isJsonObject(source.start.arguments) ? source.start.arguments : null;
-        capture(source.start.name,args,{name:source.start.name,structured:null,details:data.details ?? null,output:data.output ?? data.error ?? "",isError:data.isError,diagnostics:data.cancelled ? [{code:"aborted",message:data.error ?? "Cancelled"}] : []},String(entry.byTaskId),data.key,calls.get(data.callId)?.runId ?? "unknown",source.start.issuedAt ?? 0);starts.delete(key);
+        capture(source.name,source.args,{name:source.name,structured:null,details:data.details ?? null,output:data.output ?? data.error ?? "",isError:data.isError,diagnostics:data.cancelled ? [{code:"aborted",message:data.error ?? "Cancelled"}] : []},String(entry.byTaskId),data.key,calls.get(data.callId)?.runId ?? "unknown",source.issuedAt);starts.delete(key);
       }
     } else if (ToolResultEntry.is(entry)) for (const message of entry.model ?? []) if (message.role === "toolResult") {
       const source = calls.get(message.toolCallId);
@@ -168,27 +174,22 @@ export async function nativeOptimizerTrajectory(harness:Harness,host:HostSession
   },context);
   if (latest === null) return {kind:"later",reason:"Agent or subagent run is still recording learning evidence"};
   maximum = Math.min(maximum,latest);
-  const root = await readSource(harness,conversation,await optimizerEntries(conversation,{after:begin,upTo:maximum}),host,begin);
+  const root = await readSource(harness,conversation,host,begin,maximum);
   if (root.kind === "unreadable") return root;
   if (root.unfinished.size && maximum < latest) {
     // Legacy saved upper bounds can end between a nested start and end. Look ahead only to
     // confirm pairing; results beyond the pinned boundary cannot become evidence for this fold.
-    let cursor:Cursor|undefined;
-    do {
-      const page = await conversation.entries({order:"ascending",minEntryId:entryBound(maximum),maxEntryId:entryBound(latest)},200,cursor,context);
-      for (const entry of page.items) {
-        if (entry.id <= maximum) continue;
-        if (codemodeCallEntry.is(entry) && entry.data.phase === "end") root.unfinished.delete(JSON.stringify([entry.byTaskId,entry.data.callId,entry.data.key]));
-        if (ToolResultEntry.is(entry)) for (const message of entry.model ?? []) if (message.role === "toolResult") discardInterruptedStarts(root.unfinished,entry,message,entry.data.diagnostics);
-      }
-      cursor = page.next;
-    } while (cursor && root.unfinished.size);
+    for await (const entry of optimizerEntries(conversation,{after:maximum,upTo:latest})) {
+      if (codemodeCallEntry.is(entry) && entry.data.phase === "end") root.unfinished.delete(JSON.stringify([entry.byTaskId,entry.data.callId,entry.data.key]));
+      if (ToolResultEntry.is(entry)) for (const message of entry.model ?? []) if (message.role === "toolResult") discardInterruptedStarts(root.unfinished,entry,message,entry.data.diagnostics);
+      if (!root.unfinished.size) break;
+    }
   }
   if (root.unfinished.size) return {kind:"unreadable",reason:"Trajectory boundary contains an unfinished native call"};
   const observations = [...root.observations], seen = new Set(observations.map(observation => observation.id));let activity = root.activity;
   for (const id of children) {
     const child = await harness.conversation(id,context);if (!child) continue;
-    const read = await readSource(harness,child,await optimizerEntries(child,{after:begin,upTo:maximum}),host,begin);
+    const read = await readSource(harness,child,host,begin,maximum);
     // A descendant's unreadable history must not cost the root its learning; skip that conversation.
     if (read.kind === "unreadable") continue;
     for (const observation of read.observations) {

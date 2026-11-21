@@ -12,7 +12,7 @@ import { contextSection, fingerprint, judgeGoal, scopeKey, sessionKey, type Atta
 import { createSdkModelTransport, createTokenEconomizer, decodeArguments, decodeResult, detach, KnowledgeDoc, RunDoc, runIdentity, SessionsDoc, SteeringEntry, FactContextEntry, type HostDomain, type HostSession, type Knowledge } from "@kintsugi/token-economizer/pi-durable";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import type { Models } from "@earendil-works/pi-ai";
-import { AgentDoc, AssistantEntry, CompactionEntry, ResetEntry, ToolResultEntry, defineDoc, defineEntry, LiveDoc, SystemEntry, type LiveState, type AgentState, type Conversation, type ConversationId, type Harness, type RegistryReader, type Tx } from "@earendil-works/pi-durable";
+import { AgentDoc, AssistantEntry, CompactionEntry, ResetEntry, ToolResultEntry, defineDoc, defineEntry, LiveDoc, SystemEntry, type LiveState, type AgentState, type Conversation, type ConversationId, type EntryRecord, type Harness, type RegistryReader, type Tx } from "@earendil-works/pi-durable";
 import { errorMessage, escapeHtml } from "@kintsugi/shared";
 import type { BuiltinAgentIntegration } from "./integrations.ts";
 import { Type } from "typebox";
@@ -219,9 +219,17 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
     if (record.parentId || record.readOnly || record.oneShotCallId) return;
     if (event === "startup" && hosts.has(conversation.id)) return hosts.get(conversation.id)!
     const scope = {host:"kintsugi.builtin",repository:options.workspaceId,environment:"native-v1"}, known = (await options.harness().snapshot(NativeEpoch,conversation.id,context))?.id ?? null;
-    // A known session keeps its frozen context, so reopening a workspace needs no context or history read.
+    // A known session keeps its frozen context. When a fresh session needs a context read, keep only its summary.
     const resumed = known !== null && Boolean((await options.harness().snapshot(SessionsDoc,context))?.sessions[sessionKey(scope,known)]);
-    const view = resumed ? null : await conversation.context(context), latest = resumed ? null : await latestOptimizerEntry(conversation), carried = view ? optimizerSections(view.entries) : {};
+    const isModelFree = (entry:EntryRecord|undefined) => entry?.model?.some(message => message.role === "assistant" && message.provider === "kintsugi" && message.model === "codemode-template") ?? false;
+    let carried:Record<string,string> = {}, visibleHistory = true, inheritedModelFree = false;
+    if (!resumed) {
+      const {entries} = await conversation.context(context);
+      carried = optimizerSections(entries);
+      visibleHistory = entries.some(entry => (entry.model?.length ?? 0) > 0);
+      inheritedModelFree = isModelFree(entries.findLast(entry => AssistantEntry.is(entry)));
+    }
+    const latest = resumed ? null : await latestOptimizerEntry(conversation);
     const host = await options.harness().commit(async tx => {
       const epoch = await tx.doc(NativeEpoch,conversation.id), sessions = await tx.doc(NativeOptimizerSessions);
       if (epoch.id === null) {
@@ -235,7 +243,7 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
       const row = sessions.sessions[epoch.id];if (!row) throw new Error("Missing native optimizer epoch");row.end = null;return detach(row.host);
     },context);
     hosts.set(conversation.id,host);
-    const assistant = view ? view.entries.findLast(entry => AssistantEntry.is(entry)) : await lastAssistantEntry(conversation);modelFree.set(conversation.id,assistant?.model?.some(message => message.role === "assistant" && message.provider === "kintsugi" && message.model === "codemode-template") ?? false);
+    modelFree.set(conversation.id,resumed ? isModelFree(await lastAssistantEntry(conversation)) : inheritedModelFree);
     const existing = (await options.harness().snapshot(SessionsDoc,context))?.sessions[sessionKey(host.scope,host.id)];
     const carriedIds = existing ? existing.injectedIds : carried[contextSection] ? await carriedSnapshotIds(conversation,carried[contextSection]) : [];
     // Legacy forks may predate incremental learning. Read the actual fork bound
@@ -246,7 +254,7 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
     const runningMask = live?.run && !live.run.afterRun && live.run.inputs.length > 0 ? existing?.frozenMask ?? mask?.owned ?? [] : undefined;
     preparing.add(conversation.id);
     queueMicrotask(() => void refreshChips());
-    try {await optimizer.sessionStarted(host,{event,visibleHistory:view ? view.entries.some(entry => (entry.model?.length ?? 0) > 0) : true,carriedSections:carried,carriedIds,runningMask,learningAfter:inheritedAt !== undefined ? String(inheritedAt) : event === "fork" ? String(latest ?? 0) : undefined});} finally {preparing.delete(conversation.id);}
+    try {await optimizer.sessionStarted(host,{event,visibleHistory,carriedSections:carried,carriedIds,runningMask,learningAfter:inheritedAt !== undefined ? String(inheritedAt) : event === "fork" ? String(latest ?? 0) : undefined});} finally {preparing.delete(conversation.id);}
     return host;
   }
   async function end(id:ConversationId) {

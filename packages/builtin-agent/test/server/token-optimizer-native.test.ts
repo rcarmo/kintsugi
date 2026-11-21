@@ -3,7 +3,7 @@ import type {Knowledge} from "@kintsugi/token-economizer/pi-durable";
 import { projectDurableTranscript } from "../../src/server/durable-transcript.ts";
 import { applyTranscriptContributions } from "@kintsugi/agent/server/transcript-contributions";
 import { tokenOptimizerSettingsContribution } from "../../src/server/token-optimizer-settings.ts";
-import { carriedSnapshotIds, latestOptimizerEntry, optimizerEntries, optimizerSections, optimizerMessageSections } from "../../src/server/token-optimizer-source.ts";
+import { carriedSnapshotIds, lastAssistantEntry, latestOptimizerEntry, optimizerEntries as streamOptimizerEntries, optimizerSections, optimizerMessageSections } from "../../src/server/token-optimizer-source.ts";
 import { openDurableWorkspace, WorkspaceAgents, type DurableAgentRecord } from "../../src/server/durable-workspace.ts";
 import { openDurableAgentRuntime } from "../../src/server/durable-runtime.ts";
 import { renderAgentPaneComposerFooter } from "../../src/server/render-composer.ts";
@@ -22,7 +22,7 @@ import { contentText, createModels, fauxProvider, fauxAssistantMessage, fauxTool
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { openBunDurableStorage } from "../../src/server/durable-sqlite.ts";
 import { openNodeJsonlStorage } from "@earendil-works/pi-durable/storage/jsonl/node";
-import { AgentDoc, AssistantEntry, LiveDoc, ToolResultEntry, UserEntry, type AgentChange, type ConversationId, type Extension, createRegistry, defineExtension, defineSignal, defineTool, Harness, MemoryStorage } from "@earendil-works/pi-durable";
+import { AgentDoc, AssistantEntry, LiveDoc, ToolResultEntry, UserEntry, type AgentChange, type ConversationId, type EntryRecord, type Extension, createRegistry, defineEntry, defineExtension, defineSignal, defineTool, Harness, MemoryStorage } from "@earendil-works/pi-durable";
 import { Type } from "typebox";
 import { createWorkspaceCodemodeExtension } from "../../../codemode/src/server/extension.ts";
 import { createNativeTokenOptimizer, OptimizerNotice, tokenOptimizerIntegration } from "../../src/server/token-optimizer.ts";
@@ -38,6 +38,11 @@ import { WorkspaceAdmission } from "../../src/server/durable-lifecycle.ts";
 function reviewedFact(knowledge:Knowledge,id:string,claim:string) {
   knowledge.distiller.facts.push({spec:{id,claim,detector:{scope:"ran_checks"}},life:{...createLifecycle(id,false,false),state:"ACTIVE",fire_num:4,fire_den:4}});
   knowledge.factReviews ??= {};knowledge.factReviews[`distilled:${id}`] = {decision:"approved",at:1,note:"Fixture review",claim:fingerprint(claim)};
+}
+async function optimizerEntries(...args:Parameters<typeof streamOptimizerEntries>) {
+  const entries:EntryRecord[]=[];
+  for await (const entry of streamOptimizerEntries(...args)) entries.push(entry);
+  return entries;
 }
 const cleanups:(() => Promise<void>)[] = [];
 afterEach(async () => {for (const close of cleanups.splice(0).reverse()) await close();});
@@ -627,6 +632,63 @@ test("a final fold deferred during an active tool is woken after the run settles
     expect(state.knowledge?.environment.facts.find(fact=>fact.id==="absent_tool:ruff")?.life.confirms).toHaveLength(1);
   } finally {tool.release();}
 });
+
+test("optimizer recovery lookups stop at the newest match without prefetching older pages",async()=>{
+  const f=await setup("sqlite"),padding=defineEntry<{index:number}>("fixture.optimizer-recovery-padding");
+  const expected=await f.harness.commit(async tx=>{
+    await tx.appendEntry(ContextSnapshotEntry,f.conversation.id,{data:{sessionId:"old",section:"carried",injectedIds:["old"]}});
+    await tx.appendEntry(ContextSnapshotEntry,f.conversation.id,{data:{sessionId:"new",section:"carried",injectedIds:["new"]}});
+    const assistant=await tx.appendEntry(AssistantEntry,f.conversation.id,{model:[fauxAssistantMessage("Newest answer")]});
+    for(let index=0;index<60;index++)await tx.appendEntry(padding,f.conversation.id,{data:{index}});
+    return assistant.id;
+  },context);
+  const limits:number[]=[],reader={entries:async (...args:Parameters<typeof f.conversation.entries>)=>{
+    limits.push(args[1]);return f.conversation.entries(...args);
+  }};
+  expect((await lastAssistantEntry(reader))?.id).toBe(expected);
+  expect(await carriedSnapshotIds(reader,"carried")).toEqual(["new"]);
+  expect(limits).toEqual([32,32,32,32]);
+});
+
+test.each([false,true])("checkpoint pairing and bounds survive SDK pages (nested: %p)",async(nested)=>{
+  const f=await setup("sqlite"),tool=f.hold();
+  const padding=defineEntry<{index:number}>("fixture.optimizer-page-padding"), tail="end of synthetic output";
+  f.fail("x".repeat(40_000)+tail);
+  const call=nested ? fauxToolCall("codemode",{code:"await tools.bash({command:'pytest'});"}) : fauxToolCall("bash",{command:"pytest"});
+  f.faux.setResponses([fauxAssistantMessage([call],{stopReason:"toolUse"}),fauxAssistantMessage("Done")]);
+  try {
+    const run=await f.conversation.submit({type:"input",content:"Check"},context);await tool.entered;
+    const origin=(await optimizerEntries(f.conversation,{after:0,upTo:Infinity})).find(entry=>nested ? codemodeCallEntry.is(entry)&&entry.data.phase==="start" : AssistantEntry.is(entry))!;
+    const beforeResult=await f.harness.commit(async tx=>{
+      for(let index=0;index<64;index++)await tx.appendEntry(padding,f.conversation.id,{data:{index}});
+      return tx.appendEntry(padding,f.conversation.id,{data:{index:64}});
+    },context);
+    tool.release();await run.wait(context);
+    const pageSizes:number[]=[];
+    const reader={entries:async (...args:Parameters<typeof f.conversation.entries>)=>{
+      pageSizes.push(args[1]);return f.conversation.entries(...args);
+    }};
+    for await (const entry of streamOptimizerEntries(reader,{after:origin.id,upTo:beforeResult.id})) {
+      expect(entry.id).toBeGreaterThan(origin.id);
+      break;
+    }
+    expect(pageSizes).toEqual([32]);
+    const pageEntries=await optimizerEntries(reader,{after:origin.id,upTo:beforeResult.id});
+    expect(pageEntries.at(-1)?.id).toBe(beforeResult.id);
+    expect(pageSizes.length).toBeGreaterThan(2);
+    expect(await f.native.domain.trajectory(f.host,String(beforeResult.id))).toMatchObject({kind:"ready",cutoff:String(beforeResult.id),observations:[]});
+    const trajectory=await f.native.domain.trajectory(f.host,null);
+    expect(trajectory.kind).toBe("ready");
+    if(trajectory.kind!=="ready")throw new Error(trajectory.reason);
+    expect(trajectory.observations).toHaveLength(1);
+    expect(trajectory.observations[0]).toMatchObject({command:"pytest",nested,exitCode:1,coverage:nested ? "partial" : "complete"});
+    if(nested) {
+      expect(trajectory.observations[0]?.output).toHaveLength(16_384);
+      expect(trajectory.observations[0]?.output.endsWith(tail)).toBe(true);
+    }
+    expect(await f.native.domain.trajectory(f.host,null,String(origin.id))).toMatchObject({kind:"ready",observations:[]});
+  } finally {tool.release();}
+},15_000);
 
 test("an old checkpoint within a Code Mode wrapper skips only the verified earlier pair",async()=>{
   const f=await setup();
