@@ -75,11 +75,21 @@ for (const exit of ["normal", "SIGTERM", "SIGKILL", "stop-child"] as const) {
         await parent.exited;
       }
       await waitFor(() => isDead(details.pid));
+      childPid = undefined; // Already verified stopped; do not signal this PID again.
     } finally {
-      parent.kill("SIGKILL");
-      await parent.exited;
-      if (childPid !== undefined && !await isDead(childPid)) process.kill(childPid, "SIGKILL");
-      await rm(directory, { recursive: true, force: true });
+      try {
+        parent.kill("SIGKILL");
+        await parent.exited;
+        if (childPid !== undefined && !await isDead(childPid)) {
+          // Failure cleanup still races with a child that is already exiting.
+          try { process.kill(childPid, "SIGKILL"); }
+          catch (error) {
+            if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
+          }
+        }
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
     }
   }, 10_000);
 }
