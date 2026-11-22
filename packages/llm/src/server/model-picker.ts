@@ -4,6 +4,7 @@ import { popupHtml } from "@kintsugi/design-system/popup";
 import { escapeHtml, providerBrandIconHtml } from "@kintsugi/shared";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { createPiModelRuntime } from "./pi-config-models.ts";
+import { modelsByDisplayName } from "./accounts.ts";
 import { parseModelRef } from "./model-reference.ts";
 import type { ModelRef } from "./model-reference.ts";
 
@@ -21,6 +22,7 @@ interface SharedComposerSelectionsOptions {
   modelFormId: string;
   thinkingLevelFormId: string;
   models: ComposerModelOption[];
+  providerNames?: ReadonlyMap<string, string>;
   thinkingLevels: string[];
   selectedThinkingLevel: string;
   autosubmitThinking?: boolean;
@@ -29,7 +31,7 @@ interface SharedComposerSelectionsOptions {
   preserveControls?: boolean;
 }
 
-function renderModelSelection(formId: string, models: ComposerModelOption[], connectedProvider = false, readOnly = false): string {
+function renderModelSelection(formId: string, models: ComposerModelOption[], connectedProvider = false, readOnly = false, providerNames?: ReadonlyMap<string, string>): string {
   const selected = models.find((model) => model.selected) ?? models[0];
   if (readOnly) return buttonHtml({ type: "button", variant: "secondary", disabled: true,
     content: { kind: "caption", caption: selected?.name ?? "Model", iconHtml: selected ? providerBrandIconHtml(selected.provider) : undefined } });
@@ -37,7 +39,8 @@ function renderModelSelection(formId: string, models: ComposerModelOption[], con
   const menuId = `${formId}_popup`;
   const setupAction = 'data-controller="agent-model-setup" data-action="click->agent-model-setup#open"';
   const configure = contentRowHtml({ width: "fill", kind: "compact", label: { kind: "text", text: "Manage models…" }, element: { tag: "button", attributesHtml: `type="button" role="menuitem" ${setupAction}` } });
-  const modelItems = models.map((model) => {
+  const displayModels = providerNames ? modelsByDisplayName(models, providerNames, (model) => model.name) : models;
+  const modelItems = displayModels.map((model) => {
     return contentRowHtml({
       width: "fill",
       kind: "compact",
@@ -64,7 +67,7 @@ export function renderSharedComposerSelections(options: SharedComposerSelections
     ? `<span class="composer-selection-field"${autosubmit}><select class="composer-selection popup-select" data-controller="popup-select" data-popup-placement="above" name="thinkingLevel" form="${escapeHtml(options.thinkingLevelFormId)}" title="Thinking level">${options.thinkingLevels.map((level) => `<option value="${escapeHtml(level)}"${level === options.selectedThinkingLevel ? " selected" : ""}>${escapeHtml(level)}</option>`).join("")}</select></span>`
     : "";
   const ready = options.models.some((model) => model.selected && model.available !== false);
-  const content = `${renderModelSelection(options.modelFormId, options.models, options.connectedProvider, options.readOnly)}
+  const content = `${renderModelSelection(options.modelFormId, options.models, options.connectedProvider, options.readOnly, options.providerNames)}
 ${ready ? thinkingSelection : ""}`;
   // Popup selects add their own button and menu. Morphing those enhancements
   // away would leave a retained select without its controls. A content-keyed

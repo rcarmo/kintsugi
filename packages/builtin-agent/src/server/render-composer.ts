@@ -28,6 +28,7 @@ export interface AgentStatsView {
   thinkingLevel: string;
   thinkingLevels: string[];
   models: ComposerModelOption[];
+  providerNames?: ReadonlyMap<string, string>;
   connectedProvider?: boolean;
   /** Token optimizer status for this Agent; absent while it is off. */
   optimizer?: OptimizerChip;
@@ -195,6 +196,7 @@ ${renderSharedComposerSelections({
     modelFormId,
     thinkingLevelFormId,
     models,
+    providerNames: stats.providerNames,
     thinkingLevels: stats.thinkingLevels,
     selectedThinkingLevel: stats.thinkingLevel,
     autosubmitThinking: true,

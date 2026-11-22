@@ -2,7 +2,7 @@ import { disclosureHtml } from "@kintsugi/design-system/disclosure";
 import { connectCustomOpenAIEndpoint, customOpenAIProtocols, customOpenAIDefaults, CustomEndpointInputError, type CustomOpenAIProtocol, type CustomOpenAIEndpointInput } from "./custom-openai-endpoint.ts";
 import { availableProviderModels } from "./known-model-provider-incorrectness.ts";
 import { anthropicSubscriptionNotice } from "./subscription.ts";
-import { listAccounts, providerLabel, sortByPopularity, type Account } from "./accounts.ts";
+import { listAccounts, modelsByDisplayName, providerLabel, providerNamesById, sortByPopularity, type Account } from "./accounts.ts";
 import { modelUnavailableReason, providerAvailability } from "./provider-availability.ts";
 import { providerUsageFrameId, supportedUsageProviders } from "./provider-usage.ts";
 import { getPopularModelRank, getPopularProviderRank, getProviderApiKeyExample, modelDisplayName } from "./hardcoded-provider-knowledge.ts";
@@ -185,8 +185,8 @@ function renderConnectChoices(host: ModelsHost, runtime: Runtime, accounts: Acco
 async function renderEnabledModelsList(runtime: Runtime, host: ModelsHost): Promise<string> {
   const enabledModels = await getEnabledModels();
   const availability = await providerAvailability(runtime, enabledModels.map((model) => model.provider));
-  const labels = new Map(runtime.getProviders().map((provider) => [provider.id, providerLabel(provider)]));
-  const rows = enabledModels.map((model) => {
+  const labels = providerNamesById(runtime.getProviders());
+  const rows = modelsByDisplayName(enabledModels, labels, (model) => model.label).map((model) => {
     const reason = modelUnavailableReason(availability.get(model.provider)!, model, runtime);
     const providerName = labels.get(model.provider) ?? model.provider;
     return `<div class="managed-list__item">

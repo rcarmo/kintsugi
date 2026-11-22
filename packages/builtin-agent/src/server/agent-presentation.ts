@@ -3,7 +3,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { durableContextTokens } from "./durable-accounting.ts";
 import { renderDurableTree } from "./durable-tree.ts";
 import type { TreeFilterMode } from "./session-tree.ts";
-import { createPiModelRuntime, type ModelRef } from "@kintsugi/llm/server";
+import { createPiModelRuntime, providerNamesById, type ModelRef } from "@kintsugi/llm/server";
 import { createLivePresentation, type LiveRegion, type LiveRegionDigests } from "@kintsugi/shared";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type { DurableAgentController } from "./durable-runtime.ts";
@@ -147,6 +147,7 @@ export class AgentPresentation {
       cacheHitPercent: promptCacheHitPercent(buckets),
       familyCacheHitPercent: this.descendantUsage ? promptCacheHitPercent([...buckets, this.descendantUsage]) : undefined,
       cost: buckets.reduce((sum, item) => sum + item.cost.total, 0), modelName: this.model?.id,
+      providerNames: providerNamesById(this.modelRuntime.getProviders()),
       optimizer: this.controller.optimizerChip(), thinkingLevel: this.thinkingLevel, thinkingLevels: this.availableThinkingLevels(), models: this.models.map(model => ({ ...model, selected: model.provider === this.model?.provider && model.id === this.model.id })) };
   }
   subscribeLivePresentation(listener: AgentLivePresentationListener, shown?: LiveRegionDigests) {

@@ -1,6 +1,7 @@
 export { getCustomModelsJson, setCustomModelsJson, getEnabledModels, hasConnectedModelProvider, hasAvailableEnabledModel, setEnabledModels, cheapestProviderModel, claudeCodeHeaders, createPiModelRuntime, readPiModelCatalogue, refreshPiModelCatalogue, disconnectModelProvider, seedProviderEnabledModels, type EnabledModel } from "./pi-config-models.ts";
 export { getAgentModelPreference, setAgentModelPreference, getAgentModelThinkingLevel, setAgentModelThinkingLevel } from "./agent-model-preferences.ts";
 export { popularProviderIds } from "./hardcoded-provider-knowledge.ts";
+export { providerNamesById } from "./accounts.ts";
 export { modelRefValue, parseModelRef, type ModelRef } from "./model-reference.ts";
 export { renderModelsDialog, handleModelsRequest, modelsDialogId } from "./models-panel.ts";
 export { llmWorkspaceModule as kintsugiServerModule } from "./web.ts";

@@ -1,4 +1,5 @@
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { ModelRef } from "./model-reference.ts";
 import { getPopularProviderRank } from "./hardcoded-provider-knowledge.ts";
 import { providerAccountSummary } from "./provider-accounts.ts";
 import { providerConnections, type ProviderConnection } from "./provider-connections.ts";
@@ -20,6 +21,19 @@ export interface Account {
 
 export function providerLabel(provider: { id: string; name?: string }): string {
   return provider.id === "openai-codex" ? "ChatGPT / Codex" : provider.id === "openai" ? "OpenAI - Sign in with ChatGPT" : provider.name ?? provider.id;
+}
+
+export function providerNamesById(providers: readonly { id: string; name?: string }[]): ReadonlyMap<string, string> {
+  return new Map(providers.map((provider) => [provider.id, providerLabel(provider)]));
+}
+
+/** Sort a display copy so stored ordering and selection fallbacks stay intact. */
+export function modelsByDisplayName<T extends ModelRef>(models: readonly T[], providerNames: ReadonlyMap<string, string>, modelName: (model: T) => string): T[] {
+  const providerName = (model: T) => providerNames.get(model.provider) ?? model.provider;
+  return models.toSorted((a, b) => providerName(a).localeCompare(providerName(b))
+    || a.provider.localeCompare(b.provider)
+    || modelName(a).localeCompare(modelName(b))
+    || a.id.localeCompare(b.id));
 }
 
 /** Popular providers first, then by name. */
