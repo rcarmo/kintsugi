@@ -36,11 +36,11 @@
 .token-optimizer__form:has(input[name="preset"][value="assisted"]:checked) .token-optimizer__model,
 .token-optimizer__form:has(input[name="preset"][value="custom"]:checked) :is(.token-optimizer__model, .token-optimizer__custom) { display: grid; }
 
-.token-optimizer__agents-head, .token-optimizer__workspace-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.token-optimizer__agents-head h3, .token-optimizer__workspace-head h4 { margin: 0; color: var(--text-bright); font-size: var(--text-body); font-weight: var(--weight-bold); }
+.token-optimizer__agents-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.token-optimizer__agents-head h3 { margin: 0; color: var(--text-bright); font-size: var(--text-body); font-weight: var(--weight-bold); }
 .token-optimizer__workspace { display: grid; gap: 8px; min-width: 0; padding-top: 16px; border-top: 1px solid var(--line); }
-.token-optimizer__workspace-head h4 { font-weight: var(--weight-medium); overflow-wrap: anywhere; }
-.token-optimizer__override { margin: 0; }
+.token-optimizer__workspace > h4, .token-optimizer__saved > :is(h4, h5) { margin: 0; color: var(--text-bright); font-size: var(--text-body); font-weight: var(--weight-medium); overflow-wrap: anywhere; }
+.token-optimizer__override { margin: 0; min-width: 0; }
 .token-optimizer__status { display: grid; gap: 4px; margin: 0; padding-inline-start: 18px; color: var(--text); }
 .token-optimizer__action { display: grid; gap: 8px; margin: 0; min-width: 0; }
 .token-optimizer__action:has(> .token-optimizer__row, > .token-optimizer__stacked, > p) > .button { justify-self: end; }

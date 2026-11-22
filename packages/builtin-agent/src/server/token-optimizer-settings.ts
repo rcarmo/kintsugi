@@ -197,9 +197,12 @@ function hidden(workspaceId: string, agentId: string) {
 function actionForm(workspaceId: string, agentId: string, action: string, caption: string, body = "", variant: "primary" | "secondary" = "secondary") {
   return `<form method="post" action="/settings/token-optimizer/${action}" data-turbo="true" class="token-optimizer__action">${hidden(workspaceId, agentId)}${body}${buttonHtml({ type: "submit", variant, content: { kind: "caption", caption } })}</form>`;
 }
-function overrideForm(workspaceId: string, agentId: string, value: string, label: string, feature = "optimisation") {
-  const inherit = agentId ? "Same as workspace" : "Use main setting";
-  return `<form class="token-optimizer__override" method="post" action="/settings/token-optimizer/override" data-turbo="true" data-controller="settings-autosave" data-action="change->settings-autosave#save submit->settings-autosave#submit">${hidden(workspaceId, agentId)}<input type="hidden" name="feature" value="${h(feature)}">${select("mode", label, value, [["inherit", inherit], ["off", "Off"], ["observe", "Watch only"], ["active", "On"]])}</form>`;
+function overrideForms(workspaceId: string, agentId: string, optimisation: string, oversight: string) {
+  const inherit = agentId ? "Same as workspace" : "Use global default";
+  const scope = agentId ? "Agent" : "workspace";
+  const form = (feature: "optimisation" | "oversight", label: string, value: string) =>
+    `<form class="token-optimizer__override" method="post" action="/settings/token-optimizer/override" data-turbo="true" data-controller="settings-autosave" data-action="change->settings-autosave#save submit->settings-autosave#submit">${hidden(workspaceId, agentId)}<input type="hidden" name="feature" value="${feature}">${row(label, select("mode", `${label} for this ${scope}`, value, [["inherit", inherit], ["off", "Off"], ["observe", "Watch only"], ["active", "On"]]))}</form>`;
+  return form("optimisation", "Token optimisation", optimisation) + form("oversight", "Task oversight", oversight);
 }
 
 type Status = Awaited<ReturnType<Native["optimizer"]["status"]>>;
@@ -307,8 +310,7 @@ async function agentHtml(workspaceId: string, native: Native, host: HostSession,
   ].join("");
   const body = `<div class="form-stack">${view.focus === key ? feedback(view) : ""}<ul class="token-optimizer__status">${status}</ul>${notes}${actions ? buttonGroupHtml({ orientation: "horizontal", semantics: "layout", itemsHtml: actions }) : ""}
     <div class="token-optimizer__details">${factsHtml(workspaceId, agentId, data, mode)}${toolsHtml(workspaceId, agentId, data, mode, native.lastPick(host.conversationId))}${nudgesHtml(data, nudges)}</div>
-    ${row("Optimisation", overrideForm(workspaceId, agentId, config.agents[key] ?? "inherit", "Optimisation for this Agent"))}
-    ${row("Task oversight", overrideForm(workspaceId, agentId, (config.oversightAgents ?? (config.policy.oversightMode === undefined ? config.agents : {}))[key] ?? "inherit", "Task oversight for this Agent", "oversight"))}
+    ${overrideForms(workspaceId, agentId, config.agents[key] ?? "inherit", (config.oversightAgents ?? (config.policy.oversightMode === undefined ? config.agents : {}))[key] ?? "inherit")}
     ${await troubleshootingHtml(workspaceId, agentId, data)}</div>`;
   return disclosureHtml({ open: view.focus === key, summary: { kind: "multiline", label: { kind: "text", text: title }, description: summary }, bodyHtml: body });
 }
@@ -322,14 +324,14 @@ async function savedOverridesHtml(config: OptimizerConfig, running: Set<string>)
   const workspaces = new Set([...Object.keys(config.workspaces), ...Object.keys(oversightWorkspaces), ...[...agentKeys].map(key => parseOverrideKey(key)[0])].filter(id => !running.has(id)));
   for (const workspaceId of [...workspaces].sort()) {
     const name = await readWorkspaceTitle(workspaceId) || workspaceId;
-    const workspace = row(name, overrideForm(workspaceId, "", config.workspaces[workspaceId] ?? "inherit", `Optimisation for ${name}`) + overrideForm(workspaceId, "", oversightWorkspaces[workspaceId] ?? "inherit", `Task oversight for ${name}`, "oversight"));
+    const workspace = overrideForms(workspaceId, "", config.workspaces[workspaceId] ?? "inherit", oversightWorkspaces[workspaceId] ?? "inherit");
     const agents = [...agentKeys].filter(key => parseOverrideKey(key)[0] === workspaceId).map(key => {
       const agentId = parseOverrideKey(key)[1];
-      return row(`Agent ${agentId}`, overrideForm(workspaceId, agentId, config.agents[key] ?? "inherit", `Optimisation for Agent ${agentId}`) + overrideForm(workspaceId, agentId, oversightAgents[key] ?? "inherit", `Task oversight for Agent ${agentId}`, "oversight"));
+      return `<div class="token-optimizer__saved"><h5>Agent ${h(agentId)}</h5>${overrideForms(workspaceId, agentId, config.agents[key] ?? "inherit", oversightAgents[key] ?? "inherit")}</div>`;
     }).join("");
-    rows.push(`<div class="token-optimizer__saved">${workspace}${agents}</div>`);
+    rows.push(`<section class="token-optimizer__saved"><h4>${h(name)}</h4>${workspace}${agents}</section>`);
   }
-  return rows.length ? disclosure(`Saved settings for other workspaces (${rows.length})`, `<p class="settings-help">These workspaces aren’t running. Choose “Use main setting” to clear an override.</p>${rows.join("")}`) : "";
+  return rows.length ? disclosure(`Saved settings for other workspaces (${rows.length})`, `<p class="settings-help">These workspaces aren’t running, but you can still change or clear their overrides.</p>${rows.join("")}`) : "";
 }
 function parseOverrideKey(key: string) {const value: unknown = JSON.parse(key);Value.Assert(Type.Tuple([Type.String(), Type.String()]), value);return value;}
 
@@ -340,7 +342,8 @@ async function agentsHtml(config: OptimizerConfig, view: View) {
     running.add(workspaceId);
     const rows: string[] = [];
     for (const host of hosts) rows.push(await agentHtml(workspaceId, native, host, config, view));
-    groups.push(`<section class="token-optimizer__workspace"><div class="token-optimizer__workspace-head"><h4>${h(await native.workspaceTitle())}</h4>${overrideForm(workspaceId, "", config.workspaces[workspaceId] ?? "inherit", "Optimisation for this workspace")}${overrideForm(workspaceId,"",(config.oversightWorkspaces ?? (config.policy.oversightMode === undefined ? config.workspaces : {}))[workspaceId] ?? "inherit","Task oversight for this workspace","oversight")}</div>${rows.join("")}</section>`);
+    const oversight = (config.oversightWorkspaces ?? (config.policy.oversightMode === undefined ? config.workspaces : {}))[workspaceId] ?? "inherit";
+    groups.push(`<section class="token-optimizer__workspace"><h4>${h(await native.workspaceTitle())}</h4>${overrideForms(workspaceId, "", config.workspaces[workspaceId] ?? "inherit", oversight)}${rows.join("")}</section>`);
   }
   const refresh = actionLinkHtml({ href: "/settings/sections/token-optimizer", variant: "secondary", content: { kind: "caption", caption: "Refresh" }, attributesHtml: 'data-turbo-frame="app_settings_section_token-optimizer"' });
   return `<div class="token-optimizer__agents form-stack"><div class="token-optimizer__agents-head"><h3>Agents</h3>${refresh}</div>${groups.join("") || '<p class="settings-help">No built-in Agents are open. Your settings apply as soon as one starts.</p>'}${await savedOverridesHtml(config, running)}</div>`;
