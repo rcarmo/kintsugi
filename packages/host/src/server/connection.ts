@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { createConnection } from "node:net";
-import { createInterface } from "node:readline";
+import { readHostLines } from "../line-reader.ts";
 import { existsSync } from "node:fs";
 import { hostSocketPath, terminalSize, type HostReply, type HostCommand, type HostResults } from "../protocol.ts";
 import type { WorkspaceServerSocketHandler } from "@kintsugi/shared";
@@ -11,8 +11,12 @@ export function hostRequest<Command extends HostCommand>(request: Command, socke
   return new Promise((resolve, reject) => {
     options.signal?.throwIfAborted();
     const socket = createConnection(socketPath);
-    const lines = createInterface({ input: socket });
     let settled = false;
+    const lines = readHostLines(socket, error => {
+      settled = true;
+      reject(error);
+      socket.destroy();
+    });
     const abort = () => {
       settled = true;
       reject(new Error("Host request aborted", { cause: options.signal?.reason }));
@@ -21,8 +25,7 @@ export function hostRequest<Command extends HostCommand>(request: Command, socke
     options.signal?.addEventListener("abort", abort, { once: true });
     socket.setTimeout(request.operation === "disk" && request.action !== "inspect" ? 90_000 : 15_000, () => socket.destroy(new Error("Host request timed out")));
     socket.on("connect", () => socket.write(`${JSON.stringify(request)}\n`));
-    socket.on("error", reject);
-    socket.on("close", () => { options.signal?.removeEventListener("abort", abort); lines.close(); if (!settled) reject(new Error("Host disconnected before responding")); });
+    socket.on("close", () => { options.signal?.removeEventListener("abort", abort); if (!settled) reject(new Error("Host disconnected before responding")); });
     lines.once("line", line => {
       settled = true;
       try {
@@ -55,13 +58,17 @@ export const hostTerminalSocket: WorkspaceServerSocketHandler = (url) => {
     open(client) {
       clientOpen = true;
       upstream = createConnection(hostSocketPath);
-      const lines = createInterface({ input: upstream });
       const close = (code?: number, reason?: string) => {
         if (!clientOpen) return;
         clientOpen = false;
         client.close(code, reason);
         upstream?.destroy();
       };
+      const lines = readHostLines(upstream, error => {
+        if (!clientOpen) return;
+        console.error("Host terminal connection failed", error);
+        close(1011, "Host terminal connection failed");
+      });
       // Queue the handshake before the browser can send its initial resize.
       upstream.write(`${JSON.stringify({ operation: "attach", id: match[1], cols: terminalSize(url.searchParams.get("cols"), 80), rows: terminalSize(url.searchParams.get("rows"), 24) })}\n`);
       lines.on("line", line => {
@@ -80,8 +87,7 @@ export const hostTerminalSocket: WorkspaceServerSocketHandler = (url) => {
         if (reply.type === "error") { client.send(`\r\n${reply.message}\r\n`); close(); }
         if (reply.type === "exit") close();
       });
-      upstream.on("error", error => { if (!clientOpen) return; console.error("Host terminal connection failed", error); close(1011, "Host terminal connection failed"); });
-      upstream.on("close", () => { lines.close(); close(); });
+      upstream.on("close", () => close());
     },
     message(_client, message) { upstream!.write(`${JSON.stringify(message instanceof Uint8Array ? new TextDecoder().decode(message) : message)}\n`); },
     close() { clientOpen = false; upstream?.destroy(); },

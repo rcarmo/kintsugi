@@ -51,7 +51,7 @@ test("an aborted diagnostic closes its host socket even when System never replie
   await new Promise<void>(resolve => server.listen(path, resolve));
   try {
     const abort = new AbortController();
-    const request = hostRequest({ operation: "resources", action: "inspect", workspaceId: "w" }, path, { signal: abort.signal });
+    const request = hostRequest({ operation: "meters", workspaceIds: ["w"] }, path, { signal: abort.signal });
     request.catch(() => {});
     await received.promise;
     abort.abort();
@@ -59,6 +59,33 @@ test("an aborted diagnostic closes its host socket even when System never replie
     await closed.promise;
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await rm(dir, { recursive: true, force: true }); }
 });
+test("a timed-out Host request closes its socket and a later request can complete", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "host-timeout-")), path = join(dir, "control.sock");
+  const closed = Promise.withResolvers<void>();
+  let connections = 0;
+  const server = createServer(socket => {
+    if (++connections === 1) {
+      socket.resume();
+      socket.once("close", closed.resolve);
+    } else {
+      socket.once("data", () => socket.end('{"type":"result","value":[]}\n'));
+    }
+  });
+  await new Promise<void>(resolve => server.listen(path, resolve));
+  try {
+    await expect(hostRequest({ operation: "list" }, path)).rejects.toThrow("Host request timed out");
+    await closed.promise;
+    expect(await hostRequest({ operation: "list" }, path)).toEqual([]);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); await rm(dir, { recursive: true, force: true }); }
+}, 22_000);
+
+test("an unavailable Host socket rejects the request without terminating the caller", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "host-unavailable-"));
+  try {
+    await expect(hostRequest({ operation: "list" }, join(dir, "missing.sock"))).rejects.toThrow("ENOENT");
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 test("already-aborted host inspection never opens a connection", async () => {
   const abort = new AbortController(); abort.abort(new Error("cancelled before connect"));
   await expect(hostRequest({ operation: "list" }, "/unreachable/control.sock", { signal: abort.signal })).rejects.toThrow("cancelled before connect");

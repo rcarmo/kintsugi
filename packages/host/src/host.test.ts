@@ -1,8 +1,8 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createConnection } from "node:net";
+import { createConnection, Socket } from "node:net";
 import { createInterface } from "node:readline";
 import { command } from "./system/command.ts";
 import { HostService, startHostService } from "./system/service.ts";
@@ -44,6 +44,28 @@ test("control boundary rejects unknown operations, session injection and invalid
   expect(() => parseHostRequest(JSON.stringify({ operation: "attach", id: `host-${crypto.randomUUID()}`, cols: 100000 }))).toThrow();
   expect(() => parseHostInput('{"input":"ls"}')).toThrow();
   expect(() => parseHostRequest(JSON.stringify({ operation: "rename", id: `host-${crypto.randomUUID()}`, title: "Removed operation" }))).toThrow();
+});
+
+test.skipIf(!Bun.which("tmux"))("a failed private Host connection does not stop the service or the next request", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "kintsugi-host-errors-"));
+  const socketPath = join(directory, "host.sock"), tmuxSocketName = `host-errors-${crypto.randomUUID()}`;
+  let server: Awaited<ReturnType<typeof startHostService>> | undefined;
+  const log = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    server = await startHostService({ socketPath, tmuxSocketName, root: "/unused", effectiveMemory: 0 });
+    const synthetic = new Socket();
+    server.emit("connection", synthetic);
+    const failure = new Error("fixture input failure");
+    synthetic.emit("error", failure);
+    expect(synthetic.destroyed).toBe(true);
+    expect(log.mock.calls).toEqual([["Host connection failed", failure]]);
+    expect(await hostRequest({ operation: "list" }, socketPath)).toEqual([]);
+  } finally {
+    log.mockRestore();
+    const listening = server;
+    if (listening) await new Promise<void>(resolve => listening.close(() => resolve()));
+    await command(["tmux", "-L", tmuxSocketName, "kill-server"]).finally(() => rm(directory, { recursive: true, force: true }));
+  }
 });
 
 describe.skip("System terminal lifecycle over private socket", () => {

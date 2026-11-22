@@ -1,5 +1,5 @@
 import { createServer } from "node:net";
-import { createInterface } from "node:readline";
+import { readHostLines } from "../line-reader.ts";
 import { chmod, mkdir, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 // System ships a standalone bundle, without the app's terminal CSS/node_modules.
@@ -105,9 +105,12 @@ export async function startHostService(options: { diskControl?: HostService["dis
     let initialized = false;
     let closed = false;
     const send = (reply: HostReply) => { if (!closed) socket.write(`${JSON.stringify(reply)}\n`); };
-    const lines = createInterface({ input: socket, crlfDelay: Infinity });
-    socket.on("close", () => { closed = true; terminal?.close(); lines.close(); });
-    socket.on("error", error => { console.error("Host connection failed", error); socket.destroy(); });
+    const lines = readHostLines(socket, error => {
+      closed = true;
+      console.error("Host connection failed", error);
+      socket.destroy();
+    });
+    socket.on("close", () => { closed = true; terminal?.close(); });
     let pending = Promise.resolve();
     lines.on("line", line => {
       pending = pending.then(async () => {
