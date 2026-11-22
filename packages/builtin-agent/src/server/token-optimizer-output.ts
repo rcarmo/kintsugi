@@ -1,3 +1,4 @@
+import { ownedSlice } from "@earendil-works/chord/delta";
 import { createHash } from "node:crypto";
 import { defineExtension, defineTool, hook, ToolTask, type HookApi, type ToolExecutionResult, type ConversationId } from "@earendil-works/pi-durable";
 import type { Context } from "@earendil-works/chord/context";
@@ -6,6 +7,7 @@ import { Value } from "typebox/value";
 import { isJsonObject } from "@kintsugi/core";
 import { observing, offloadPresentation, outputLineCount, outputOffload, reduceToolOutput, type Policy } from "@kintsugi/token-economizer/core";
 import { codemodeCallEntry } from "./codemode-call.ts";
+import { optimizerEvidenceBytes, recentOptimizerEntries } from "./token-optimizer-source.ts";
 import { stripTerminalEscapes, type SavedOutputRead } from "./history-search.ts";
 import type { ToolOutputScope, ToolOutputStore } from "./tool-output-store.ts";
 const resultSchema = Type.Object({output:Type.String(),exitCode:Type.Union([Type.Integer(),Type.Null()]),aborted:Type.Optional(Type.Boolean()),timedOut:Type.Optional(Type.Boolean()),truncated:Type.Optional(Type.Boolean())});
@@ -125,13 +127,25 @@ export function createToolOutputTools(store:ToolOutputStore,scopeOf:(id:Conversa
   ];
 }
 async function nestedOutputs(api:HookApi,context:Context) {
-  // Bounded to this script's recent ledger; no guessing a command from model-emitted prose.
-  const entries = [...(await api.entries({order:"descending"},256,undefined,context)).items].reverse();
-  const starts = new Map<string,string>(), candidates:Parameters<typeof reduceToolOutput>[0][] = [];
-  for (const entry of entries) if (entry.byTaskId === api.taskId && codemodeCallEntry.is(entry)) {
+  // The result is reduced only if its exact source still fits in the recent ledger.
+  const starts = new Map<string,string>();
+  const candidates:{value:Parameters<typeof reduceToolOutput>[0];bytes:number}[] = [];
+  let retained = 0;
+  for await (const entry of recentOptimizerEntries(api,256,context)) if (entry.byTaskId === api.taskId && codemodeCallEntry.is(entry)) {
     const data = entry.data;
-    if (data.phase === "start" && data.name === "bash" && Value.Check(commandSchema,data.arguments)) starts.set(data.key,data.arguments.command);
-    if (data.phase === "end" && data.output && !data.cancelled && starts.has(data.key) && Value.Check(detailsSchema,data.details)) candidates.push({command:starts.get(data.key)!,output:data.output,...data.details});
+    if (data.key.length > 256) continue;
+    if (data.phase === "start" && data.name === "bash" && Value.Check(commandSchema,data.arguments) && data.arguments.command.length <= 2048) {
+      if (!starts.has(data.key) && starts.size === 64) starts.delete(starts.keys().next().value!);
+      starts.set(ownedSlice(data.key,0),ownedSlice(data.arguments.command,0));
+    }
+    if (data.phase !== "end") continue;
+    const command = starts.get(data.key);starts.delete(data.key);
+    if (!command || !data.output || data.cancelled || !Value.Check(detailsSchema,data.details) || data.details.fullOutputPath.length > 2048) continue;
+    const {exitCode,aborted,timedOut,fullOutputPath} = data.details;
+    const value = {command,output:ownedSlice(data.output,0),exitCode,aborted,timedOut,fullOutputPath:ownedSlice(fullOutputPath,0)};
+    const bytes = Buffer.byteLength(command)+Buffer.byteLength(value.output)+Buffer.byteLength(fullOutputPath);
+    candidates.push({value,bytes});retained += bytes;
+    while (candidates.length > 16 || retained > optimizerEvidenceBytes) retained -= candidates.shift()!.bytes;
   }
-  return candidates;
+  return candidates.map(item=>item.value);
 }

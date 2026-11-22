@@ -1,9 +1,10 @@
+import { optimizerEntryBytes, optimizerHistoryRead, optimizerOversizedEntry } from "../../src/server/optimizer-history-budget.ts";
 import {createLifecycle, fingerprint} from "@kintsugi/token-economizer/core";
 import type {Knowledge} from "@kintsugi/token-economizer/pi-durable";
 import { projectDurableTranscript } from "../../src/server/durable-transcript.ts";
 import { applyTranscriptContributions } from "@kintsugi/agent/server/transcript-contributions";
 import { tokenOptimizerSettingsContribution } from "../../src/server/token-optimizer-settings.ts";
-import { carriedSnapshotIds, lastAssistantEntry, latestOptimizerEntry, optimizerEntries as streamOptimizerEntries, optimizerSections, optimizerMessageSections } from "../../src/server/token-optimizer-source.ts";
+import { carriedSnapshotIds, lastAssistantEntry, latestOptimizerEntry, optimizerEntries as streamOptimizerEntries, optimizerHistoryWindow, optimizerEvidenceBytes, nativeOptimizerTrajectory, optimizerSections, optimizerMessageSections } from "../../src/server/token-optimizer-source.ts";
 import { openDurableWorkspace, WorkspaceAgents, type DurableAgentRecord } from "../../src/server/durable-workspace.ts";
 import { openDurableAgentRuntime } from "../../src/server/durable-runtime.ts";
 import { renderAgentPaneComposerFooter } from "../../src/server/render-composer.ts";
@@ -648,6 +649,91 @@ test("optimizer recovery lookups stop at the newest match without prefetching ol
   expect((await lastAssistantEntry(reader))?.id).toBe(expected);
   expect(await carriedSnapshotIds(reader,"carried")).toEqual(["new"]);
   expect(limits).toEqual([32,32,32,32]);
+});
+
+test.each(["memory","sqlite"] as const)("%s: a lagging optimiser reads the recent journal window, not the backlog",async(kind)=>{
+  const f=await setup(kind);
+  async function run(command:string) {
+    f.faux.setResponses([fauxAssistantMessage([fauxToolCall("bash",{command})],{stopReason:"toolUse"}),fauxAssistantMessage("Done")]);
+    await(await f.conversation.submit({type:"input",content:`Check ${command}`},context)).wait(context);
+  }
+  await run("old-evidence");
+  const oldCutoff=await latestOptimizerEntry(f.conversation);
+  await f.harness.commit(async tx=>{
+    for (let i=0;i<optimizerHistoryWindow+1;i++) await tx.appendEntry(OptimizerNotice,f.conversation.id,{data:{id:`backlog-${i}`,text:"Fixture history",at:0,code:"still-stuck"}});
+  },context);
+  await run("recent-evidence");
+  const recent=await f.native.domain.trajectory(f.host,null);
+  expect(recent).toMatchObject({kind:"ready",cutoff:String(await latestOptimizerEntry(f.conversation)),partial:true,prompts:1});
+  expect(recent.kind==="ready"&&recent.observations.map(call=>call.command)).toEqual(["recent-evidence"]);
+  // A saved cutoff remains a snapshot boundary; it can neither see future entries nor be moved by them.
+  const pinned=await f.native.domain.trajectory(f.host,String(oldCutoff));
+  expect(pinned.kind==="ready"&&pinned.observations.map(call=>call.command)).toEqual(["old-evidence"]);
+  expect((await optimizerEntries(f.conversation,{after:0,upTo:oldCutoff!})).some(entry=>entry.model && JSON.stringify(entry.model).includes("old-evidence"))).toBe(true);
+});
+
+test("SQLite skips oversized UTF-8 records and media hydration only for optimiser reads",async()=>{
+  const f=await setup("sqlite"), text="é".repeat(optimizerEntryBytes*3/4), data=Buffer.alloc(optimizerEntryBytes*3,65).toString("base64");
+  const [large,image]=await f.harness.commit(async tx=>[
+    await tx.appendEntry(UserEntry,f.conversation.id,{model:[{role:"user",content:text,timestamp:1}]}),
+    await tx.appendEntry(UserEntry,f.conversation.id,{model:[{role:"user",content:[{type:"image",mimeType:"image/png",data}],timestamp:2}]}),
+  ],context);
+  f.faux.setResponses([fauxAssistantMessage([fauxToolCall("bash",{command:"recent"})],{stopReason:"toolUse"}),fauxAssistantMessage("Done")]);
+  await(await f.conversation.submit({type:"input",content:"Keep learning"},context)).wait(context);
+  const query={order:"ascending" as const,minEntryId:large.id,maxEntryId:image.id};
+  const [limited,ordinary]=await Promise.all([
+    optimizerHistoryRead.run("analysis",()=>f.conversation.entries(query,4,undefined,context)),f.conversation.entries(query,4,undefined,context),
+  ]);
+  expect(limited.items[0]).toEqual({id:large.id,conversationId:f.conversation.id,kind:optimizerOversizedEntry});
+  expect(JSON.stringify(limited.items[1]).length).toBeLessThan(1000);
+  expect(ordinary.items[0]).toMatchObject({id:large.id,model:[{content:text}]});
+  expect(ordinary.items[1]).toMatchObject({id:image.id,model:[{content:[{data}]}]});
+  const result=await f.native.domain.trajectory(f.host,null);
+  expect(result).toMatchObject({kind:"ready",partial:true,observations:[{command:"recent"}]});
+  const messages=(await f.conversation.context(context)).messages;
+  expect(messages).toContainEqual({role:"user",content:text,timestamp:1});
+  expect(messages).toContainEqual({role:"user",content:[{type:"image",mimeType:"image/png",data}],timestamp:2});
+});
+
+test.each([false,true])("root and child share one recent evidence budget (multibyte: %p)",async(multibyte)=>{
+  const f=await setup("sqlite");
+  const child=await f.harness.commit(tx=>tx.createConversation({ownership:{kind:"ownerless"}}),context);
+  let pinned:number|undefined;
+  await f.harness.commit(async tx=>{
+    for (let i=0;i<144;i++) {
+      const id=i%2===0 ? f.conversation.id : child.id;
+      const key=`call-${i}`;
+      await tx.appendEntry(codemodeCallEntry,id,{data:{phase:"start",name:"bash",callId:key,key,arguments:{command:key},issuedAt:i}});
+      const end=await tx.appendEntry(codemodeCallEntry,id,{data:{phase:"end",callId:key,key,isError:false,cancelled:false,output:multibyte ? "漢".repeat(2000) : "ok"}});
+      if(i===139)pinned=end.id;
+    }
+  },context);
+  const result=await nativeOptimizerTrajectory(f.harness,f.host,0,null,String(pinned),async()=>[child.id]);
+  if(result.kind!=="ready")throw new Error(result.reason);
+  expect(result.partial).toBe(true);
+  expect(result.cutoff).toBe(String(pinned));
+  expect(result.observations.length).toBeLessThanOrEqual(128);
+  expect(Buffer.byteLength(JSON.stringify(result.observations))).toBeLessThanOrEqual(optimizerEvidenceBytes);
+  expect(result.observations.map(item=>item.command).slice(-3)).toEqual(["call-137","call-138","call-139"]);
+  expect(result.observations[0]?.command).not.toEqual("call-0");
+  if(!multibyte)expect(result.observations).toHaveLength(128);
+});
+
+test("a pinned fold caps eligible descendants without counting newer branches",async()=>{
+  const f=await setup("sqlite");
+  const children:ConversationId[]=[];let cutoff=0;
+  await f.harness.commit(async tx=>{
+    for (let i=0;i<36;i++) {
+      const {id}=await tx.createConversation({ownership:{kind:"ownerless"}});children.push(id);
+      await tx.appendEntry(codemodeCallEntry,id,{data:{phase:"start",name:"bash",callId:"wrapper",key:"one",arguments:{command:`child-${i}`},issuedAt:i}});
+      const end=await tx.appendEntry(codemodeCallEntry,id,{data:{phase:"end",callId:"wrapper",key:"one",isError:false,cancelled:false,output:"ok"}});
+      if(i===32)cutoff=end.id;
+    }
+  },context);
+  const result=await nativeOptimizerTrajectory(f.harness,f.host,0,null,String(cutoff),async()=>children);
+  if(result.kind!=="ready")throw new Error(result.reason);
+  expect(result.partial).toBe(true);
+  expect(result.observations.map(item=>item.command)).toEqual(Array.from({length:32},(_,i)=>`child-${i+1}`));
 });
 
 test.each([false,true])("checkpoint pairing and bounds survive SDK pages (nested: %p)",async(nested)=>{

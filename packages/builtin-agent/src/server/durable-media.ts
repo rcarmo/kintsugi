@@ -1,4 +1,5 @@
 import { storedAttachmentSchema } from "./durable-upload-store.ts";
+import { optimizerEntryBytes, optimizerHistoryRead, optimizerOversizedEntry } from "./optimizer-history-budget.ts";
 import { createHash } from "node:crypto";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
@@ -107,8 +108,23 @@ function mediaExecutor(executor: SqliteExecutor): SqliteExecutor {
     exec: executor.exec.bind(executor),
     run: async (sql, ...params) => executor.run(sql, ...await encodeParams(executor, sql, params)),
     runCounted: async (sql, ...params) => executor.runCounted(sql, ...await encodeParams(executor, sql, params)),
-    async get<T extends object>(sql: string, ...params: SqliteValue[]) {const row = await executor.get<T>(sql, ...params);return row ? decodeRow(executor, row) : undefined;},
-    async all<T extends object>(sql: string, ...params: SqliteValue[]) {const rows = await executor.all<T>(sql, ...params);const decoded: T[] = [];for (const row of rows) decoded.push(await decodeRow(executor, row));return decoded;},
+    async get<T extends object>(sql: string, ...params: SqliteValue[]) {
+      if (optimizerHistoryRead.getStore() === "analysis" && sql === "SELECT record FROM timeline_tasks WHERE id = ?") {
+        return executor.get<T>(`SELECT CASE WHEN octet_length(record) <= ${optimizerEntryBytes} THEN record ELSE json_object('kind','${optimizerOversizedEntry}') END AS record FROM timeline_tasks WHERE id = ?`, ...params);
+      }
+      const row = await executor.get<T>(sql, ...params);return row ? decodeRow(executor, row) : undefined;
+    },
+    async all<T extends object>(sql: string, ...params: SqliteValue[]) {
+      const mode = optimizerHistoryRead.getStore();
+      if (mode && /^SELECT record FROM timeline_entries WHERE .+ ORDER BY id (?:ASC|DESC) LIMIT \?$/.test(sql)) {
+        // octet_length on the column uses SQLite's record metadata without reading the
+        // payload. Keep cursor IDs and don't hydrate image bytes for text-only analysis.
+        const omitted = `json_object('id',id,'conversationId',conversation_id,'kind','${optimizerOversizedEntry}')`;
+        const projection = mode === "id" ? omitted : `CASE WHEN octet_length(record) <= ${optimizerEntryBytes} THEN record ELSE ${omitted} END`;
+        return executor.all<T>(sql.replace("SELECT record ", `SELECT ${projection} AS record `), ...params);
+      }
+      const rows = await executor.all<T>(sql, ...params);const decoded: T[] = [];for (const row of rows) decoded.push(await decodeRow(executor, row));return decoded;
+    },
   };
 }
 /**

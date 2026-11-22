@@ -17,7 +17,7 @@ import { errorMessage, escapeHtml } from "@kintsugi/shared";
 import type { BuiltinAgentIntegration } from "./integrations.ts";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { carriedSnapshotIds, lastAssistantEntry, latestOptimizerEntry, nativeOptimizerTool, nativeOptimizerTrajectory, optimizerSections, optimizerMessageSections, optimizerWatermark } from "./token-optimizer-source.ts";
+import { carriedSnapshotIds, lastAssistantEntry, latestOptimizerEntry, nativeOptimizerTool, nativeOptimizerTrajectory, optimizerSections, optimizerWatermark } from "./token-optimizer-source.ts";
 import { tokenOptimizerConfiguration, type TokenOptimizerConfiguration } from "./token-optimizer-config.ts";
 import { WorkspaceAdmission, durableStopEntry } from "./durable-lifecycle.ts";
 import { WorkspaceAgents } from "./durable-workspace.ts";
@@ -184,9 +184,14 @@ export function createNativeTokenOptimizer(options:{workspaceId:string;harness:(
       return nativeOptimizerTrajectory(options.harness(),host,record.begin,record.end,cutoff,tx=>learningChildren(tx,host),after);
     },
   };
-  async function learningChildren(tx:Tx,host:HostSession):Promise<ConversationId[]> {
+  async function learningChildren(tx:Tx,host:HostSession):Promise<Iterable<ConversationId>> {
     const rootAgent=actor(host), {agents}=await tx.doc(WorkspaceAgents);
-    return [...new Set(agents.filter(row=>row.parentId && row.rootId===rootAgent).flatMap(row=>[row.durableId,...row.branches ?? []]))].filter(id=>id!==host.conversationId);
+    return (function* () {
+      for (const row of agents) if (row.parentId && row.rootId===rootAgent) {
+        yield row.durableId;
+        if (row.branches) yield* row.branches;
+      }
+    })();
   }
   const transport = createSdkModelTransport(options.models);
   async function planFor(host:HostSession) {
