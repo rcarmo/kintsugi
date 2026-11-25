@@ -101,7 +101,7 @@ async function redirect(harness: Harness, conversation: Conversation, inputs: re
     const evidence = await tx.doc(Evidence, conversation.id);
     if (!live.run?.inputs.length || live.run.afterRun || inputs.some(input => !live.run!.inputs.includes(input)) || evidence.redirects.includes(id)) return false;
     // SDK requires submission before this transaction's first table write.
-    await conversation.submit(tx, { type: "input", content: "Reassess the repeated failure.", whenBusy: "steer", whenIdle: "reject", requestId: `redirect-${id}` });
+    await conversation.admit(tx, { type: "input", content: "Reassess the repeated failure.", whenBusy: "steer", whenIdle: "reject", requestId: `redirect-${id}` });
     evidence.redirects.push(id);
     return true;
   }, context);

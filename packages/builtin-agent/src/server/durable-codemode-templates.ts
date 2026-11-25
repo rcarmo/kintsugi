@@ -104,12 +104,12 @@ async function templateEndsRun(api: Pick<ToolExecutionApi, "callId" | "conversat
  */
 export function createCodemodeTemplates(templates: () => Promise<readonly PromptTemplate[]>, harness: () => Harness) {
   const responses = new WeakMap<Message, AssistantMessage>();
-  const extension = defineExtension({ name: "kintsugi.codemode-templates", wraps: [{ tool: CODEMODE_TOOL_NAME, wrap: (tool: ToolRegistration): ToolRegistration => ({
+  const extension = defineExtension({ name: "kintsugi.codemode-templates", wraps: [{ kind: "tool", tool: CODEMODE_TOOL_NAME, wrap: (tool: ToolRegistration): ToolRegistration => ({
     ...tool,
     async execute(args, api, context) {
       const result = await tool.execute(args, api, context);
       // A parked call will execute again; only a settled result can end the template run.
-      if (result.sleep !== undefined || result.wait !== undefined) return result;
+      if (result.kind !== undefined) return result;
       const endsRun = await templateEndsRun(api, harness(), context);
       return endsRun ? { ...result, control: { ...result.control, terminate: true } } : result;
     },

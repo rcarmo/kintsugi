@@ -146,7 +146,8 @@ export async function importDurableJsonlInline(directory: string, destination: s
       const result = await storage!.commit(replay.map(row => row.writes), (index, seq) => {
         if (Number(seq) !== replay[index]!.seq) throw new Error("Imported sequence changed");
       }, BACKGROUND_CONTEXT);
-      if (result.stored !== replay.length) throw new Error("Imported batch refused", {cause: result.refused});
+      if (result.kind === "refused") throw new Error("Imported batch refused", {cause: result.refused});
+      if (result.stored !== replay.length) throw new Error("Imported batch count changed");
       await db.transaction(async tx => {
         for (const batch of replay) for (const write of batch.writes) {
           if (write.type === "conversation" || write.type === "entry" || write.type === "submission" || write.type === "task") {

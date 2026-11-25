@@ -166,7 +166,7 @@ export function createTokenEconomizer(options:TokenEconomizerOptions) {
         if (!previous || previous.status === "proposed") {
           // Admission must precede this transaction's first table write. All earlier mutations are document drafts.
           if (emitting(oversightPolicy(policyFor(key))) && decision.action === "redirect" && run.inputs.every(input => live.run!.inputs.includes(input))) {
-            entry.submissionId = await handle.submit(tx,{type:"input",content:decisionText(folded.state),whenBusy:"steer",whenIdle:"reject",requestId:`token-economizer-${fingerprint(decision.id)}`,entry:{kind:SteeringEntry.kind,data:{decisionId:decision.id,runId:observation.runId}}});entry.status = "queued";
+            entry.submissionId = await handle.admit(tx,{type:"input",content:decisionText(folded.state),whenBusy:"steer",whenIdle:"reject",requestId:`token-economizer-${fingerprint(decision.id)}`,entry:{kind:SteeringEntry.kind,data:{decisionId:decision.id,runId:observation.runId}}});entry.status = "queued";
           } else if (emitting(oversightPolicy(policyFor(key))) && decision.action === "notice") {
             delivery.notice = {id:decision.id,code:"still-stuck",text:stillStuck,sessionId:host.id,runId:observation.runId};entry.status = "queued";
           } else entry.status = "simulated";

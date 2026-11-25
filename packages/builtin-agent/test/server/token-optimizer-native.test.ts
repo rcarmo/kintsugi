@@ -525,12 +525,12 @@ test("optimizer display receipts redact and bound nested values without changing
   expect(receipt.model).toBeUndefined();expect(receipt.data.output).toMatchObject({cost:null,usage:null});
 });
 
-test("Pi Durable 1.6: a signal-only parked tool does not split a learning checkpoint",async()=>{
+test("a signal-only parked tool does not split a learning checkpoint",async()=>{
   const ready=defineSignal({name:"fixture.optimizer-wake",version:1,schema:Type.Object({ok:Type.Boolean()})});
   const extension=defineExtension({name:"checkpoint-park-fixture",tools:[defineTool({name:"park_fixture",description:"Wait for fixture signal",parameters:Type.Object({}),replay:"safe",async execute(_args,api,context){
     const received=await api.readSignal(ready,"ready",context);
-    if(received && "value" in received)return {output:[{type:"text",text:"Unparked"}]};
-    return {sleep:{signals:[ready.key("ready")]}};
+    if(received?.kind==="value")return {output:[{type:"text",text:"Unparked"}]};
+    return {kind:"sleep",signals:[ready.key("ready")]};
   }})]});
   const f=await setup("memory",undefined,false,false,extension);
   const config=f.configuration.snapshot();Object.assign(config.policy,{enabled:true,mode:"active",microSkills:"envfacts",loop:"off"});await f.configuration.configure(config);
