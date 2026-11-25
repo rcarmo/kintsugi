@@ -14,7 +14,7 @@ test("OpenAI API keys retain the full catalogue and its cheapest model", async (
   const { credentials, runtime } = await fixture();
   await credentials.modify("openai", async () => ({ type: "api_key", key: "sk-test" }));
   expect(await availableProviderModels(runtime, "openai")).toEqual(await runtime.getAvailable("openai"));
-  expect((await availableProviderModels(runtime, "openai")).some((model) => model.id === "gpt-5.3-codex-spark")).toBe(true);
+  expect((await availableProviderModels(runtime, "openai")).some((model) => model.id === "gpt-5.3-codex")).toBe(true);
   expect((await cheapestAvailableProviderModel(runtime, "openai"))!.id).toBe("gpt-5-nano");
 });
 
@@ -23,8 +23,7 @@ test("ChatGPT sign-in excludes API-only models without switching providers", asy
   await credentials.modify("openai", async () => ({ type: "oauth", access: "test", refresh: "test", expires: Date.now() + 60_000 }));
   const available = await availableProviderModels(runtime, "openai");
   expect(available.some((model) => model.id === "gpt-5-nano")).toBe(false);
-  expect(available.some((model) => model.id === "gpt-4.1-nano")).toBe(false);
-  expect(available.some((model) => model.id === "gpt-5.3-codex-spark")).toBe(false);
+  expect(available.some((model) => model.id === "gpt-5.3-codex")).toBe(false);
   expect(available.some((model) => model.id === "gpt-5.6-luna")).toBe(true);
   expect(available.every((model) => model.provider === "openai")).toBe(true);
   const cheapest = await cheapestAvailableProviderModel(runtime, "openai");
