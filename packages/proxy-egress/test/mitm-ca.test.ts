@@ -54,6 +54,14 @@ describe("MITM leaf certificates", () => {
     expect(openssl(["x509", "-fingerprint", "-sha256", "-noout", "-in", renewed.certPath])).not.toBe(nearExpiryFingerprint);
   });
 
+  test("verifies an exact DNS name longer than the certificate common-name limit", async () => {
+    const ca = await ensureMitmCa({ kintsugiDataDir: dataDir, dockerHostKintsugiDataDir: dataDir, dockerBridgeHost: "127.0.0.1" });
+    const hostname = `${"a".repeat(49)}.example.invalid`;
+    const leaf = await ensureLeafCertificate(ca, hostname);
+    expect(openssl(["x509", "-noout", "-checkhost", hostname, "-in", leaf.certPath])).toBe(`Hostname ${hostname} does match certificate`);
+    expect(openssl(["x509", "-noout", "-ext", "subjectAltName", "-in", leaf.certPath])).toContain(`DNS:${hostname}`);
+  });
+
   test.skipIf(process.platform !== "linux")("create a leaf when the CA directory is on a different filesystem from the system temporary directory", async () => {
     const crossDeviceDataDir = await mkdtemp("/dev/shm/kintsugi-mitm-ca-test-");
     try {

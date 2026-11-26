@@ -46,6 +46,26 @@ export function getProviderApiKeyExample(provider: string): string | undefined {
   return hardcodedProviderKnowledge[provider]?.apiKeyExample;
 }
 
+const googleProbeModels = ["gemini-flash-latest", "gemini-4-neon", "gemini-3.5-flash", "gemini-2.5-flash"];
+const credentialProbePreferences = new Map<string, readonly string[]>([
+  ["google", googleProbeModels],
+  ["google-vertex", googleProbeModels],
+  ["openai", ["gpt-5-nano", "gpt-5.4-nano"]],
+  ["anthropic", ["claude-haiku-4-5", "claude-haiku-4-5-20251001"]],
+]);
+
+/** Prefer a known chat model; otherwise use the cheapest eligible model in stable order. */
+export function credentialProbeModel<T extends { id: string; cost: { input: number } }>(provider: string, models: readonly T[]): T | undefined {
+  const google = provider === "google" || provider === "google-vertex";
+  // Deep Research uses Google's Interactions API, not the one-message chat probe.
+  const chatModels = google ? models.filter(({ id }) => !id.startsWith("deep-research-")) : models;
+  for (const id of credentialProbePreferences.get(provider) ?? []) {
+    const model = chatModels.find(model => model.id === id);
+    if (model) return model;
+  }
+  return chatModels.toSorted((a, b) => a.cost.input - b.cost.input || a.id.localeCompare(b.id))[0];
+}
+
 /** Drops the brand prefix from catalogue names ("Claude Opus 5.5" → "Opus 5.5"); the provider icon already shows it. */
 export function modelDisplayName(name: string): string {
   return name.replace(/^Claude (?=[A-Z][a-z])/, "");

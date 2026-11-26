@@ -177,7 +177,7 @@ function toolPresentation(tool: ToolView): ToolPresentation {
 }
 
 function tailFrameAttributes(ctx: AgentRenderContext, key: string): string {
-  return `id="${ids.detailFrame(ctx, key)}" data-controller="agent-tail-frame" data-action="turbo:frame-load->agent-tail-frame#loaded"`;
+  return `id="${ids.detailFrame(ctx, key)}" data-controller="agent-tail-frame" data-action="live:before-island-remove->agent-tail-frame#preserveLiveIsland turbo:before-morph-element->agent-tail-frame#keepUntilLoaded turbo:frame-load->agent-tail-frame#loaded turbo:frame-missing->agent-tail-frame#loadFailed turbo:fetch-request-error->agent-tail-frame#loadFailed"`;
 }
 
 function lazyTranscriptItemFrame(ctx: AgentRenderContext, key: string): string {

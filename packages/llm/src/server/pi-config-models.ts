@@ -7,7 +7,7 @@ import { syncSubscriptionClis } from "./subscription-cli.ts";
 import { SubscriptionUsageError } from "./subscription-usage.ts";
 import { anthropicUsageSource } from "./anthropic-subscription-usage.ts";
 import { forgetSubscriptionInference } from "./recent-subscription-activity.ts";
-import { defaultProviderModels, modelDisplayName } from "./hardcoded-provider-knowledge.ts";
+import { credentialProbeModel, defaultProviderModels, modelDisplayName } from "./hardcoded-provider-knowledge.ts";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { arch, platform, release } from "node:os";
 import { dirname, join } from "node:path";
@@ -318,11 +318,10 @@ export async function validateModelProviderApiKey(provider: string, key: string,
   await credentials.modify(provider, async () => ({ type: "api_key", key: trimmed }));
   const runtime = identifyAsKintsugi(await ModelRuntime.create({ credentials, modelsPath: customModel ? null : piModelsJsonPath(), allowModelNetwork: false }));
   if (customModel) runtime.registerProvider(provider, { api: customModel.api, baseUrl: customModel.baseUrl, models: [customModel] });
-  const models = runtime.getModels(provider);
-  const model = models[Math.floor(Math.random() * models.length)];
+  const model = customModel ?? credentialProbeModel(provider, runtime.getModels(provider));
   if (!model) {
     const classifier = runtime.getModelsOfType("classifier", provider)[0];
-    if (!classifier) throw new Error(`No models found for provider "${provider}"`);
+    if (!classifier) throw new Error(`No models suitable for validating the API key for provider "${provider}"`);
     const response = await runtime.classify(classifier, {
       state: { text: "ok" },
       questions: { valid: { type: "bool", instructions: "Does the text say ok?", criteria: { true: "The text says ok", false: "The text does not say ok" } } },

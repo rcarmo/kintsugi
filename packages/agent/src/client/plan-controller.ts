@@ -8,12 +8,13 @@ type Draft = { markdown: string; revision: number };
 
 export function createAgentPlanController(Controller: WorkspaceClientControllerConstructor) {
   return class extends Controller {
-    static targets = ["form", "editor", "highlight", "revision", "status", "version", "confirmation", "confirmationMessage"];
+    static targets = ["form", "editor", "editButton", "highlight", "revision", "status", "version", "confirmation", "confirmationMessage"];
     static values = { workspaceId: String };
     declare readonly element: HTMLElement;
     declare readonly workspaceIdValue: string;
     declare readonly formTarget: HTMLFormElement;
     declare readonly editorTarget: HTMLTextAreaElement;
+    declare readonly editButtonTarget: HTMLButtonElement;
     declare readonly highlightTarget: HTMLPreElement;
     declare readonly revisionTarget: HTMLInputElement;
     declare readonly statusTarget: HTMLElement;
@@ -24,6 +25,9 @@ export function createAgentPlanController(Controller: WorkspaceClientControllerC
     private selection = 0;
     private edits = 0;
     private dirty = false;
+    private editing = false;
+    private focusView = false;
+    private saved?: Draft;
     private loading?: AbortController;
     private subscription?: CableSubscription;
     private subscribedAgent = "";
@@ -50,6 +54,7 @@ export function createAgentPlanController(Controller: WorkspaceClientControllerC
         this.remember(); this.loading?.abort(); this.subscription?.unsubscribe(); this.subscription = undefined; this.subscribedAgent = "";
         this.submissionStatus = undefined;
         this.agentId = selected; this.selection++; this.edits = 0; this.dirty = false;
+        this.editing = false; this.focusView = false; this.saved = undefined;
         if (this.hasFormTarget) this.formTarget.hidden = true;
         if (this.confirmationTarget.open) this.cancelConfirmation();
         this.status(selected ? "Loading Agent plan…" : "Select an Agent to view its plan.");
@@ -65,19 +70,23 @@ export function createAgentPlanController(Controller: WorkspaceClientControllerC
     }
     formTargetConnected(form: HTMLFormElement): void {
       if (form.dataset.agentId !== this.agentId) return;
-      let draft = this.drafts.get(this.agentId);
-      const saved = sessionStorage.getItem(this.key());
-      if (!draft && saved !== null) {
-        try { draft = Value.Parse(draftSchema, JSON.parse(saved)); this.drafts.set(this.agentId, draft); }
-        catch { this.status("Could not restore this browser's plan draft. Refresh to discard it."); return; }
+      this.saved = { markdown: this.editorTarget.value, revision: Number(this.revisionTarget.value) };
+      const readOnly = this.editorTarget.readOnly;
+      let draft = readOnly ? undefined : this.drafts.get(this.agentId);
+      const stored = readOnly ? null : sessionStorage.getItem(this.key());
+      let message = readOnly ? "Saved plan · read only." : "Saved plan. Changes are sent to the agent only when you choose Submit to model.";
+      if (!draft && stored !== null) {
+        try { draft = Value.Parse(draftSchema, JSON.parse(stored)); this.drafts.set(this.agentId, draft); }
+        catch { message = "Could not restore this browser's plan draft. Refresh to discard it."; }
       }
       if (draft) {
-        const changed = Number(this.revisionTarget.value) !== draft.revision;
+        const changed = this.saved.revision !== draft.revision;
         this.editorTarget.value = draft.markdown; this.revisionTarget.value = String(draft.revision); this.dirty = true;
-        this.status(changed ? "The saved plan changed. Your draft is kept; copy it or refresh before replacing the plan." : "Unsaved draft restored.");
-      } else this.status("Saved plan. Changes here are sent to the agent only when you choose Submit to model.");
-      if (this.submissionStatus) this.status(this.submissionStatus);
-      this.highlight();
+        message = changed ? "The saved plan changed. Your draft is kept; copy it or refresh before replacing the plan." : "Unsaved draft restored.";
+      }
+      this.status(this.submissionStatus ?? message);
+      this.showEditor(this.editing || Boolean(draft));
+      if (this.focusView) { this.focusView = false; this.editButtonTarget.focus(); }
       this.subscribe();
     }
     versionTargetConnected(version: HTMLElement): void {
@@ -85,6 +94,29 @@ export function createAgentPlanController(Controller: WorkspaceClientControllerC
       if (Number(version.dataset.revision) === Number(this.revisionTarget.value)) return;
       if (this.dirty || this.saving) this.status("Plan changed elsewhere. Your draft is kept; refresh to load the saved plan.");
       else void this.load();
+    }
+    private showEditor(editing: boolean): void {
+      this.editing = editing;
+      this.formTarget.classList.toggle("is-editing", editing);
+      if (editing) this.highlight();
+    }
+    edit(): void {
+      if (this.saving || !this.saved) return;
+      this.showEditor(true);
+      this.editorTarget.focus();
+    }
+    cancelEdit(): void {
+      if (this.saving || !this.saved) return;
+      this.showEditor(false);
+      this.editButtonTarget.focus();
+      if (!this.dirty) return;
+      this.editorTarget.value = this.saved.markdown;
+      this.revisionTarget.value = String(this.saved.revision);
+      this.dirty = false; this.edits++;
+      this.clearDraft(this.agentId);
+      this.focusView = true;
+      this.status("Edits discarded. Loading the saved plan…");
+      void this.load();
     }
     private highlight(): void {
       this.highlightTarget.innerHTML = highlightCodeHtml({ code: this.editorTarget.value + "\n", language: "markdown" }).html;
@@ -122,8 +154,14 @@ export function createAgentPlanController(Controller: WorkspaceClientControllerC
         if (draft?.markdown === markdown) this.clearDraft(agentId);
         else if (draft) { draft.revision = revision; sessionStorage.setItem(this.key(agentId), JSON.stringify(draft)); }
         if (selection !== this.selection) return;
-        if (edits !== this.edits) { this.revisionTarget.value = String(revision); this.remember(); this.status("Saved the earlier version; newer edits remain unsaved."); }
-        else { this.dirty = false; this.clearDraft(agentId); window.Turbo!.renderStreamMessage(html); }
+        if (edits !== this.edits) {
+          this.saved = { markdown, revision };
+          this.revisionTarget.value = String(revision); this.remember(); this.status("Saved the earlier version; newer edits remain unsaved.");
+        } else {
+          this.focusView = this.editing;
+          this.editing = false;
+          this.dirty = false; this.clearDraft(agentId); window.Turbo!.renderStreamMessage(html);
+        }
         return { agentId, markdown };
       } catch (error) { if (selection === this.selection) this.status(`Could not save the plan: ${error instanceof Error ? error.message : String(error)}. Your draft is kept.`); }
       finally { this.saving = false; }

@@ -26,6 +26,7 @@ async function localApi(
         },
         (response) => {
           const chunks: Buffer[] = [];
+          response.on("error", reject);
           response.on("data", (chunk) => chunks.push(chunk));
           response.on("end", () =>
             resolve({

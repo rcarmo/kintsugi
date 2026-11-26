@@ -1,9 +1,28 @@
 import { describe, expect, test } from "bun:test";
-import { defaultProviderModels, getPopularProviderRank, getPopularModelRank, modelDisplayName } from "../../src/server/hardcoded-provider-knowledge.ts";
+import { credentialProbeModel, defaultProviderModels, getPopularProviderRank, getPopularModelRank, modelDisplayName } from "../../src/server/hardcoded-provider-knowledge.ts";
 
 import { shippedProviderModelIds } from "../../src/server/shipped-provider-models.ts";
 
 const model = (id: string, input?: number, name = id) => ({ id, name, cost: input === undefined ? undefined : { input } });
+
+describe("credential probe models", () => {
+  test("Google prefers a chat model and never probes Deep Research through the chat API", () => {
+    const research = { id: "deep-research-preview-04-2026", cost: { input: 0 } };
+    const flash = { id: "gemini-flash-latest", cost: { input: 0.5 } };
+    const neon = { id: "gemini-4-neon", cost: { input: 0.1 } };
+    expect(credentialProbeModel("google", [research, neon, flash])).toBe(flash);
+    expect(credentialProbeModel("google", [flash, neon, research])).toBe(flash);
+    expect(credentialProbeModel("google", [research, neon])).toBe(neon);
+    expect(credentialProbeModel("google-vertex", [research])).toBeUndefined();
+  });
+  test("unknown providers have a deterministic, non-mutating fallback", () => {
+    const models = ["zeta", "beta", "alpha"].map(id => ({ id, cost: { input: id === "zeta" ? 2 : 1 } }));
+    expect(credentialProbeModel("custom", models)?.id).toBe("alpha");
+    expect(credentialProbeModel("custom", [...models].reverse())?.id).toBe("alpha");
+    expect(models.map(({ id }) => id)).toEqual(["zeta", "beta", "alpha"]);
+    expect(credentialProbeModel("classifier-only", [])).toBeUndefined();
+  });
+});
 
 describe("provider setup defaults", () => {
   for (const provider of ["openai", "openai-codex"]) {

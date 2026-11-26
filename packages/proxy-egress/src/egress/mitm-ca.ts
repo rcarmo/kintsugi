@@ -53,7 +53,9 @@ export async function ensureLeafCertificate(ca: MitmCa, hostnames: string | read
     const temporaryKeyPath = join(tmp, "leaf-key.pem");
     const subjectAltName = names.map(name => net.isIP(name) ? `IP:${name}` : `DNS:${name}`).join(", ");
     await writeFile(ext, `basicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=${subjectAltName}\n`);
-    await runOpenSsl(["req", "-newkey", "rsa:2048", "-nodes", "-subj", `/CN=${names[0]}`, "-keyout", temporaryKeyPath, "-out", csr]);
+    // X.509 limits the common name to 64 characters; host verification uses the SAN above.
+    const commonName = names[0]!.length <= 64 ? names[0]! : "Kintsugi Workspace";
+    await runOpenSsl(["req", "-newkey", "rsa:2048", "-nodes", "-subj", `/CN=${commonName}`, "-keyout", temporaryKeyPath, "-out", csr]);
     await runOpenSsl(["x509", "-req", "-in", csr, "-CA", ca.certPath, "-CAkey", ca.keyPath, "-CAcreateserial", "-days", String(leafCertificateLifetimeDays), "-sha256", "-extfile", ext, "-out", temporaryCertPath]);
     await chmod(temporaryKeyPath, 0o600);
     await rename(temporaryKeyPath, keyPath);

@@ -26,12 +26,12 @@ export const renderCableStreams: CableStreamRenderer = (html, isCurrent, onAppli
       // may be permanent; its own islands are still this region's to dispose.
       if (stream.getAttribute("method") === "morph") {
         // Read the template itself: Turbo's templateContent getter clones it on every access.
-        const incoming = new Set([...stream.templateElement.content.querySelectorAll("[id]")].map(element => element.id));
+        const incoming = new Map([...stream.templateElement.content.querySelectorAll("[id]")].map(element => [element.id, element]));
         for (const target of stream.targetElements) {
           for (const island of target.querySelectorAll<HTMLElement>("[id][data-turbo-permanent]")) {
             const enclosing = island.parentElement!.closest("[id][data-turbo-permanent]");
             if (enclosing && enclosing !== target && target.contains(enclosing)) continue;
-            if (!incoming.has(island.id)) island.remove();
+            if (!incoming.has(island.id) && island.dispatchEvent(new CustomEvent("live:before-island-remove", { bubbles: true, cancelable: true, detail: { incoming } }))) island.remove();
           }
         }
       }
