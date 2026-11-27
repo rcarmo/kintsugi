@@ -4,7 +4,7 @@ import { type AgentTranscriptAnchor, type AgentTranscriptSnapshot } from "@kints
 import { escapeHtml } from "@kintsugi/shared";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { inheritedBoundaryEntry, communicationEntry, communicationStateEntry, type Receipt } from "./native-state.ts";
-import { communicationCardHtml, communicationTraceHtml } from "./render-markup.ts";
+import { communicationBodyHtml, communicationCardHtml, communicationTraceHtml } from "./render-markup.ts";
 
 export function nativeDelegationTranscript(view: ConversationView): AgentTranscriptSnapshot {
   const incoming = new Map<string, Receipt>();
@@ -24,7 +24,7 @@ export function nativeDelegationTranscript(view: ConversationView): AgentTranscr
       const body = communicationCardHtml([
         { label: "Type", html: escapeHtml(receipt.kind) },
         { label: "Source", html: communicationTraceHtml(ctx, receipt.from, receipt.id, `Sent from ${receipt.author} here`) },
-        { label: "Body", html: `<div class="agent-communication-body">${escapeHtml(receipt.text)}</div>` },
+        { label: "Body", html: communicationBodyHtml(ctx, receipt.text) },
         { label: "Handling", html: escapeHtml(receipt.handling === "idle-task" ? "Starts a turn" : receipt.handling === "idle-message" ? "Waits for the next turn" : receipt.handling === "waiting" ? "Wakes the agent’s wait" : "Queued for the next model boundary") },
         { label: "Context", html: escapeHtml(state) },
       ]);

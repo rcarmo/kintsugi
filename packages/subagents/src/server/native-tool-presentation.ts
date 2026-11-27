@@ -1,9 +1,8 @@
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { isJsonObject } from "@kintsugi/core";
-import { escapeHtml } from "@kintsugi/shared";
 import type { AgentToolPresentation } from "@kintsugi/agent/server";
-import { communicationCardHtml, communicationTraceHtml } from "./render-markup.ts";
+import { communicationBodyHtml, communicationCardHtml, communicationTraceHtml } from "./render-markup.ts";
 
 const detailsSchema = Type.Object({ recipientId: Type.String(), receiptId: Type.String(), path: Type.String(), message: Type.String() });
 const communication: AgentToolPresentation = {
@@ -17,7 +16,7 @@ const communication: AgentToolPresentation = {
     if (!Value.Check(detailsSchema, tool.details)) return undefined;
     const { recipientId, receiptId, path, message } = tool.details;
     return communicationCardHtml([
-      { label: "Body", html: `<div class="agent-communication-body">${escapeHtml(message)}</div>` },
+      { label: "Body", html: communicationBodyHtml(ctx, message) },
       { label: "Recipient", html: communicationTraceHtml(ctx, recipientId, receiptId, `Find message recipient · ${path}`) },
     ]);
   },
