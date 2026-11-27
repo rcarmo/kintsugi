@@ -11,6 +11,7 @@ import { escapeHtml } from "../../../packages/shared/src/html.ts";
 import { accessModeSchema, validateProxyAccess, type ProxyAccess } from "../../../packages/shared/src/proxy-access.ts";
 import { startLocalIngress, startProxyIngress, startAdminProxy } from "./local-ingress.ts";
 import { installationStatus, type Activity } from "./installation-status.ts";
+import { AppHealthMonitor, appHealthIntervalMs, healthPressureSample, probeAppHealth } from "./app-health.ts";
 import { PullProgress } from "./pull-progress.ts";
 import { readReleaseSettings, releaseReference } from "../../../packages/shared/src/release-source.ts";
 import { createReleaseRegistry, releaseDockerConfig } from "./release-registry.ts";
@@ -91,9 +92,27 @@ let busy = false;
 let activeOperation: Promise<void> = Promise.resolve();
 let startup: Promise<void> = Promise.resolve();
 let initialized = false;
-let healthy = false;
-let recoveringHealth = false;
 let stopping = false;
+const healthRecoveryMessage = "Kintsugi stopped responding to health checks";
+const appHealth = new AppHealthMonitor({
+  probe: probeAppHealth,
+  stopped: () => stopping,
+  routeToApp: open => configureRoutes(open ? 3000 : 3001),
+  change(state, previous) {
+    if (state === "recovering") stage("Kintsugi needs attention", 3);
+    else if (state === "ready" && previous !== "degraded") stage("Kintsugi is ready", 4);
+    else emit();
+    if (state === "ready") emit("ready", "ready");
+  },
+  diagnostic(event) {
+    const message = `App health: ${JSON.stringify(event)}`;
+    if (!resources) { log(message); return; }
+    const cgroup = dirname(dirname(resources.commandsCgroup));
+    void healthPressureSample(cgroup).then(sample => log(`${message}; cgroup ${JSON.stringify(sample)}`), error => {
+      log(`${message}; cgroup sample unavailable (${error instanceof Error ? error.name : "unknown error"})`);
+    });
+  },
+});
 let tailnetHost: string | undefined;
 let connectionState = tailscaleSelected() ? "Starting" : "Stopped";
 let authUrl: string | undefined;
@@ -121,7 +140,10 @@ function connectionProblem() {
     return "The private connection did not finish starting within 2 minutes.";
 }
 function fragment() {
-  return supervisorFragment({ operation, phase, healthy, recoveringHealth, stopping, failure, candidate,
+  const degradedHealth = appHealth.state === "degraded";
+  return supervisorFragment({ operation, phase: degradedHealth ? 3 : phase, healthy: appHealth.state === "ready",
+    recoveringHealth: appHealth.recovering, degradedHealth, stopping,
+    failure: failure ?? (appHealth.state === "recovering" ? healthRecoveryMessage : undefined), candidate,
     connectionMode: persisted.accessMode!, connectionState, connectionProblem: connectionProblem(), connectionAction: tailscaleSelected() ? httpsAction : undefined, authUrl: tailscaleSelected() ? authUrl : undefined, logs });
 }
 function emit(event = "progress", data = fragment()) {
@@ -194,17 +216,6 @@ async function waitFor(
     await sleep(250);
   }
   throw new Error(`Timed out waiting for ${description}`);
-}
-async function appIsHealthy() {
-  try {
-    return (
-      await fetch("http://127.0.0.1:3000/up", {
-        signal: AbortSignal.timeout(1000),
-      })
-    ).ok;
-  } catch {
-    return false;
-  }
 }
 async function existsContainer() {
   return (await docker("ps", "-aq", "--filter", "name=^kintsugi$")).length > 0;
@@ -305,9 +316,8 @@ async function replace(request: Replacement) {
       "An app operation is already running or System is stopping",
     );
   busy = true;
-  recoveringHealth = false;
+  appHealth.reset();
   failure = undefined;
-  healthy = false;
   replacement = request;
   phase = 0;
   try {
@@ -384,7 +394,7 @@ async function replace(request: Replacement) {
     for (const output of [logProcess.stdout!, logProcess.stderr!])
       output.on("data", (data) => log(data.toString().trimEnd()));
     stage("Checking Kintsugi is healthy", 3);
-    await waitFor(appIsHealthy, timeout, "Kintsugi health");
+    await waitFor(async () => (await probeAppHealth()).kind === "ok", timeout, "Kintsugi health");
     persisted.currentImage = exact;
     if (persisted.pendingImage === exact) delete persisted.pendingImage;
     await persist();
@@ -400,31 +410,16 @@ async function replace(request: Replacement) {
 async function openApp() {
   await configureRoutes(3000);
   if (stopping) return;
-  healthy = true;
-  recoveringHealth = false;
   failure = undefined;
-  stage("Kintsugi is ready", 4);
-  emit("ready", "ready");
+  appHealth.ready();
 }
 
 // Reserve the operation while probing/routing so replacement and shutdown cannot
 // race a late successful probe into reopening the old app.
-async function recheckHealth() {
+async function recheckHealth(supervisorTimerLateMs?: number) {
   busy = true;
   try {
-    const ready = await appIsHealthy();
-    if (stopping) return;
-    if (!ready) {
-      if (healthy) {
-        healthy = false;
-        recoveringHealth = true;
-        failure = "Kintsugi stopped responding to health checks";
-        stage("Kintsugi needs attention", 3);
-      }
-      await configureRoutes(3001);
-    } else if (recoveringHealth) {
-      await openApp();
-    }
+    await appHealth.recheck(supervisorTimerLateMs);
   } catch (error) {
     log(String(error));
   } finally {
@@ -479,20 +474,25 @@ const server = Bun.serve({
       return Response.json({ mode: persisted.accessMode, proxy: persisted.proxy, localPort: persisted.localPort, connectionState, authUrl, origin: accessOrigin(), error: connectionFailure ?? networkError });
     }
     if (url.pathname === "/status") {
-      // Check again at the handoff: startup health alone can become stale.
-      const appResponding = healthy && await appIsHealthy();
+      // Handoff requires a fresh successful probe. Status requests never advance the ingress failure count.
+      const probe = appHealth.state === "ready" && !busy && !stopping ? await probeAppHealth() : undefined;
+      const healthState = appHealth.state;
+      const appResponding = healthState === "ready" && routeTarget === 3000 && probe?.kind === "ok";
+      const degradedHealth = healthState === "degraded" || (healthState === "ready" && probe !== undefined && probe.kind !== "ok");
       return Response.json({
         ...installationStatus({
-          activity: healthy && !appResponding ? { description: "Checking Kintsugi is healthy" } : activity,
-          failure: (recoveringHealth ? undefined : failure) ?? connectionProblem(),
-          recoveringHealth, stopping, busy, appResponding, hostname: tailnetHost, appliedRoute,
+          activity,
+          failure: failure ?? connectionProblem(),
+          recoveringHealth: appHealth.recovering || degradedHealth, degradedHealth,
+          stopping, busy, appResponding, hostname: tailnetHost, appliedRoute,
           connectionState, authUrl, connectionAction: httpsAction, logs,
           localOrigin: accessOrigin(),
           proxyMode: persisted.accessMode === "proxy",
           localMode: !tailscaleSelected(),
         }),
-        failure,
-        healthy,
+        failure: failure ?? (healthState === "recovering" ? healthRecoveryMessage : undefined),
+        healthy: appResponding && !busy && !stopping,
+        appHealth: degradedHealth ? "degraded" : healthState,
         busy,
         candidate,
         systemVersion,
@@ -520,7 +520,7 @@ const server = Bun.serve({
               `event: progress\ndata: ${fragment().replace(/\n/g, "\ndata: ")}\n\n`,
             ),
           );
-          if (healthy)
+          if (appHealth.state === "ready" && !busy && !stopping)
             c.enqueue(encoder.encode("event: ready\ndata: ready\n\n"));
         },
         cancel() {
@@ -555,7 +555,7 @@ const server = Bun.serve({
       if (busy)
         return new Response("An operation is already running", { status: 409 });
       if (url.pathname === "/recheck") {
-        if (!recoveringHealth) return new Response("No health recovery is pending", { status: 409 });
+        if (!appHealth.recovering) return new Response("No health recovery is pending", { status: 409 });
         activeOperation = recheckHealth();
         await activeOperation;
         return Response.redirect(request.headers.get("origin") ?? url.origin, 303);
@@ -613,12 +613,11 @@ const server = Bun.serve({
           busy = false;
           return new Response("System is stopping", { status: 503 });
         }
-        const previouslyHealthy = healthy;
-        healthy = false;
+        const previousTarget = routeTarget;
         try {
           await configureRoutes(3001);
         } catch (error) {
-          healthy = previouslyHealthy;
+          await configureRoutes(previousTarget).catch(routeError => log(String(routeError)));
           busy = false;
           return new Response(String(error), { status: 502 });
         }
@@ -682,8 +681,7 @@ const uninstallControl = Bun.serve({
     // Reserve before yielding, so health recovery and updates cannot restart the app.
     uninstalling = true;
     busy = true;
-    healthy = false;
-    recoveringHealth = false;
+    appHealth.reset();
     activeOperation = (async () => {
       const progress = async (description: string) => {
         persisted.uninstall = { state: "running", description };
@@ -718,7 +716,7 @@ process.umask(previousUmask);
 async function shutdown(code: number) {
   if (stopping) return;
   stopping = true;
-  healthy = false;
+  appHealth.reset();
   stage("Stopping Kintsugi services");
   // Stop sampling before shutdown stops containers; a service stop is not an operator park or OOM.
   await workspaceResources?.shutdown();
@@ -952,9 +950,10 @@ async function initialize() {
   activeOperation = replace(replacement);
   void (async () => {
     while (!stopping) {
-      await sleep(3000);
-      if ((!healthy && !recoveringHealth) || busy || stopping || uninstalling) continue;
-      activeOperation = recheckHealth();
+      const scheduledAt = performance.now() + appHealthIntervalMs;
+      await sleep(appHealthIntervalMs);
+      if (appHealth.state === "inactive" || busy || stopping || uninstalling) continue;
+      activeOperation = recheckHealth(Math.max(0, Math.round(performance.now() - scheduledAt)));
       await activeOperation;
     }
   })();

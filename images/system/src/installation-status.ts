@@ -18,6 +18,7 @@ export function installationStatus(input: {
   localOrigin?: string;
   failure?: string;
   recoveringHealth?: boolean;
+  degradedHealth?: boolean;
   stopping: boolean;
   busy: boolean;
   appResponding: boolean;
@@ -55,7 +56,9 @@ export function installationStatus(input: {
   return {
     state,
     activity: state === "failed" ? { description: input.failure ?? "Kintsugi services stopped" }
-      : recoveringHealth ? { description: "Kintsugi stopped responding to health checks. Waiting for it to recover." }
+      : recoveringHealth ? { description: input.degradedHealth
+        ? "A health check failed. Checking again without closing access to Kintsugi."
+        : "Kintsugi stopped responding to health checks. Waiting for it to recover." }
       : ready ? { description: "Your Kintsugi is ready!" }
       : action ? { description: "Waiting for your private connection" }
       : input.appResponding && !input.busy ? { description: "Connecting Kintsugi securely" }

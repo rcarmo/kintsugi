@@ -35,6 +35,7 @@ export interface SupervisorView {
   phase: number;
   healthy: boolean;
   recoveringHealth: boolean;
+  degradedHealth: boolean;
   stopping: boolean;
   failure?: string;
   candidate: string;
@@ -51,7 +52,7 @@ function foldout(id: string, label: string, body: string): string {
 }
 
 export function supervisorFragment(view: SupervisorView): string {
-  const title = view.stopping ? "Stopping Kintsugi" : view.failure ? "Kintsugi needs attention" : view.connectionAction ? "Setting up Tailscale" : view.healthy ? "Kintsugi is ready" : view.operation === "update" ? "Updating Kintsugi" : "Starting Kintsugi";
+  const title = view.stopping ? "Stopping Kintsugi" : view.failure ? "Kintsugi needs attention" : view.degradedHealth ? "Checking Kintsugi" : view.connectionAction ? "Setting up Tailscale" : view.healthy ? "Kintsugi is ready" : view.operation === "update" ? "Updating Kintsugi" : "Starting Kintsugi";
   const labels = ["Prepare Kintsugi images", "Stop the previous version", "Start Kintsugi", "Check health", "Open Kintsugi"];
   const checklist = labels.map((label, index) => {
     const done = (view.healthy || index < view.phase) && !(index === 4 && view.connectionAction);
