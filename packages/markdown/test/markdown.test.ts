@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { renderMarkdown } from "../src/index.ts";
+import { renderMarkdown, renderMarkdownChecklist } from "../src/index.ts";
+
+test("checklist progress counts nested tasks, not marker examples in prose or code", () => {
+  const { completed, total } = renderMarkdownChecklist("workspace", [
+    "# Review", "", "A literal [x] and `- [x] example`.", "",
+    "- [x] Completed **review**", "  - [-] Check `main.ts`", "- [ ] Pending", "- Ordinary list item", "",
+    "```markdown", "- [x] Example", "```",
+  ].join("\n"));
+  expect({ completed, total }).toEqual({ completed: 1, total: 3 });
+  expect(renderMarkdownChecklist("workspace", "Just a paragraph.").total).toBe(0);
+});
 
 describe("renderMarkdown", () => {
   test("paragraphs, emphasis, and inline code", () => {

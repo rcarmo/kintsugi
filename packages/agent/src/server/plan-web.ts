@@ -5,6 +5,7 @@ import { KintsugiCoreError, invalidArguments, readJsonObject, requestAcceptsJson
 import { buttonHtml } from "@kintsugi/design-system/button";
 import { dialogHtml } from "@kintsugi/design-system/dialog";
 import { Icons } from "@kintsugi/design-system/icons";
+import { renderMarkdownChecklist } from "@kintsugi/markdown";
 import { domId, escapeHtml as h, type WorkspaceModule, type WorkspaceWorkViewPresentation } from "@kintsugi/shared";
 import { jsonResponse, stream, update } from "@kintsugi/shared/http";
 import { AgentPlanConflict, agentPlanStore, agentPlanInputSchema, requirePlanAgent, type AgentPlan, type PlanAgent } from "./plan.ts";
@@ -15,24 +16,14 @@ const statusId = (workspaceId: string) => domId("agent_plan_status", workspaceId
 function signal(plan: AgentPlan) { return `<span hidden data-agent-plan-target="version" data-agent-id="${h(plan.agentId)}" data-revision="${plan.revision}"></span>`; }
 function button(caption: string, action: string, primary = false): string { return buttonHtml({ type: "button", variant: primary ? "primary" : "secondary", content: { kind: "caption", caption }, attributesHtml: `data-action="agent-plan#${action}"${action === "edit" ? ' data-agent-plan-target="editButton"' : ""}` }); }
 export const planPresentation: WorkspaceWorkViewPresentation = { reference: { type: "plan" }, sourceKey: "plan", label: "Plan", kind: "contextual", iconHtml: Icons.Check, availability: { phase: "live" }, initiallyOpen: false };
-const stepStatuses = {
-  pending: { label: "Pending", icon: '<circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"/>' },
-  in_progress: { label: "In progress", icon: '<circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 2.5v11a5.5 5.5 0 0 0 0-11Z" fill="currentColor"/>' },
-  completed: { label: "Completed", icon: '<path d="m3.5 8 3 3 6-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>' },
-};
 function planForm(workspaceId: string, agent: PlanAgent, plan: AgentPlan) {
-  const completed = plan.plan.filter(item => item.status === "completed").length;
-  const steps = plan.plan.map(({ step, status }) => {
-    const { label, icon } = stepStatuses[status];
-    return `<li class="agent-plan-step ${status}"><span class="agent-plan-step-icon" role="img" aria-label="${label}"><svg viewBox="0 0 16 16" aria-hidden="true">${icon}</svg></span><span class="agent-plan-step-text">${h(step)}</span></li>`;
-  }).join("");
+  const { html, completed, total } = renderMarkdownChecklist(workspaceId, plan.markdown);
   return `<form class="agent-plan-editor" data-agent-plan-target="form" data-agent-id="${h(agent.id)}" data-action="submit->agent-plan#save" action="/workspaces/${encodeURIComponent(workspaceId)}/agent-plans/${encodeURIComponent(agent.id)}" method="post">
-    <header class="work-view-toolbar agent-plan-toolbar"><div class="agent-plan-title"><strong>Plan</strong><span title="${h(agent.title)}">${h(agent.title)}</span></div><div class="agent-plan-progress"><progress max="${plan.plan.length || 1}" value="${completed}" aria-label="Plan completion"></progress><span>${completed}/${plan.plan.length}</span></div></header>
+    <header class="work-view-toolbar agent-plan-toolbar"><div class="agent-plan-title"><strong>Plan</strong><span title="${h(agent.title)}">${h(agent.title)}</span></div><div class="agent-plan-progress"><progress max="${total || 1}" value="${completed}" aria-label="Plan completion"></progress><span>${completed}/${total}</span></div></header>
     <input type="hidden" name="expectedRevision" value="${plan.revision}" data-agent-plan-target="revision">
     <div id="${signalId(workspaceId, agent.id)}">${signal(plan)}</div>
-    <div class="agent-plan-checklist agent-plan-view-only">
-      ${plan.explanation ? `<p class="agent-plan-explanation">${h(plan.explanation)}</p>` : ""}
-      ${steps ? `<ol role="list" aria-label="Plan steps">${steps}</ol>` : '<p class="agent-plan-empty">No checklist items yet.</p>'}
+    <div class="agent-plan-checklist agent-plan-view-only markdown">
+      ${html || '<p class="agent-plan-empty">No checklist items yet.</p>'}
     </div>
     <div class="agent-plan-input agent-plan-edit-only">
       <pre class="agent-plan-highlight" data-agent-plan-target="highlight" aria-hidden="true"></pre>

@@ -24,6 +24,7 @@ export interface MarkdownRenderOptions {
 interface MarkdownEnvironment extends MarkdownRenderOptions, Env {
   workspaceId: string;
   provisional?: boolean;
+  checklist?: { completed: number; total: number };
 }
 
 const markdown = new MarkdownIt({
@@ -34,6 +35,46 @@ const markdown = new MarkdownIt({
 installMath(markdown);
 installDetails(markdown);
 installCommitLinks(markdown);
+
+const taskStates = new Map([
+  ["pending", { label: "Pending", icon: '<circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"/>' }],
+  ["in_progress", { label: "In progress", icon: '<circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 2.5v11a5.5 5.5 0 0 0 0-11Z" fill="currentColor"/>' }],
+  ["completed", { label: "Completed", icon: '<path d="m3.5 8 3 3 6-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>' }],
+]);
+markdown.core.ruler.before("inline", "kintsugi_task_list", state => {
+  const { checklist }: MarkdownEnvironment = state.env;
+  if (!checklist) return;
+  const lists: { token: Token; items: number; tasks: number }[] = [];
+  for (const [index, token] of state.tokens.entries()) {
+    if (token.type === "bullet_list_open" || token.type === "ordered_list_open") lists.push({ token, items: 0, tasks: 0 });
+    if (token.type === "bullet_list_close" || token.type === "ordered_list_close") {
+      const list = lists.pop();
+      if (list?.tasks && list.tasks === list.items) {
+        list.token.attrSet("data-markdown-task-list", "");
+        list.token.attrSet("role", "list");
+      }
+    }
+    if (token.type !== "list_item_open") continue;
+    const list = lists.at(-1);
+    if (list) list.items++;
+    const paragraph = state.tokens[index + 1], inline = state.tokens[index + 2];
+    if (paragraph?.type !== "paragraph_open" || inline?.type !== "inline") continue;
+    const marker = /^\[([ xX-])\](?:[ \t\n]+|$)/.exec(inline.content);
+    if (!marker) continue;
+    const status = marker[1] === " " ? "pending" : marker[1] === "-" ? "in_progress" : "completed";
+    token.attrSet("data-markdown-task", status);
+    inline.content = inline.content.slice(marker[0].length);
+    if (list) list.tasks++;
+    checklist.total++;
+    if (status === "completed") checklist.completed++;
+  }
+});
+markdown.renderer.rules.list_item_open = (tokens, index, options, _environment, renderer) => {
+  const opening = renderer.renderToken(tokens, index, options);
+  const task = taskStates.get(tokens[index]!.attrGet("data-markdown-task") ?? "");
+  return task ? `${opening}<span class="markdown-task-icon" role="img" aria-label="${task.label}"><svg viewBox="0 0 16 16" aria-hidden="true">${task.icon}</svg></span>` : opening;
+};
+
 const defaultValidateLink = markdown.validateLink.bind(markdown);
 markdown.validateLink = (url) => /^file:\/\//i.test(url)
   ? kintsugiFileHref("", url) !== undefined
@@ -182,6 +223,13 @@ export function markdownFileReferenceCandidates(text: string, options: Pick<Mark
 export function renderMarkdown(workspaceId: string, text: string, options: MarkdownRenderOptions = {}): string {
   const source = options.frontmatter ? withoutFrontmatter(text) : text;
   return markdown.render(source, { workspaceId, ...options } satisfies MarkdownEnvironment).trim();
+}
+
+/** Render the complete document and count only actual Markdown task items. */
+export function renderMarkdownChecklist(workspaceId: string, text: string) {
+  const checklist = { completed: 0, total: 0 };
+  const html = markdown.render(text, { workspaceId, checklist } satisfies MarkdownEnvironment).trim();
+  return { html, ...checklist };
 }
 
 export function renderProvisionalMarkdown(workspaceId: string, text: string): string {
