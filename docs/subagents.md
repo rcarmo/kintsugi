@@ -14,11 +14,11 @@ and does not change the pinned tool descriptions below.
 
 Reference: OpenAI Codex [`574a36ff99f0807a24f5b043f593122bf151908d`](https://github.com/openai/codex/tree/574a36ff99f0807a24f5b043f593122bf151908d), cloned at `/persistent/kintsugi-codex-reference` in the implementation workspace. Source descriptions and schemas are attributed in NOTICE; the Apache-2.0 license is in `docs/licenses/codex-LICENSE`.
 
-Kintsugi uses the **MultiAgentV2** surface with optional role/model overrides disabled and nickname metadata hidden. This is a specific supported Codex configuration, not a mixture of the v1 and v2 tools:
+Kintsugi uses the **MultiAgentV2** tools with role overrides and nickname metadata hidden. `spawn_agent` supports an optional model choice:
 
 | Tool | Input | Result |
 | --- | --- | --- |
-| `spawn_agent` | `task_name`, `message`, optional `fork_turns` | `{ task_name: "/root/child" }` |
+| `spawn_agent` | `task_name`, `message`, optional `fork_turns` and `model` | `{ task_name: "/root/child" }` |
 | `send_message` | `target`, `message` | Empty text acknowledgement |
 | `followup_task` | `target`, `message` | Empty text acknowledgement |
 | `list_agents` | Optional `path_prefix` | `{ agents: [{ agent_name, agent_status }] }`, including `/root` |
@@ -28,6 +28,10 @@ Kintsugi uses the **MultiAgentV2** surface with optional role/model overrides di
 Descriptions are copied from the pinned `multi_agents_spec.rs`. Input property descriptions and provider-facing output schemas use the same contract. Encryption annotations are deliberately omitted: all agent-to-agent payloads remain plaintext. The earlier mixed-in v1 `close_agent` and `resume_agent` are no longer exposed to the model; internal close remains available for Agent/Workspace disposal.
 
 Canonical names are `/root`, `/root/review`, `/root/review/check`, etc. Relative references resolve beneath the caller. The same leaf name can exist under different parents. IDs remain internal correlation data rather than part of the message text. A non-root agent can receive follow-up tasks or interruption from another agent in the same tree. Other root trees/workspaces remain isolated.
+
+Pass an enabled, available chat model as `provider/modelId`, for example `github-copilot/mai-code-2`. Omitting `model` inherits the parent’s model. The Subagents pane shows each child’s model, and follow-up turns use the same model. The child inherits the parent’s thinking level where the selected model supports it.
+
+Use **Clear finished** in the Subagents pane to move settled subagents into **Cleared**. Their transcripts and follow-ups remain available, and new activity brings them back to the main list. Active branches stay visible.
 
 `fork_turns` defaults to `all`; `none` starts from the explicit task, and a positive integer string selects recent user turns. Selection happens before filtering, matching the pinned Codex fork policy: user messages and turn-triggering tasks count as turns, but inherited agent traffic is then removed. The child retains user messages and assistant final-answer text, not reasoning, intermediate commentary, tool calls or tool results (including completed exchanges). A numeric mode with no turn boundaries inherits nothing; an oversized count starts at the first boundary, not an earlier summary preamble. Pi supplies the effective post-navigation, compaction-aware context. Its opaque compaction/branch summaries are retained when selected and seeded as child-local summary entries. Host instructions are rebuilt for the child. For providers without Codex phase metadata, final answers use Kintsugi's existing terminal-stop/no-tool-call classification. This matches the filtering policy over Pi's representation; it does not implement Codex-specific rollout metadata or guardian authorization state. Existing sessions are not re-forked on reload. Children inherit model and Thinking level settings, tools, skills and workspace instructions. They share the workspace filesystem—not separate worktrees.
 

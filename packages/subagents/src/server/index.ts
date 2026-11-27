@@ -2,6 +2,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import type { WorkspaceModule } from "@kintsugi/shared";
 import { registerAgentToolPresentations } from "@kintsugi/agent/server";
+import { enabledModelOptionViews } from "@kintsugi/agent/server/model-state";
 import { listWorkspaceAgents, configureAgentDelegation, registerBuiltinAgentIntegration } from "@kintsugi/builtin-agent/server";
 import { createNativeDelegationExtension } from "./native-runtime.ts";
 import { delegationModels, stampDelegationRequestIdentity } from "./native-models.ts";
@@ -17,7 +18,13 @@ export const kintsugiServerModule: WorkspaceModule = {
   id: "subagents",
   initialize() {
     configureAgentDelegation({
-      create(models, harness) { return { extension: createNativeDelegationExtension(harness), models: delegationModels(models, harness) }; },
+      create(models, harness) {
+        const extension = createNativeDelegationExtension(harness, async (provider, id) => {
+          const enabled = await enabledModelOptionViews({ provider, id });
+          return enabled.some(item => item.selected && item.available) ? models.getModel(provider, id) : undefined;
+        });
+        return { extension, models: delegationModels(models, harness) };
+      },
       requestMessages: stampDelegationRequestIdentity,
       attributed: attributedEntry,
     });

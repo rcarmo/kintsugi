@@ -15,7 +15,8 @@ test("Astra medium resolves catalogue roles and explicit delegation for both roo
     expect(prompt).not.toContain("analysis channel");
     expect(prompt).toContain("6 subagents");
     expect(prompt).not.toContain("sub-agent");
-    expect(prompt).toContain("does not accept model or reasoning overrides");
+    expect(prompt).toContain("provider/modelId");
+    expect(prompt).toContain("keeps its model for follow-ups");
   }
 });
 

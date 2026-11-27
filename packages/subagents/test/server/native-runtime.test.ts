@@ -7,6 +7,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, type Fa
 import { configure, createRegistry, defineExtension, LiveDoc, type Harness, type Extension } from "@earendil-works/pi-durable";
 import { openDurableAgentRuntime, type DurableAgentRuntime } from "@kintsugi/builtin-agent/server/durable-runtime";
 import { createNativeDelegationExtension } from "../../src/server/native-runtime.ts";
+import { clearFinishedSubagents, nativeSubagentViews, withAncestors } from "../../src/server/native-view-state.ts";
 import { Delegation, Mailbox } from "../../src/server/native-state.ts";
 import { WorkspaceAgents } from "@kintsugi/builtin-agent/server";
 
@@ -15,11 +16,14 @@ const owners: DurableAgentRuntime[] = [];
 afterEach(async () => { for (const owner of owners.splice(0)) await owner.suspend(); for (const path of paths.splice(0)) await rm(path, { recursive: true, force: true }); });
 async function setup(pauseSpawn?: (context: Context) => Promise<void>) {
   const path = await mkdtemp(join(tmpdir(), "native-delegation-")); paths.push(path);
-  const models = createModels(); const faux = fauxProvider({ tokensPerSecond: 100000 }); models.setProvider(faux.provider);
+  const models = createModels();
+  const faux = fauxProvider({ tokensPerSecond: 100000, models: [{ id: "faux-1" }, { id: "fast" }, { id: "vendor/review" }, { id: "disabled" }] });
+  models.setProvider(faux.provider);
+  const disabled = new Set(["disabled"]);
   const open = async () => {
     let harness: Harness;
     const registry = createRegistry();
-    const extension: Extension = createNativeDelegationExtension(() => harness);
+    const extension: Extension = createNativeDelegationExtension(() => harness, async (provider, id) => disabled.has(id) ? undefined : models.getModel(provider, id));
     registry.install(defineExtension({ ...extension, tools: extension.tools!.map(tool => tool.name !== "spawn_agent" ? tool : { ...tool, async execute(args, api, context) {
       const result = await tool.execute(args, api, context);
       await pauseSpawn?.(context);
@@ -34,7 +38,7 @@ async function setup(pauseSpawn?: (context: Context) => Promise<void>) {
   };
   const owner = await open();
   const root = await owner.agent({ agentId: "root", label: "Root", title: "Root" });
-  return { owner, root, faux, open };
+  return { owner, root, faux, open, disabled };
 }
 async function completedDeliveries(owner: DurableAgentRuntime) {
   // Join the useful work, never the persistent background identity anchors.
@@ -168,6 +172,121 @@ test("different root trees cannot address each other's children", async () => {
   await root.close();
 });
 
+test("parallel persistent subagents use distinct chosen models on their first turn and follow-up after reopen", async () => {
+  const { owner, root, faux, open } = await setup();
+  const bothStarted = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  const used = new Map<string, string>();
+  let spawned = false;
+  const response: FauxResponseFactory = async (request, options, _state, model) => {
+    const name = /Your canonical task name is \/root\/(fast|review|inherit)\./.exec(JSON.stringify(request.messages))?.[1];
+    if (name) {
+      used.set(name, `${model.provider}/${model.id}`);
+      if (used.has("fast") && used.has("review")) bothStarted.resolve();
+      if (name !== "inherit") await awaitWithContext(release.promise, { ...context, abortSignal: options?.signal });
+      return fauxAssistantMessage(`Finished ${name}`);
+    }
+    if (spawned) return fauxAssistantMessage("Delegated");
+    spawned = true;
+    return fauxAssistantMessage([
+      fauxToolCall("spawn_agent", { task_name: "fast", message: "Draft", model: "faux/fast", fork_turns: "none" }),
+      fauxToolCall("spawn_agent", { task_name: "review", message: "Review", model: "faux/vendor/review", fork_turns: "none" }),
+      fauxToolCall("spawn_agent", { task_name: "inherit", message: "Check", fork_turns: "none" }),
+      fauxToolCall("spawn_agent", { task_name: "blocked", message: "Do not run", model: "faux/disabled", fork_turns: "none" }),
+      fauxToolCall("spawn_agent", { task_name: "malformed", message: "Do not run", model: "fast", fork_turns: "none" }),
+    ], { stopReason: "toolUse" });
+  };
+  faux.setResponses(Array.from({ length: 30 }, () => response));
+  try {
+    const first = await root.submit({ requestId: "parallel", text: "Delegate parallel work" });
+    await awaitWithContext(bothStarted.promise, { ...context, abortSignal: AbortSignal.timeout(7000) });
+    release.resolve();
+    await first.wait(context);
+    await completedDeliveries(owner);
+    expect(Object.fromEntries(used)).toEqual({ fast: "faux/fast", review: "faux/vendor/review", inherit: "faux/faux-1" });
+    const records = await owner.catalog();
+    expect(records.filter(record => record.parentId).map(record => record.taskName).sort()).toEqual(["fast", "inherit", "review"]);
+    const history = JSON.stringify(await root.history({}, 100, undefined, context));
+    expect(history).toContain("Model faux/disabled isn’t available");
+    expect(history).toContain("Use provider/modelId for model.");
+    await owner.suspend();
+    const reopened = await open();
+    const restored = await reopened.agent(records.find(record => !record.parentId)!);
+    let followed = false;
+    used.clear();
+    const followup: FauxResponseFactory = async (...args) => {
+      if (JSON.stringify(args[0].messages).includes("Your canonical task name is /root/fast.") || JSON.stringify(args[0].messages).includes("Your canonical task name is /root/review.")) return response(...args);
+      if (followed) return fauxAssistantMessage("Follow-ups assigned");
+      followed = true;
+      return fauxAssistantMessage(["fast", "review"].map(target => fauxToolCall("followup_task", { target, message: "Continue" })), { stopReason: "toolUse" });
+    };
+    faux.setResponses(Array.from({ length: 20 }, () => followup));
+    await (await restored.submit({ requestId: "followups", text: "Continue both tasks" })).wait(context);
+    await completedDeliveries(reopened);
+    expect(Object.fromEntries(used)).toEqual({ fast: "faux/fast", review: "faux/vendor/review" });
+    expect(await reopened.catalog()).toHaveLength(4);
+    await restored.close();
+  } finally { release.resolve(); }
+}, 20_000);
+
+test("clearing finished subagents survives reopen, leaves active work alone, and preserves follow-ups", async () => {
+  const { owner, root, faux, open } = await setup();
+  let spawned = false;
+  faux.setResponses(Array.from({ length: 20 }, () => request => {
+    if (JSON.stringify(request.messages).includes("Your canonical task name is /root/")) return fauxAssistantMessage("Initial result");
+    if (spawned) return fauxAssistantMessage("Delegated");
+    spawned = true;
+    return fauxAssistantMessage(["draft", "review"].map(task_name => fauxToolCall("spawn_agent", { task_name, message: "Start", fork_turns: "none" })), { stopReason: "toolUse" });
+  }));
+  await (await root.submit({ requestId: "start-clear", text: "Delegate both" })).wait(context);
+  await completedDeliveries(owner);
+  const records = await owner.catalog();
+  const draft = records.find(record => record.taskName === "draft")!;
+  const rootRecord = records.find(record => !record.parentId)!;
+  expect(await clearFinishedSubagents(owner.harness, draft.agentId)).toBeNull();
+  expect(await clearFinishedSubagents(owner.harness, rootRecord.agentId)).toBe(2);
+  expect(await clearFinishedSubagents(owner.harness, rootRecord.agentId)).toBe(0);
+
+  await owner.suspend();
+  const reopened = await open();
+  const restored = await reopened.agent(rootRecord);
+  const views = () => reopened.harness.commit(tx => nativeSubagentViews(tx, rootRecord.agentId), context);
+  expect((await views()).map(agent => agent.cleared)).toEqual([true, true]);
+  const started = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  let followed = false;
+  faux.setResponses(Array.from({ length: 20 }, () => async (request, options) => {
+    if (JSON.stringify(request.messages).includes("Your canonical task name is /root/draft.")) {
+      started.resolve();
+      await awaitWithContext(release.promise, { ...context, abortSignal: options?.signal });
+      return fauxAssistantMessage("Follow-up result");
+    }
+    if (followed) return fauxAssistantMessage("Follow-up assigned");
+    followed = true;
+    return fauxAssistantMessage(fauxToolCall("followup_task", { target: "draft", message: "Continue" }), { stopReason: "toolUse" });
+  }));
+  try {
+    const run = await restored.submit({ requestId: "clear-then-follow", text: "Continue the draft" });
+    await awaitWithContext(started.promise, { ...context, abortSignal: AbortSignal.timeout(7000) });
+    expect((await views()).find(agent => agent.id === draft.agentId)).toMatchObject({ cleared: false, status: "running" });
+    expect(await clearFinishedSubagents(reopened.harness, rootRecord.agentId)).toBe(0);
+    release.resolve();
+    await run.wait(context);
+    await completedDeliveries(reopened);
+    const after = await views();
+    expect(after.find(agent => agent.id === draft.agentId)).toMatchObject({ cleared: false, status: "completed" });
+    expect(after.find(agent => agent.taskName === "review")).toMatchObject({ cleared: true, status: "completed" });
+    const assignments = Object.values((await reopened.harness.snapshot(Delegation, context))!.assignments);
+    expect(assignments.filter(item => item.recipient === draft.durableId).map(item => item.result)).toEqual(["Initial result", "Follow-up result"]);
+    expect(await clearFinishedSubagents(reopened.harness, rootRecord.agentId)).toBe(1);
+    expect(await reopened.catalog()).toHaveLength(3);
+    await restored.close();
+  } finally { release.resolve(); }
+}, 20_000);
+
+test("visible nested work keeps its ancestors without reopening unrelated cleared siblings", () => {
+  const parent = { id: "parent", parentId: "root" }, active = { id: "active", parentId: parent.id }, cleared = { id: "cleared", parentId: parent.id };
+  expect([...withAncestors([parent, active, cleared], [active])]).toEqual(["active", "parent"]);
+});
+
 test("concurrent spawn admissions reserve six slots atomically", async () => {
   const { owner, root, faux } = await setup();
   let spawned = false;
@@ -236,7 +355,7 @@ test("root close persisted before cleanup blocks descendants after reopening", a
 test("replay after spawn committed but before its tool result reuses the same child and task", async () => {
   let pause = true;
   const committed = Promise.withResolvers<void>();
-  const { owner, root, faux, open } = await setup(async context => {
+  const { owner, root, faux, open, disabled } = await setup(async context => {
     if (!pause) return;
     committed.resolve();
     await awaitWithContext(new Promise<never>(() => {}), context);
@@ -244,16 +363,17 @@ test("replay after spawn committed but before its tool result reuses the same ch
   let spawned = false;
   faux.setResponses(Array.from({ length: 10 }, () => request => {
     if (JSON.stringify(request.messages).includes("Your canonical task name is /root/once.")) return fauxAssistantMessage("One child result");
-    if (!spawned) { spawned = true; return fauxAssistantMessage(fauxToolCall("spawn_agent", { task_name: "once", message: "Run once", fork_turns: "none" }), { stopReason: "toolUse" }); }
+    if (!spawned) { spawned = true; return fauxAssistantMessage(fauxToolCall("spawn_agent", { task_name: "once", message: "Run once", model: "faux/fast", fork_turns: "none" }), { stopReason: "toolUse" }); }
     return fauxAssistantMessage("Parent done");
   }));
   await root.submit({ requestId: "replay-spawn", text: "Delegate" });
   await committed.promise;
   const firstId = (await owner.catalog()).find(record => record.parentId)!.agentId;
-  await owner.suspend(); pause = false;
+  await owner.suspend(); pause = false; disabled.add("fast");
   const reopened = await open(); await reopened.resume(); await completedDeliveries(reopened);
   const children = (await reopened.catalog()).filter(record => record.parentId);
   expect(children).toHaveLength(1); expect(children[0]?.agentId).toBe(firstId);
+  expect((await (await reopened.harness.conversation(children[0]!.durableId, context))!.agent(context)).model).toEqual({ provider: "faux", modelId: "fast" });
   const receipts = Object.values((await reopened.harness.snapshot(Delegation, context))!.receipts);
   expect(receipts.filter(receipt => receipt.kind === "task")).toHaveLength(1);
   expect(receipts.filter(receipt => receipt.kind === "completion")).toHaveLength(1);

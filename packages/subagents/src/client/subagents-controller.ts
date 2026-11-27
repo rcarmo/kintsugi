@@ -4,13 +4,15 @@ import { Value } from "typebox/value";
 
 export function createSubagentsController(Controller: WorkspaceClientControllerConstructor) {
   return class extends Controller {
-    static targets = ["branch", "panel", "status"];
+    static targets = ["branch", "panel", "status", "cleared"];
     static values = { workspaceId: String, agentId: String };
     declare readonly element: HTMLElement;
     declare readonly branchTargets: HTMLDetailsElement[];
     declare readonly workspaceIdValue: string;
     declare readonly agentIdValue: string;
     declare readonly panelTarget: HTMLDetailsElement;
+    declare readonly clearedTargets: HTMLDetailsElement[];
+    private clearedOpen = false;
     private tree?: CableSubscription;
     private children = new Map<string, { branch: HTMLDetailsElement; subscription: CableSubscription }>();
     private expanded = new Set<string>();
@@ -53,14 +55,18 @@ export function createSubagentsController(Controller: WorkspaceClientControllerC
       if (this.reveal && !this.panelTarget.hidden) {
         this.panelTarget.open = true;
         let branch = this.branchTargets.find((branch) => branch.dataset.subagentId === this.reveal);
+        const cleared = branch?.closest<HTMLDetailsElement>("details[data-subagents-cleared]");
+        if (cleared) this.clearedOpen = true;
         while (branch) {
           this.expanded.add(branch.dataset.subagentId!);
           branch = branch.parentElement!.closest<HTMLDetailsElement>("details[data-subagent-id]") ?? undefined;
         }
       }
+      for (const section of this.clearedTargets) section.open = this.clearedOpen;
       for (const branch of this.branchTargets) branch.open = this.expanded.has(branch.dataset.subagentId!);
       this.syncChildren();
     }
+    clearedTargetConnected(): void { if (this.tree) this.restore(); }
     branchTargetConnected(): void { if (this.tree) this.restore(); }
     branchTargetDisconnected(branch: HTMLDetailsElement): void {
       const id = branch.dataset.subagentId!;
@@ -70,7 +76,7 @@ export function createSubagentsController(Controller: WorkspaceClientControllerC
     private syncChildren(): void {
       for (const branch of this.branchTargets) {
         const id = branch.dataset.subagentId!;
-        const visible = this.tree && this.panelTarget.open && branch.open && !branch.parentElement!.closest("details[data-subagent-id]:not([open])");
+        const visible = this.tree && this.panelTarget.open && branch.open && !branch.parentElement!.closest("details:is([data-subagent-id], [data-subagents-cleared]):not([open])");
         const child = this.children.get(id);
         if (!visible) { child?.subscription.unsubscribe(); this.children.delete(id); continue; }
         if (child?.branch === branch) continue;
@@ -99,6 +105,7 @@ export function createSubagentsController(Controller: WorkspaceClientControllerC
       const details = event.target;
       if (!(details instanceof HTMLDetailsElement)) return;
       if (details === this.panelTarget) { this.syncChildren(); return; }
+      if (details.hasAttribute("data-subagents-cleared")) { this.clearedOpen = details.open; this.syncChildren(); return; }
       if (!details.dataset.subagentId) return;
       if (details.open) this.expanded.add(details.dataset.subagentId);
       else this.expanded.delete(details.dataset.subagentId);

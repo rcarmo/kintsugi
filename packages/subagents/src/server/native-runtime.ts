@@ -1,4 +1,4 @@
-import type { Message } from "@earendil-works/pi-ai";
+import { clampThinkingLevel, type Api, type Message, type Model } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
@@ -60,7 +60,7 @@ async function codexStatus(tx: Tx, record: DurableAgentRecord): Promise<JsonValu
 function output(value: JsonValue) { return { output: [{ type: "text" as const, text: value === "" ? "" : JSON.stringify(value) }] }; }
 
 /** All effects are journal transactions or receipt-addressed native admissions. */
-export function createNativeDelegationExtension(harness: () => Harness) {
+export function createNativeDelegationExtension(harness: () => Harness, availableModel: (provider: string, id: string) => Promise<Model<Api> | undefined>) {
   const anchor = defineTask<Record<string, never>, { phase: "alive" }, null>({
     name: anchorTaskName, version: 1, initial: () => ({ phase: "alive" }),
     phases: { async alive(_task, runtime, context) {
@@ -172,18 +172,34 @@ export function createNativeDelegationExtension(harness: () => Harness) {
   }
 
   const tools = [
-    defineTool({ name: "spawn_agent", description: codexSubagentDescriptions.spawn_agent, replay: "safe", parameters: Type.Object({ task_name: Type.String(), message: Type.String(), fork_turns: Type.Optional(Type.String()) }, { additionalProperties: false }),
+    defineTool({ name: "spawn_agent", description: codexSubagentDescriptions.spawn_agent, replay: "safe", parameters: Type.Object({
+      task_name: Type.String(), message: Type.String(), fork_turns: Type.Optional(Type.String()),
+      model: Type.Optional(Type.String({ maxLength: 1024, description: "An enabled, available chat model as provider/modelId. Omit to inherit the parent’s model." })),
+    }, { additionalProperties: false }),
       async execute(args, api, context) {
         if (!/^[a-z0-9_]+$/.test(args.task_name)) throw new Error("task_name must use lowercase letters, digits and underscores");
         if (!args.message.trim()) throw new Error("message must not be empty");
         const mode = parseForkTurns(args.fork_turns);
-        const source = (await harness().conversation(api.conversationId, context))!;
-        const inherited = selectNativeForkHistory((await source.context(context)).messages, mode);
+        const operation = String(api.taskId);
+        const replay = (await api.snapshot(Delegation, context))?.operations[operation]?.child;
+        let model: Model<Api> | undefined;
+        // Replays reattach to the durable child even if the provider is now unavailable.
+        if (!replay && args.model !== undefined) {
+          const slash = args.model.indexOf("/");
+          if (slash < 1 || slash === args.model.length - 1) throw new Error("Use provider/modelId for model.");
+          model = await availableModel(args.model.slice(0, slash), args.model.slice(slash + 1));
+          if (!model) throw new Error(`Model ${args.model} isn’t available. Enable it and connect its provider in Models.`);
+        }
+        let inherited: Message[] = [];
+        if (!replay && mode !== "none") {
+          const source = (await harness().conversation(api.conversationId, context))!;
+          inherited = selectNativeForkHistory((await source.context(context)).messages, mode);
+        }
         const result = await api.commit(async tx => {
           const state = await tx.doc(Delegation);
           const catalog = await tx.doc(WorkspaceAgents);
           const caller = callerRecord(catalog.agents, api.conversationId);
-          const existing = state.operations[String(api.taskId)]?.child;
+          const existing = state.operations[operation]?.child;
           if (existing) return nativePath(catalog.agents, catalog.agents.find(item => item.agentId === existing)!);
           await assertDurableToolAdmission(tx, api);
           if (nativePath(catalog.agents, caller).split("/").length > 4) throw new Error("Maximum subagent nesting depth is 3");
@@ -193,12 +209,16 @@ export function createNativeDelegationExtension(harness: () => Harness) {
           const created = await tx.createConversation({ ownership: { kind: "task", taskId: owner } });
           const child: DurableAgentRecord = { agentId: randomUUID(), durableId: created.id, parentId: caller.agentId, rootId: root(caller), taskName: args.task_name, label: args.task_name, title: args.message.slice(0, 100) };
           const copied = await tx.doc(AgentDoc, created.id);
-          await configure(tx, created.id, { instructions: copied.instructions?.replace(`Your Kintsugi Agent ID is ${JSON.stringify(caller.agentId)}.`, `Your Kintsugi Agent ID is ${JSON.stringify(child.agentId)}.`) });
+          const instructions = copied.instructions?.replace(`Your Kintsugi Agent ID is ${JSON.stringify(caller.agentId)}.`, `Your Kintsugi Agent ID is ${JSON.stringify(child.agentId)}.`);
+          await configure(tx, created.id, model ? {
+            instructions, model: { provider: model.provider, modelId: model.id },
+            thinkingLevel: clampThinkingLevel(model, copied.thinkingLevel ?? "off"),
+          } : { instructions });
           catalog.agents.push(child);
           for (const message of inherited) await tx.appendEntry(created.id, { kind: "kintsugi.inherited-context", model: [message] });
           await tx.appendEntry(inheritedBoundaryEntry, created.id, { data: { source: nativePath(catalog.agents, caller), count: inherited.length } });
           await enqueue(tx, catalog.agents, caller, child, "task", args.message, `tool:${api.taskId}`, api.callId);
-          state.operations[String(api.taskId)] = { child: child.agentId };
+          state.operations[operation] = { child: child.agentId };
           return nativePath(catalog.agents, child);
         }, context);
         return { ...output({ task_name: result }), details: await communicationDetails(api, context) };

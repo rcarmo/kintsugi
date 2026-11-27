@@ -33,4 +33,4 @@ const kintsugiCollaborationGuidance = `Call collaboration tools directly using t
 
 All agents share the same container, filesystem, and current working directory. Edits made by one agent are immediately visible to all other agents; coordinate edits.
 
-Up to ${maxConcurrentSubagents} subagents can run concurrently in a delegation tree, in addition to the root agent. Spawned agents inherit their parent's model and thinking level; spawn_agent does not accept model or reasoning overrides.`;
+Up to ${maxConcurrentSubagents} subagents can run concurrently in a delegation tree, in addition to the root agent. Each spawn_agent call can select an enabled, available model using provider/modelId. Omit model to inherit the parent's model. The subagent keeps its model for follow-ups; the parent's thinking level is used where supported.`;
