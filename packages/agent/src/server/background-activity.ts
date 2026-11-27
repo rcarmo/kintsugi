@@ -1,5 +1,5 @@
 import { buttonHtml } from "@kintsugi/design-system/button";
-import { contentRowHtml } from "@kintsugi/design-system/content-row";
+import { contentRowHtml, type ContentRowContent } from "@kintsugi/design-system/content-row";
 import { destructiveConfirmationHtml } from "@kintsugi/design-system/destructive-confirmation";
 import { disclosureHtml } from "@kintsugi/design-system/disclosure";
 import { Icons } from "@kintsugi/design-system/icons";
@@ -21,6 +21,8 @@ export interface BackgroundActivity {
   kind: string;
   /** What it is: the command, or the subagent's description. */
   title: string;
+  /** Secondary text under the title, such as a subagent’s model. */
+  subtitle?: string;
   /** Still working. An idle subagent may stay listed while it can be given more work. */
   running: boolean;
   startedAt?: number;
@@ -50,16 +52,19 @@ function ordered(activities: readonly BackgroundActivity[]): Array<{ activity: B
 /** The workspace list's busy spinner. */
 const spinnerHtml = '<span class="status-indicator" role="img" aria-label="Running"><i class="status-spinner sm" aria-hidden="true"></i></span>';
 
-/** A row is its title, with a spinner while it runs; what it is, how long it has run and its progress show once it is opened. */
+/** Background rows show the title, optional subtitle and a spinner while running. */
 function rowHtml(ctx: AgentRenderContext, activity: BackgroundActivity, depth: number, withResult = false): string {
   const path = backgroundActivityPath(ctx, activity.key);
   const label = { kind: "text" as const, text: activity.title };
+  const content: ContentRowContent = activity.subtitle
+    ? { kind: "multiline", width: "fill", label, description: activity.subtitle }
+    : { kind: "compact", width: "fill", label };
   const spinner = activity.running ? spinnerHtml : "";
   const result = withResult && activity.result ? `<span class="agent-background-result" title="${escapeHtml(activity.result)}">${escapeHtml(activity.result)}</span>` : "";
   const row = activity.opens === "drill-in"
-    ? contentRowHtml({ kind: "compact", width: "fill", label, trailingHtml: `${result}${spinner}<span class="agent-background-chevron">${Icons.Next}</span>`, element: { tag: "a", attributesHtml: `href="${escapeHtml(path)}" data-action="agent-background#open"` } })
+    ? contentRowHtml({ ...content, trailingHtml: `${result}${spinner}<span class="agent-background-chevron">${Icons.Next}</span>`, element: { tag: "a", attributesHtml: `href="${escapeHtml(path)}" data-action="agent-background#open"` } })
     // The frame loads once the row is opened, and keeps its contents while the list updates.
-    : disclosureHtml({ summary: { kind: "compact", width: "fill", label, trailingHtml: spinner }, bodyHtml: `<turbo-frame id="${ids.backgroundDetail(ctx, activity.key)}" src="${escapeHtml(path)}" loading="lazy" refresh="morph" data-turbo-permanent></turbo-frame>` });
+    : disclosureHtml({ summary: { ...content, trailingHtml: spinner }, bodyHtml: `<turbo-frame id="${ids.backgroundDetail(ctx, activity.key)}" src="${escapeHtml(path)}" loading="lazy" refresh="morph" data-turbo-permanent></turbo-frame>` });
   return `<div class="agent-background-activity${result ? " agent-background-activity--result" : ""}" style="--agent-background-depth: ${depth}" data-background-key="${escapeHtml(activity.key)}">${row}</div>`;
 }
 

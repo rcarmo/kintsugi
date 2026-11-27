@@ -5,7 +5,7 @@ import { nativeSnapshot, type NativeSubagentView } from "./native-view-state.ts"
 import { Delegation, type Receipt } from "./native-state.ts";
 
 /** What the list reads of the workspace's subagents and their messages. */
-type SubagentState = { agents: ReadonlyArray<Pick<NativeSubagentView, "id" | "parentId" | "rootId" | "taskName" | "status" | "task">>; messages: ReadonlyArray<Pick<Receipt, "id" | "from" | "to" | "kind" | "callId">> };
+type SubagentState = { agents: ReadonlyArray<Pick<NativeSubagentView, "id" | "parentId" | "rootId" | "taskName" | "status" | "task" | "model">>; messages: ReadonlyArray<Pick<Receipt, "id" | "from" | "to" | "kind" | "callId">> };
 
 /** The Agent's latest task for a subagent working for it directly, and the final answer it sent back to that task. */
 function latestExchange(snapshot: SubagentState, rootId: string, agentId: string) {
@@ -18,10 +18,12 @@ function latestExchange(snapshot: SubagentState, rootId: string, agentId: string
 export function subagentActivities(snapshot: SubagentState, rootId: string): BackgroundActivity[] {
   return snapshot.agents.filter(agent => agent.rootId === rootId && agent.status !== "closed").map(agent => {
     const running = agent.status === "running" || agent.status === "pending";
+    const model = agent.model ? `${agent.model.provider}/${agent.model.modelId}` : undefined;
+    const details: BackgroundActivity["details"] = model ? { Model: model, Task: agent.task } : { Task: agent.task };
     // A nested subagent starts and reports in its parent's transcript, not this Agent's.
     const exchange = agent.parentId === rootId ? latestExchange(snapshot, rootId, agent.id) : undefined;
     return {
-      key: agent.id, kind: "subagent", title: agent.taskName, running, details: { Task: agent.task }, stoppable: true, opens: "drill-in",
+      key: agent.id, kind: "subagent", title: agent.taskName, subtitle: model, running, details, stoppable: true, opens: "drill-in",
       progress: agent.status === "pending" ? "Waiting to start" : agent.status === "failed" ? "Failed" : agent.status === "interrupted" ? "Stopped" : undefined,
       startedBy: exchange?.task?.callId ? { itemKey: exchange.task.callId, label: "Tool call" } : undefined, parentKey: agent.parentId === rootId ? undefined : agent.parentId,
     };

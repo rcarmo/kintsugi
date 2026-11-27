@@ -1,16 +1,16 @@
-import { CableTopics, type CableSubscription, type WorkspaceClientControllerConstructor } from "@kintsugi/shared";
+import { CableTopics, selectedWorkspaceAgent, type CableSubscription, type WorkspaceClientControllerConstructor } from "@kintsugi/shared";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 
 export function createSubagentsController(Controller: WorkspaceClientControllerConstructor) {
   return class extends Controller {
-    static targets = ["branch", "panel", "status", "cleared"];
-    static values = { workspaceId: String, agentId: String };
+    static targets = ["branch", "cleared", "content"];
+    static values = { workspaceId: String };
     declare readonly element: HTMLElement;
     declare readonly branchTargets: HTMLDetailsElement[];
     declare readonly workspaceIdValue: string;
-    declare readonly agentIdValue: string;
-    declare readonly panelTarget: HTMLDetailsElement;
+    declare readonly contentTarget: HTMLElement;
+    private agentId = "";
     declare readonly clearedTargets: HTMLDetailsElement[];
     private clearedOpen = false;
     private tree?: CableSubscription;
@@ -19,12 +19,7 @@ export function createSubagentsController(Controller: WorkspaceClientControllerC
     private reveal?: string;
     private message?: string;
 
-    connect(): void {
-      const params = new URL(location.href).searchParams;
-      this.reveal = params.get("agent") === this.agentIdValue ? params.get("subagent") ?? undefined : undefined;
-      this.message = params.get("message") ?? undefined;
-      this.sync();
-    }
+    connect(): void { this.sync(); }
     disconnect(): void { this.stop(); }
     private stop(): void {
       this.tree?.unsubscribe();
@@ -35,25 +30,36 @@ export function createSubagentsController(Controller: WorkspaceClientControllerC
       for (const child of this.children.values()) child.subscription.unsubscribe();
       this.children.clear();
     }
+    private empty(text: string): void {
+      const message = document.createElement("p");
+      message.className = "subagents-empty";
+      message.textContent = text;
+      this.contentTarget.replaceChildren(message);
+    }
     sync(): void {
-      // The control is hidden when empty, but its pane must still listen for new subagents.
-      if (document.hidden || !this.element.parentElement!.checkVisibility()) { this.stop(); return; }
+      const selected = selectedWorkspaceAgent(this.element) ?? "";
+      if (selected !== this.agentId) {
+        this.stop();
+        this.agentId = selected;
+        this.expanded.clear();
+        this.clearedOpen = false;
+        const params = new URL(location.href).searchParams;
+        this.reveal = params.get("agent") === selected ? params.get("subagent") ?? undefined : undefined;
+        this.message = this.reveal ? params.get("message") ?? undefined : undefined;
+        this.contentTarget.id = selected ? `subagents-content-${this.workspaceIdValue}-${selected}` : "";
+        this.empty(selected ? "Loading subagents…" : "Select a Builtin Agent to view its subagents.");
+      }
+      if (!selected || document.hidden || !this.element.checkVisibility()) { this.stop(); return; }
       if (!this.tree) {
-        this.tree = window.KintsugiCable!.subscribe(CableTopics.module("subagents", this.workspaceIdValue, { agentId: this.agentIdValue }), {
-          onReady: () => this.restore(),
-          onDisconnected: () => this.stopChildren(),
+        this.tree = window.KintsugiCable!.subscribe(CableTopics.module("subagents", this.workspaceIdValue, { agentId: selected }), {
+          onReady: () => { if (this.agentId === selected) this.restore(); },
+          onDisconnected: () => { if (this.agentId === selected) this.stopChildren(); },
+          onRejected: () => { if (this.agentId === selected) this.empty("Subagents aren’t available for this Agent."); },
         });
       }
     }
-    statusTargetConnected(status: HTMLElement): void {
-      const empty = Number(status.dataset.subagentCount) === 0;
-      this.panelTarget.hidden = empty;
-      if (empty) this.panelTarget.open = false;
-      else if (this.tree) this.restore();
-    }
     private restore(): void {
-      if (this.reveal && !this.panelTarget.hidden) {
-        this.panelTarget.open = true;
+      if (this.reveal) {
         let branch = this.branchTargets.find((branch) => branch.dataset.subagentId === this.reveal);
         const cleared = branch?.closest<HTMLDetailsElement>("details[data-subagents-cleared]");
         if (cleared) this.clearedOpen = true;
@@ -76,7 +82,7 @@ export function createSubagentsController(Controller: WorkspaceClientControllerC
     private syncChildren(): void {
       for (const branch of this.branchTargets) {
         const id = branch.dataset.subagentId!;
-        const visible = this.tree && this.panelTarget.open && branch.open && !branch.parentElement!.closest("details:is([data-subagent-id], [data-subagents-cleared]):not([open])");
+        const visible = this.tree && branch.open && !branch.parentElement!.closest("details:is([data-subagent-id], [data-subagents-cleared]):not([open])");
         const child = this.children.get(id);
         if (!visible) { child?.subscription.unsubscribe(); this.children.delete(id); continue; }
         if (child?.branch === branch) continue;
@@ -104,7 +110,6 @@ export function createSubagentsController(Controller: WorkspaceClientControllerC
     toggle(event: Event): void {
       const details = event.target;
       if (!(details instanceof HTMLDetailsElement)) return;
-      if (details === this.panelTarget) { this.syncChildren(); return; }
       if (details.hasAttribute("data-subagents-cleared")) { this.clearedOpen = details.open; this.syncChildren(); return; }
       if (!details.dataset.subagentId) return;
       if (details.open) this.expanded.add(details.dataset.subagentId);
@@ -112,7 +117,7 @@ export function createSubagentsController(Controller: WorkspaceClientControllerC
       this.syncChildren();
     }
     loaded(): void {
-      if (!this.reveal || this.panelTarget.hidden) return;
+      if (!this.reveal) return;
       const branch = this.branchTargets.find((branch) => branch.dataset.subagentId === this.reveal);
       if (!branch) return;
       const target = this.message ? branch.querySelector<HTMLElement>(`[data-transcript-anchor="${CSS.escape(this.message)}"], [data-transcript-key="${CSS.escape(this.message)}"]`) : branch;

@@ -1,6 +1,8 @@
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import type { WorkspaceModule } from "@kintsugi/shared";
+import { invalidArguments } from "@kintsugi/core";
+import { Icons } from "@kintsugi/design-system/icons";
 import { registerAgentToolPresentations } from "@kintsugi/agent/server";
 import { enabledModelOptionViews } from "@kintsugi/agent/server/model-state";
 import { listWorkspaceAgents, configureAgentDelegation, registerBuiltinAgentIntegration } from "@kintsugi/builtin-agent/server";
@@ -10,9 +12,12 @@ import { nativeDelegationTranscript } from "./native-transcript.ts";
 import { attributedEntry } from "./native-state.ts";
 import { nativeToolPresentations } from "./native-tool-presentation.ts";
 import { nativeSnapshot } from "./native-view-state.ts";
-import { renderSubagentsControl, handleSubagentRequest, subscribeSubagentTree } from "./subagent-view.ts";
+import { handleSubagentRequest, renderSubagentsWorkView, subagentsWorkKey, subscribeSubagentTree } from "./subagent-view.ts";
 import { subagentBackground } from "./background.ts";
 import { subagentsOpenApiPaths } from "./openapi.ts";
+
+const referenceSchema = Type.Object({ type: Type.Literal("subagents") }, { additionalProperties: false });
+const reference = { type: "subagents" } as const;
 
 export const kintsugiServerModule: WorkspaceModule = {
   id: "subagents",
@@ -33,6 +38,20 @@ export const kintsugiServerModule: WorkspaceModule = {
   },
   staticFiles: { "/subagents.css": { url: new URL("../client/subagents.css", import.meta.url), contentType: "text/css; charset=utf-8" } },
   openApiPaths: subagentsOpenApiPaths,
+  workViews: [{
+    type: "subagents",
+    parseReference(value) {
+      if (!Value.Check(referenceSchema, value)) throw invalidArguments("Invalid Subagents view");
+      return value;
+    },
+    identity: () => "workspace",
+    render: ({ workspaceId }) => renderSubagentsWorkView(workspaceId),
+  }],
+  commands: [{ id: "subagents.open", execute: () => ({ createdWorkView: reference }) }],
+  attachToWorkspace: () => ({
+    workViews: [{ reference, sourceKey: subagentsWorkKey, label: "Subagents", kind: "contextual", iconHtml: Icons.Subagents, availability: { phase: "live" }, initiallyOpen: false }],
+    commands: [{ id: "subagents.open", label: "Open Subagents", description: "Inspect the selected Agent’s delegated work.", scope: "workspace", surfaces: { ui: { placement: "work-launcher", label: "Subagents", iconHtml: Icons.Subagents } } }],
+  }),
   cableChannels: [{
     name: "subagents",
     subscribe(identifier, listener) {
@@ -58,7 +77,8 @@ export const kintsugiServerModule: WorkspaceModule = {
           const query = new URLSearchParams({ agent: target, agentTarget: message.id });
           return new Response(null, { status: 303, headers: { location: `/workspaces/${encodeURIComponent(workspaceId)}?${query}` } });
         }
-        const query = new URLSearchParams({ agent: child.rootId, subagent: child.id, message: message.id });
+        await context.openWorkView(workspaceId, reference, { select: false });
+        const query = new URLSearchParams({ agent: child.rootId, workView: subagentsWorkKey, subagent: child.id, message: message.id });
         return new Response(null, { status: 303, headers: { location: `/workspaces/${encodeURIComponent(workspaceId)}?${query}` } });
       }
       return handleSubagentRequest(request, url, { events: context.events });

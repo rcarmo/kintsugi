@@ -9,20 +9,17 @@ import { clearFinishedSubagents, isActiveSubagent, nativeSnapshot, SubagentClear
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { Delegation } from "./native-state.ts";
 
-export async function renderSubagentsControl(workspaceId: string, agentId: string): Promise<string> {
-  const agents = (await nativeSnapshot(workspaceId)).agents.filter(agent => agent.rootId === agentId);
-  return `<div class="subagents-control" data-controller="subagents"
-    data-subagents-workspace-id-value="${h(workspaceId)}" data-subagents-agent-id-value="${h(agentId)}"
-    data-action="kintsugi:workspace-agent-selected@document->subagents#sync kintsugi:workspace-pane-visible@document->subagents#sync kintsugi:workspace-pane-hidden@document->subagents#sync visibilitychange@document->subagents#sync agent:turn-reveal->subagents#loaded:stop toggle->subagents#toggle:capture">${disclosureHtml({
-    element: { attributesHtml: `data-subagents-target="panel"${agents.length ? "" : " hidden"}` },
-    summary: { kind: "compact", width: "fill", label: { kind: "text", text: "Subagents" },
-      trailingHtml: `<span id="subagents-status-${h(agentId)}">${statusHtml(agents)}</span>` },
-    bodyHtml: `<div id="${h(contentId(workspaceId, agentId))}" data-turbo-permanent></div>`,
-  })}</div>`;
-}
-function statusHtml(agents: SubagentRecord[]): string {
-  const count = agents.filter(isActiveSubagent).length;
-  return `<span data-subagents-target="status" data-subagent-count="${agents.length}">${count} active</span>`;
+export const subagentsWorkKey = "subagents:workspace";
+
+/** The Work pane follows whichever Agent is selected on its workspace surface. */
+export function renderSubagentsWorkView(workspaceId: string): string {
+  return `<section class="work-view-pane" data-work-view-source="${subagentsWorkKey}">
+    <div id="subagents-work-${h(workspaceId)}" class="subagents-work-view" data-turbo-permanent data-controller="subagents"
+      data-subagents-workspace-id-value="${h(workspaceId)}"
+      data-action="kintsugi:workspace-agent-selected@document->subagents#sync kintsugi:workspace-pane-visible@document->subagents#sync kintsugi:workspace-pane-hidden@document->subagents#sync visibilitychange@document->subagents#sync agent:turn-reveal->subagents#loaded:stop toggle->subagents#toggle:capture">
+      <div data-subagents-target="content"><p class="subagents-empty">Select a Builtin Agent to view its subagents.</p></div>
+    </div>
+  </section>`;
 }
 
 export const handleSubagentRequest: AgentRouteHandler = async (request, url) => {
@@ -39,7 +36,7 @@ export const handleSubagentRequest: AgentRouteHandler = async (request, url) => 
     if (cleared === null) return new Response("Agent not found", { status: 404 });
     if (requestAcceptsJson(request)) return Response.json({ cleared });
     if (!request.headers.get("accept")?.includes("text/vnd.turbo-stream.html")) {
-      return new Response(null, { status: 303, headers: { location: `/workspaces/${encodeURIComponent(workspaceId)}?${new URLSearchParams({ agent: parent.agentId })}` } });
+      return new Response(null, { status: 303, headers: { location: `/workspaces/${encodeURIComponent(workspaceId)}?${new URLSearchParams({ agent: parent.agentId, workView: subagentsWorkKey })}` } });
     }
     const agents = (await nativeSnapshot(workspaceId)).agents.filter(agent => agent.rootId === parent.agentId);
     return turboStreamResponse(turboStream("update", contentId(workspaceId, parent.agentId), paneHtml(workspaceId, parent.agentId, agents), { method: "morph" }));
@@ -75,6 +72,7 @@ function childrenHtml(workspaceId: string, parentId: string, children: SubagentR
   return `<div id="${h(childrenId(workspaceId, parentId))}" class="action-list">${children.map(agent => branchHtml(workspaceId, agent, all, group, open)).join("")}</div>`;
 }
 function paneHtml(workspaceId: string, rootId: string, agents: SubagentRecord[], open = new Set<string>(), reveal?: string | null): string {
+  if (!agents.length) return '<p class="subagents-empty">No subagents for this Agent yet.</p>';
   const shown = withAncestors(agents, agents.filter(agent => !agent.cleared));
   const active = withAncestors(agents, agents.filter(isActiveSubagent));
   const visible = agents.filter(agent => shown.has(agent.id));
@@ -103,10 +101,6 @@ export async function subscribeSubagentTree(workspaceId: string, rootId: string,
     return [{
       target: contentId(workspaceId, rootId),
       html: paneHtml(workspaceId, rootId, agents),
-    }, {
-      target: `subagents-status-${rootId}`,
-      html: statusHtml(agents),
-      morph: false,
     }];
   });
   const watches = await Promise.all([

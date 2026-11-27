@@ -133,7 +133,7 @@ describe("Workspace presentation", () => {
     expect((await presentation.listWorkViews("workspace-1")).map((view) => view.reference)).toEqual(files);
   });
 
-  test("retired Review and Subagents references are omitted when loading persisted Work views", async () => {
+  test("legacy Review and unregistered Subagents references are omitted when loading persisted Work views", async () => {
     const metadataDir = join(dataDir, "workspaces", "workspace-1", "metadata");
     await mkdir(metadataDir, { recursive: true });
     await writeFile(join(metadataDir, "presentation.json"), JSON.stringify({
@@ -147,6 +147,24 @@ describe("Workspace presentation", () => {
     const stored = await Bun.file(join(metadataDir, "presentation.json")).json();
     expect(stored.workViews).toEqual([{ reference: { type: "file", path: "/work/README.md" } }]);
     await expect(presentation.openWorkView("workspace-1", { type: "review" })).rejects.toThrow("unknown Work view type: review");
+  });
+
+  test("registered Subagents view survives saving and reopening", async () => {
+    const schema = Type.Object({ type: Type.Literal("subagents") });
+    const adapters: WorkspaceWorkViewContribution[] = [...workViewContributions, {
+      type: "subagents",
+      parseReference(value) {
+        if (!Value.Check(schema, value)) throw new Error("invalid subagents reference");
+        return value;
+      },
+      identity: () => "workspace",
+    }];
+    const store = createWorkspacePresentationStore({ dataDir, workViewContributions: adapters });
+    await store.initialize("workspace-1");
+    await store.openWorkView("workspace-1", { type: "subagents" });
+    const restarted = createWorkspacePresentationStore({ dataDir, workViewContributions: adapters });
+    expect(await restarted.listWorkViews("workspace-1")).toEqual([{ reference: { type: "subagents" } }]);
+    expect(await restarted.openWorkView("workspace-1", { type: "subagents" })).toEqual({ opened: false });
   });
 
   test("malformed stored presentation state fails visibly instead of being reinitialized", async () => {

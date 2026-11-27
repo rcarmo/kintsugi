@@ -1,11 +1,7 @@
 .builtin-agent-shell .agent-transcript-region { flex-direction: column; }
-.subagents-control { flex: none; padding: 8px var(--agent-inline-gutter); min-height: 0; min-width: 0; }
-.subagents-control:has(> details:not([open])) { padding-block-end: 0; }
-.builtin-agent-shell .agent-transcript-region:has(> .subagents-control > details:not([hidden])) > .agent-transcript { padding-block-start: 0; }
-.subagents-control:has(> details[open]) { flex: 1; overflow: auto; }
-.builtin-agent-shell .agent-transcript-region:has(> .subagents-control > details[open]) > .agent-transcript { display: none; }
-.builtin-agent-shell .agent-transcript-region:has(> .subagents-control > details[open]) [data-agent-pane-target="transcriptEnd"] { display: none; }
-.subagents-control:has(> details[hidden]) { display: none; }
+/* The Work pane owns scrolling independently of the Agent transcript. */
+.subagents-work-view { min-height: 0; height: 100%; overflow: auto; padding: 12px; }
+.subagents-empty { color: var(--text-muted); margin: 0; }
 .subagents-actions { margin-block: 0 8px; }
 .subagent-state { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: var(--text-code); color: var(--text-muted); }
 .subagent-branch .agent-transcript { height: auto; overflow: visible; padding: 0; }

@@ -96,8 +96,9 @@ export function createWorkspacePresentationStore(options: WorkspacePresentationS
     }
     const workViews = storedWorkViews.flatMap((entry, index) => {
       if (!isJsonObject(entry)) throw presentationError(workspaceId, `Work view ${index} must be an object`);
-      // Retired Work views must not prevent a Workspace from loading.
-      if (isJsonObject(entry.reference) && (entry.reference.type === "review" || entry.reference.type === "subagents")) return [];
+      // Skip legacy Review views and Subagents entries only when the Subagents module is absent.
+      const type = isJsonObject(entry.reference) ? entry.reference.type : undefined;
+      if (type === "review" || (type === "subagents" && !adapters.has(type))) return [];
       return [{ reference: parseReference(workspaceId, entry.reference, true) }];
     });
     const identities = workViews.map(({ reference }) => identity(reference));

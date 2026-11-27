@@ -7,6 +7,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, type Fa
 import { configure, createRegistry, defineExtension, LiveDoc, type Harness, type Extension } from "@earendil-works/pi-durable";
 import { openDurableAgentRuntime, type DurableAgentRuntime } from "@kintsugi/builtin-agent/server/durable-runtime";
 import { createNativeDelegationExtension } from "../../src/server/native-runtime.ts";
+import { subagentActivities } from "../../src/server/background.ts";
 import { clearFinishedSubagents, nativeSubagentViews, withAncestors } from "../../src/server/native-view-state.ts";
 import { Delegation, Mailbox } from "../../src/server/native-state.ts";
 import { WorkspaceAgents } from "@kintsugi/builtin-agent/server";
@@ -205,6 +206,12 @@ test("parallel persistent subagents use distinct chosen models on their first tu
     expect(Object.fromEntries(used)).toEqual({ fast: "faux/fast", review: "faux/vendor/review", inherit: "faux/faux-1" });
     const records = await owner.catalog();
     expect(records.filter(record => record.parentId).map(record => record.taskName).sort()).toEqual(["fast", "inherit", "review"]);
+    const rootId = records.find(record => !record.parentId)!.agentId;
+    const agents = await owner.harness.commit(tx => nativeSubagentViews(tx, rootId), context);
+    const activities = subagentActivities({ agents, messages: [] }, rootId);
+    expect(Object.fromEntries(activities.map(activity => [activity.title, [activity.subtitle, activity.details.Model]]))).toEqual({
+      fast: ["faux/fast", "faux/fast"], review: ["faux/vendor/review", "faux/vendor/review"], inherit: ["faux/faux-1", "faux/faux-1"],
+    });
     const history = JSON.stringify(await root.history({}, 100, undefined, context));
     expect(history).toContain("Model faux/disabled isn’t available");
     expect(history).toContain("Use provider/modelId for model.");
