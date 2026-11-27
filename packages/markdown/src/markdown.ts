@@ -42,7 +42,8 @@ const taskStates = new Map([
   ["completed", { label: "Completed", icon: '<path d="m3.5 8 3 3 6-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>' }],
 ]);
 markdown.core.ruler.before("inline", "kintsugi_task_list", state => {
-  const { checklist }: MarkdownEnvironment = state.env;
+  // SAFETY: The renderer is private to this module, and all parse and render calls pass MarkdownEnvironment.
+  const { checklist } = state.env as MarkdownEnvironment;
   if (!checklist) return;
   const lists: { token: Token; items: number; tasks: number }[] = [];
   for (const [index, token] of state.tokens.entries()) {
@@ -71,7 +72,7 @@ markdown.core.ruler.before("inline", "kintsugi_task_list", state => {
 });
 markdown.renderer.rules.list_item_open = (tokens, index, options, _environment, renderer) => {
   const opening = renderer.renderToken(tokens, index, options);
-  const task = taskStates.get(tokens[index]!.attrGet("data-markdown-task") ?? "");
+  const task = taskStates.get(String(tokens[index]!.attrGet("data-markdown-task") ?? ""));
   return task ? `${opening}<span class="markdown-task-icon" role="img" aria-label="${task.label}"><svg viewBox="0 0 16 16" aria-hidden="true">${task.icon}</svg></span>` : opening;
 };
 
