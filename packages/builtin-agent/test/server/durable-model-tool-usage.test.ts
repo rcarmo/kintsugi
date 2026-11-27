@@ -22,10 +22,11 @@ test("classifier and image calls preserve actual provider/model attribution with
   };
   const registry = createRegistry();
   const rawUsage = { input: 3, output: 2, cacheRead: 7, cacheWrite: 1, totalTokens: 13, cost: { input: 0.01, output: 0.02, cacheRead: 0.001, cacheWrite: 0.002, total: 0.033 } };
+  const imageUsage = { ...rawUsage, imageOutput: 1 };
   let executed = 0;
   const internalTools = ["classify", "generateImages"].map(name => attributeModelToolUsage(defineTool({
     name: `pi.codemode.models.${name}`, description: "Native model usage fixture", parameters: Type.Object({ model: Type.Object({ provider: Type.String(), id: Type.String() }) }), callers: ["tools"],
-    async execute() { executed++; return { output: [{ type: "text", text: "model result" }], usage: rawUsage }; },
+    async execute() { executed++; return { output: [{ type: "text", text: "model result" }], usage: name === "generateImages" ? imageUsage : rawUsage }; },
   })));
   registry.install(defineExtension({ name: "model-usage-fixture", tools: [...internalTools, defineTool({
     name: "invoke_models", description: "Invoke native model tools", parameters: Type.Object({}),
@@ -46,7 +47,8 @@ test("classifier and image calls preserve actual provider/model attribution with
     const usage = await workspace.harness.snapshot(ModelToolUsage, agent.id, context);
     expect(usage?.models["classifier-provider/classifier-model"]).toMatchObject({ input: 6, output: 4, cacheRead: 14, cacheWrite: 2, totalTokens: 26 });
     expect(usage?.models["classifier-provider/classifier-model"]?.cost.total).toBeCloseTo(0.066);
-    expect(usage?.models["image-provider/image-model"]).toEqual(rawUsage);
+    expect(usage?.models["classifier-provider/classifier-model"]).not.toHaveProperty("imageOutput");
+    expect(usage?.models["image-provider/image-model"]).toEqual(imageUsage);
     expect(Object.keys(usage!.calls)).toHaveLength(3); expect(executed).toBe(3);
     expect(prefixes[0]).toBe(prefixes[1]);
     const originalSession = sessionIds[0];

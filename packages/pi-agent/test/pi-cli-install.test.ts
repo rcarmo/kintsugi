@@ -27,7 +27,9 @@ test("Pi configuration installation refreshes managed fields atomically and pres
       } }));
       const { installPiCliConfiguration } = await import(${JSON.stringify(join(import.meta.dir, "../src/server/pi-cli.ts"))});
       await Promise.all([installPiCliConfiguration("one"), installPiCliConfiguration("two")]);
-      expect(JSON.parse(await readFile(directory + "/settings.json", "utf8"))).toMatchObject({ theme: "light", enabledModels: ["custom/test"], transport: "sse" });
+      const settings = JSON.parse(await readFile(directory + "/settings.json", "utf8"));
+      expect(settings).toMatchObject({ theme: "light", enabledModels: ["custom/test"], transport: "sse", enableAnalytics: false });
+      expect(settings).not.toHaveProperty("enableInstallTelemetry");
       for (const name of ["auth.json", "models.json", "settings.json"]) {
         expect((await stat(directory + "/" + name)).mode & 0o777).toBe(0o600);
         expect(await readFile(directory + "/" + name, "utf8")).not.toContain("real-secret-never-copy");

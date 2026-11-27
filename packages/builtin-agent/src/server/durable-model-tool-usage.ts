@@ -33,6 +33,7 @@ export function attributeModelToolUsage(tool: ToolRegistration): ToolRegistratio
       for (const field of costFields) total.cost[field] += usage.cost[field];
       if (usage.reasoning !== undefined) total.reasoning = (total.reasoning ?? 0) + usage.reasoning;
       if (usage.cacheWrite1h !== undefined) total.cacheWrite1h = (total.cacheWrite1h ?? 0) + usage.cacheWrite1h;
+      if (usage.imageOutput !== undefined) total.imageOutput = (total.imageOutput ?? 0) + usage.imageOutput;
       if (!previous) state.models[key] = total;
       state.calls[call] = true;
     }, context);

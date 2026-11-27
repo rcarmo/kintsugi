@@ -13,7 +13,7 @@ const directory = path.join(require('node:os').homedir(), '.pi', 'agent');
 const input = JSON.parse(fs.readFileSync(0, 'utf8'));
 const settingsPath = path.join(directory, 'settings.json');
 const settings = fs.existsSync(settingsPath) ? JSON.parse(fs.readFileSync(settingsPath, 'utf8')) : {};
-Object.assign(settings, { enabledModels: input.enabledModels, transport: 'sse', enableInstallTelemetry: false, enableAnalytics: false });
+Object.assign(settings, { enabledModels: input.enabledModels, transport: 'sse', enableAnalytics: false });
 for (const [name, content] of Object.entries({ 'auth.json': input.auth, 'models.json': input.models, 'settings.json': settings })) {
   const target = path.join(directory, name);
   const temporary = target + '.' + require('node:crypto').randomUUID();

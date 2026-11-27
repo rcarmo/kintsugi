@@ -14,8 +14,8 @@
     "typebox": "^1.0.57"
   },
   "peerDependencies": {
-    "@earendil-works/pi-durable": "1.6.1",
-    "@earendil-works/pi-ai": "1.6.1",
-    "@earendil-works/chord": "1.6.1"
+    "@earendil-works/pi-durable": "1.7.0",
+    "@earendil-works/pi-ai": "1.7.0",
+    "@earendil-works/chord": "1.7.0"
   }
 }
