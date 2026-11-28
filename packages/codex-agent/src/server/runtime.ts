@@ -368,6 +368,7 @@ export class CodexRuntime {
       await setAgentModelPreference(agentTypeId, { provider: "openai-codex", id: model.model }, effort);
       this.save();
       this.changed();
+      await this.events.emit("workspace_agent_view_invalidated", { workspaceId: this.workspaceId, agentId: this.agentId });
     });
   }
   async reset() {

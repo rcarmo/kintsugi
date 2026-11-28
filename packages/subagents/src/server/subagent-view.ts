@@ -3,23 +3,46 @@ import { disclosureHtml, type DisclosureSummary } from "@kintsugi/design-system/
 import { listWorkspaceAgents, durableWorkspaceOwner, WorkspaceAgents, type AgentLivePresentationSubscription, type AgentRouteHandler } from "@kintsugi/builtin-agent/server";
 import { ids } from "@kintsugi/agent/server/render-context";
 import { requestAcceptsJson } from "@kintsugi/core";
-import { createLivePresentation, escapeHtml as h, turboStream, turboStreamResponse } from "@kintsugi/shared";
+import { createLivePresentation, escapeHtml as h, turboStream, turboStreamResponse, type WorkspaceAgentSettings, type WorkspaceAgentTab } from "@kintsugi/shared";
 import { response } from "@kintsugi/shared/http";
-import { clearFinishedSubagents, isActiveSubagent, nativeSnapshot, SubagentClearance, viewPath, withAncestors, type NativeSubagentView as SubagentRecord } from "./native-view-state.ts";
+import { clearFinishedSubagents, isActiveSubagent, nativeSnapshot, nativeSubagentViews, SubagentClearance, viewPath, withAncestors, type NativeSubagentView as SubagentRecord } from "./native-view-state.ts";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { Delegation } from "./native-state.ts";
 
 export const subagentsWorkKey = "subagents:workspace";
 
-/** The Work pane follows whichever Agent is selected on its workspace surface. */
-export function renderSubagentsWorkView(workspaceId: string): string {
+/** The Work pane lists all Agent tabs; only Builtin Agents have native delegation trees. */
+export async function renderSubagentsWorkView(
+  workspaceId: string,
+  roots: readonly WorkspaceAgentTab[],
+  agentSettings: (agents: readonly WorkspaceAgentTab[]) => Promise<ReadonlyMap<string, WorkspaceAgentSettings>>,
+): Promise<string> {
+  const owner = roots.some(root => root.agentTypeId === "builtin") ? await durableWorkspaceOwner(workspaceId) : undefined;
+  const grouped = byRoot(owner ? await owner.harness.commit(tx => nativeSubagentViews(tx), BACKGROUND_CONTEXT) : []);
+  const settings = await agentSettings(roots);
   return `<section class="work-view-pane" data-work-view-source="${subagentsWorkKey}">
-    <div id="subagents-work-${h(workspaceId)}" class="subagents-work-view" data-turbo-permanent data-controller="subagents"
+    <div id="subagents-work-${h(workspaceId)}" class="subagents-work-view" data-controller="subagents"
       data-subagents-workspace-id-value="${h(workspaceId)}"
-      data-action="kintsugi:workspace-agent-selected@document->subagents#sync kintsugi:workspace-pane-visible@document->subagents#sync kintsugi:workspace-pane-hidden@document->subagents#sync visibilitychange@document->subagents#sync agent:turn-reveal->subagents#loaded:stop toggle->subagents#toggle:capture">
-      <div data-subagents-target="content"><p class="subagents-empty">Select a Builtin Agent to view its subagents.</p></div>
+      data-action="kintsugi:workspace-pane-visible@document->subagents#sync kintsugi:workspace-pane-hidden@document->subagents#sync visibilitychange@document->subagents#sync agent:turn-reveal->subagents#loaded:stop toggle->subagents#toggle:capture">
+      ${roots.length ? roots.map(root => {
+        const query = new URLSearchParams({ agent: root.id });
+        const name = `<a href="/workspaces/${encodeURIComponent(workspaceId)}?${h(query.toString())}">${h(root.title)}</a>`;
+        const configured = settingsText(settings.get(root.id));
+        const children = root.agentTypeId === "builtin" ? `<div id="${h(contentId(workspaceId, root.id))}" data-turbo-permanent data-subagents-target="tree">${paneHtml(workspaceId, root.id, grouped.get(root.id) ?? [])}</div>` : "";
+        return `<section class="subagents-root"><h3>${name}</h3>${configured ? `<p class="subagents-settings">${h(configured)}</p>` : ""}${children}</section>`;
+      }).join("") : '<p class="subagents-empty">No Agents in this workspace yet.</p>'}
     </div>
   </section>`;
+}
+
+function byRoot(agents: readonly SubagentRecord[]): Map<string, SubagentRecord[]> {
+  const grouped = new Map<string, SubagentRecord[]>();
+  for (const agent of agents) {
+    const children = grouped.get(agent.rootId);
+    if (children) children.push(agent);
+    else grouped.set(agent.rootId, [agent]);
+  }
+  return grouped;
 }
 
 export const handleSubagentRequest: AgentRouteHandler = async (request, url) => {
@@ -38,7 +61,7 @@ export const handleSubagentRequest: AgentRouteHandler = async (request, url) => 
     if (!request.headers.get("accept")?.includes("text/vnd.turbo-stream.html")) {
       return new Response(null, { status: 303, headers: { location: `/workspaces/${encodeURIComponent(workspaceId)}?${new URLSearchParams({ agent: parent.agentId, workView: subagentsWorkKey })}` } });
     }
-    const agents = (await nativeSnapshot(workspaceId)).agents.filter(agent => agent.rootId === parent.agentId);
+    const agents = await owner.harness.commit(tx => nativeSubagentViews(tx, parent.agentId), BACKGROUND_CONTEXT);
     return turboStreamResponse(turboStream("update", contentId(workspaceId, parent.agentId), paneHtml(workspaceId, parent.agentId, agents), { method: "morph" }));
   }
   const snapshot = await nativeSnapshot(workspaceId);
@@ -53,13 +76,23 @@ export const handleSubagentRequest: AgentRouteHandler = async (request, url) => 
 
 function contentId(workspaceId: string, rootId: string): string { return `subagents-content-${workspaceId}-${rootId}`; }
 function childrenId(workspaceId: string, parentId: string): string { return `subagent-children-${workspaceId}-${parentId}`; }
+function settingsText(settings: WorkspaceAgentSettings | undefined): string | undefined {
+  const parts: string[] = [];
+  if (settings?.model) parts.push(settings.model);
+  if (settings?.thinkingLevel) parts.push(`Thinking: ${settings.thinkingLevel}`);
+  return parts.length ? parts.join(" · ") : undefined;
+}
 function branchSummary(agent: SubagentRecord, agents: SubagentRecord[]): DisclosureSummary {
   const tone = isActiveSubagent(agent) ? "running" : agent.status === "failed" ? "danger" : agent.status === "completed" ? "success" : "";
   const slots: Pick<DisclosureSummary, "width" | "attributesHtml" | "label" | "trailingHtml"> = {
     width: "fill", attributesHtml: `id="subagent-summary-${h(agent.id)}"`, label: { kind: "text", text: viewPath(agents, agent.id) },
     trailingHtml: `<span class="subagent-state"><span class="status-dot ${tone}"></span>${h(agent.status)}</span>`,
   };
-  return agent.model ? { ...slots, kind: "multiline", description: `${agent.model.provider}/${agent.model.modelId}` } : { ...slots, kind: "compact" };
+  const settings: WorkspaceAgentSettings = {};
+  if (agent.model) settings.model = `${agent.model.provider}/${agent.model.modelId}`;
+  if (agent.thinkingLevel) settings.thinkingLevel = agent.thinkingLevel;
+  const description = settingsText(settings);
+  return description ? { ...slots, kind: "multiline", description } : { ...slots, kind: "compact" };
 }
 function branchHtml(workspaceId: string, agent: SubagentRecord, all: SubagentRecord[], group: SubagentRecord[], open: Set<string>): string {
   return `<div class="subagent-branch">${disclosureHtml({
@@ -90,19 +123,11 @@ function paneHtml(workspaceId: string, rootId: string, agents: SubagentRecord[],
   return `${action}${main}${archive}`;
 }
 
-/** Publish the tree while preserving independently subscribed child transcripts. */
-export async function subscribeSubagentTree(workspaceId: string, rootId: string, listener: (html: string) => void): Promise<AgentLivePresentationSubscription> {
-  const roots = await listWorkspaceAgents(workspaceId);
-  if (!roots.some((root) => root.agentId === rootId)) throw new Error(`Agent not found: ${rootId}`);
+/** Publish each Builtin Agent's subtree without replacing its open child transcripts. */
+export async function subscribeSubagentTree(workspaceId: string, listener: (html: string) => void): Promise<AgentLivePresentationSubscription> {
   const owner = await durableWorkspaceOwner(workspaceId);
-  let snapshot = await nativeSnapshot(workspaceId);
-  const presentation = createLivePresentation(() => {
-    const agents = snapshot.agents.filter(agent => agent.rootId === rootId);
-    return [{
-      target: contentId(workspaceId, rootId),
-      html: paneHtml(workspaceId, rootId, agents),
-    }];
-  });
+  let regions: { target: string; html: string }[] = [];
+  const presentation = createLivePresentation(() => regions);
   const watches = await Promise.all([
     owner.harness.watchDoc(WorkspaceAgents, BACKGROUND_CONTEXT),
     owner.harness.watchDoc(Delegation, BACKGROUND_CONTEXT),
@@ -110,7 +135,12 @@ export async function subscribeSubagentTree(workspaceId: string, rootId: string,
     owner.harness.watchTaskGraph(BACKGROUND_CONTEXT),
   ]);
   let updates = Promise.resolve();
-  const refresh = () => updates = updates.then(async () => { snapshot = await nativeSnapshot(workspaceId); presentation.invalidate(); });
+  const refresh = () => updates = updates.then(async () => {
+    const roots = await listWorkspaceAgents(workspaceId);
+    const grouped = byRoot(await owner.harness.commit(tx => nativeSubagentViews(tx), BACKGROUND_CONTEXT));
+    regions = roots.map(({ agentId }) => ({ target: contentId(workspaceId, agentId), html: paneHtml(workspaceId, agentId, grouped.get(agentId) ?? []) }));
+    presentation.invalidate();
+  });
   for (const watch of watches) watch?.start(refresh);
   await refresh();
 

@@ -14,11 +14,11 @@ and does not change the pinned tool descriptions below.
 
 Reference: OpenAI Codex [`574a36ff99f0807a24f5b043f593122bf151908d`](https://github.com/openai/codex/tree/574a36ff99f0807a24f5b043f593122bf151908d), cloned at `/persistent/kintsugi-codex-reference` in the implementation workspace. Source descriptions and schemas are attributed in NOTICE; the Apache-2.0 license is in `docs/licenses/codex-LICENSE`.
 
-Kintsugi uses the **MultiAgentV2** tools with role overrides and nickname metadata hidden. `spawn_agent` supports an optional model choice:
+Kintsugi uses the **MultiAgentV2** tools with role overrides and nickname metadata hidden. `spawn_agent` supports optional model and thinking-level choices:
 
 | Tool | Input | Result |
 | --- | --- | --- |
-| `spawn_agent` | `task_name`, `message`, optional `fork_turns` and `model` | `{ task_name: "/root/child" }` |
+| `spawn_agent` | `task_name`, `message`, optional `fork_turns`, `model` and `thinkingLevel` | `{ task_name: "/root/child" }` |
 | `send_message` | `target`, `message` | Empty text acknowledgement |
 | `followup_task` | `target`, `message` | Empty text acknowledgement |
 | `list_agents` | Optional `path_prefix` | `{ agents: [{ agent_name, agent_status }] }`, including `/root` |
@@ -29,7 +29,7 @@ Descriptions are copied from the pinned `multi_agents_spec.rs`. Input property d
 
 Canonical names are `/root`, `/root/review`, `/root/review/check`, etc. Relative references resolve beneath the caller. The same leaf name can exist under different parents. IDs remain internal correlation data rather than part of the message text. A non-root agent can receive follow-up tasks or interruption from another agent in the same tree. Other root trees/workspaces remain isolated.
 
-Pass an enabled, available chat model as `provider/modelId`, for example `github-copilot/mai-code-2`. Omitting `model` inherits the parent’s model. The Subagents pane shows each child’s model, and follow-up turns use the same model. The child inherits the parent’s thinking level where the selected model supports it.
+Pass an enabled, available chat model as `provider/modelId`, for example `github-copilot/mai-code-2`. Omit `model` to inherit the parent’s model. Set `thinkingLevel` to a level supported by the child’s effective model, or omit it to inherit the parent’s level; a changed model clamps inherited thinking to a supported level. Invalid explicit levels fail before a child is created. The Subagents pane shows each main Agent and child’s configured model and thinking level. Follow-up turns retain both settings.
 
 Use **Clear finished** in the Subagents pane to move settled subagents into **Cleared**. Their transcripts and follow-ups remain available, and new activity brings them back to the main list. Active branches stay visible.
 
@@ -68,13 +68,13 @@ On Codex Responses, this is not a `user` message with a decorative prefix. Per-c
 
 ## Presentation is separate from model delivery
 
-Open **Subagents** from the Work-view launcher. It follows the selected root Agent. There is no root selector, repeated header, or separate communication dashboard. Subagents form a divider-free content-row list with normal body typography, canonical paths and lifecycle state; each opens its native Kintsugi transcript. Nested Subagents appear beneath their parent. Multiple transcripts can stay open, with browser-local expansion state retained per root.
+Open **Subagents** from the Work-view launcher to see every Agent in the workspace, whether or not an Agent tab is selected. Delegated subagents appear beneath their parents. Expand a subagent to read its transcript. **Clear finished** applies to the Agent whose section it appears in.
 
 Incoming messages appear in the recipient transcript from the durable routing ledger, immediately after receipt is persisted—not only when Pi incorporates them into model context. They are foldable content-rows with a green incoming-message dot and labels such as “Incoming message from: /root/review type: update”. Message, completion and task traffic display as update, completed and task. Expanding the row reveals the body and delivery state, without transport IDs. A subtle **Pending context** label distinguishes queued traffic; failure remains visible. Updating delivery changes the same identified entry, rather than inserting a second copy. Arrival order is a presentation timeline; it is not a claim about provider message ordering or that a model read/acted on a message.
 
-Outgoing messages remain visible as their actual tool calls. Automatic outgoing completion is correlated with the Subagent’s final response. The “Open subagent” action inside an expanded incoming entry opens the Subagents Work view (including if it was closed), expands the corresponding Subagent and its containing Working section when necessary, and reveals the related tool call or final response. UUIDs are carried internally for reliable navigation, not shown as prose.
+Outgoing messages remain visible as their actual tool calls. Automatic outgoing completion is correlated with the Subagent’s final response. The “Open subagent” action inside an expanded incoming entry opens the Subagents Work view (including if it was closed), expands the corresponding subagent, its parents and **Cleared** if needed, and reveals the related tool call or final response. UUIDs are carried internally for reliable navigation, not shown as prose.
 
-All HTML is server-rendered. The selected root has a Cable tree subscription: an authoritative initial snapshot followed by inserted/removed branches and changed status summaries. Expanded Subagents use the existing Agent live-presentation streams, including streamed text and tool activity. Collapsed descendants, hidden views and background browser tabs release subscriptions; opening and reconnecting obtain fresh snapshots. There is no polling timer and historical inspection or text selection does not pause other updates. Status updates never replace child transcript DOM. Turbo Frames remain available for explicit historical details and source-navigation requests.
+All HTML is server-rendered. The view uses one workspace-wide Cable subscription to keep each delegation tree current. Expanded Subagents use the existing Agent live-presentation streams, including streamed text and tool activity. Collapsed descendants, hidden views and background browser tabs release subscriptions; opening and reconnecting obtain fresh snapshots. There is no polling timer and historical inspection or text selection does not pause other updates. Status updates never replace child transcript DOM. Turbo Frames remain available for explicit historical details and source-navigation requests.
 
 ## Persistence and lifecycle
 

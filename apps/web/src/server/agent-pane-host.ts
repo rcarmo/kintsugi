@@ -1,12 +1,11 @@
 import { KintsugiCoreError, kintsugiDataPath, createKeyedOperationQueue, getKintsugiRuntimeContext, readTextIfExists, writeJsonAtomic } from "@kintsugi/core";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { placeLiveRegions, type WorkspaceAgentType, type WorkspaceAgentTabSummary } from "@kintsugi/shared";
+import { placeLiveRegions, type WorkspaceAgentType, type WorkspaceAgentTab } from "@kintsugi/shared";
 
 const tabOrderSchema = Type.Array(Type.String());
 
-export interface HostedAgentTab extends WorkspaceAgentTabSummary {
-  agentTypeId: string;
+export interface HostedAgentTab extends WorkspaceAgentTab {
   iconHtml: string;
 }
 
@@ -45,6 +44,22 @@ export function createAgentPaneHost(agentTypes: readonly WorkspaceAgentType[]) {
 
   return {
     list,
+    async settings(context: { workspaceId: string; agents: readonly WorkspaceAgentTab[] }) {
+      const groups = new Map<string, string[]>();
+      for (const agent of context.agents) {
+        const agentType = byId.get(agent.agentTypeId);
+        if (!agentType) continue;
+        const ids = groups.get(agent.agentTypeId);
+        if (ids) ids.push(agent.id);
+        else groups.set(agent.agentTypeId, [agent.id]);
+      }
+      const projected = await Promise.all([...groups].map(async ([agentTypeId, agentIds]) =>
+        await byId.get(agentTypeId)!.tabs.settings?.({ workspaceId: context.workspaceId, agentIds }),
+      ));
+      const result = new Map<string, import("@kintsugi/shared").WorkspaceAgentSettings>();
+      for (const settings of projected) if (settings) for (const [id, value] of settings) result.set(id, value);
+      return result;
+    },
     async render(context: { workspaceId: string; agentId: string }) {
       const pane = await (await owner(context)).tabs.render(context);
       if (!pane.live) return pane;

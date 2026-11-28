@@ -6,8 +6,9 @@ import { agentAttachmentDraftId, listStagedAttachments, renderComposerBody, rend
 import { dictationComposerController } from "@kintsugi/dictation/server";
 import { observableTerminalStaticFiles, renderTerminalKeyBar, renderTerminalConnectionStatus } from "@kintsugi/observable-terminal/server";
 import { terminalProcessSocketPath } from "@kintsugi/observable-terminal/shared";
-import { domId, escapeHtml, turboStream, turboStreamResponse, type WorkspaceModule } from "@kintsugi/shared";
+import { domId, escapeHtml, turboStream, turboStreamResponse, type WorkspaceAgentSettings, type WorkspaceModule } from "@kintsugi/shared";
 import type { KintsugiEventBus } from "@kintsugi/core";
+import { parseModelRef } from "@kintsugi/llm/server";
 import type { CliAgentAdapter } from "./adapter.ts";
 import { createCliAgents, type CliAgentTerminal } from "./agents.ts";
 import { cliComposerRoutes } from "./composer-routes.ts";
@@ -112,6 +113,20 @@ export function createCliAgentModule(adapter: CliAgentAdapter): WorkspaceModule 
       },
       tabs: {
         async list({ workspaceId }) { return agents.list(workspaceId).map(({ id, title }) => ({ id, title })); },
+        async settings({ workspaceId, agentIds }) {
+          const records = agents.list(workspaceId);
+          const projected = new Map<string, WorkspaceAgentSettings>();
+          for (const agentId of agentIds) {
+            const agent = records.find(item => item.id === agentId);
+            if (!agent) continue;
+            const model = agent.model ? parseModelRef(agent.model) : undefined;
+            const settings: WorkspaceAgentSettings = {};
+            if (model) settings.model = `${model.provider}/${model.id}`;
+            if (agent.thinkingLevel) settings.thinkingLevel = agent.thinkingLevel;
+            projected.set(agentId, settings);
+          }
+          return projected;
+        },
         async render({ workspaceId, agentId }) { return { html: await renderTab(workspaceId, agentId) }; },
         close: ({ workspaceId, agentId }) => agents.close(workspaceId, agentId),
       },

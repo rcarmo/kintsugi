@@ -81,8 +81,10 @@ describe("Workspace Agent-tab provider", () => {
       { workspaceId: "workspace-1", agentId: "268604ac-d16a-4a4a-ab1e-1ed3ca54687d", label: "Agent 2", title: "Second", path: "/tmp/second.jsonl" },
     ];
     const rendered: string[] = [];
+    const projected: string[] = [];
     const provider = createWorkspaceAgentTabProvider({
       list: async () => conversations,
+      settings: async (_workspaceId, agentIds) => { projected.push(...agentIds); return new Map(agentIds.map(agentId => [agentId, { model: "faux/review", thinkingLevel: "high" }])); },
       render: async (conversation) => {
         rendered.push(conversation.agentId);
         return { html: `<article>${conversation.title}</article>` };
@@ -97,6 +99,9 @@ describe("Workspace Agent-tab provider", () => {
       { id: conversations[1]!.agentId, title: "Second", untitled: false },
     ]);
     expect(rendered).toEqual([]);
+    expect(projected).toEqual([]);
+    expect(await provider.settings?.({ workspaceId: "workspace-1", agentIds: [conversations[1]!.agentId] })).toEqual(new Map([[conversations[1]!.agentId, { model: "faux/review", thinkingLevel: "high" }]]));
+    expect(projected).toEqual([conversations[1]!.agentId]);
     expect(await provider.render({ workspaceId: "workspace-1", agentId: conversations[1]!.agentId })).toEqual({ html: "<article>Second</article>" });
     expect(rendered).toEqual([conversations[1]!.agentId]);
     expect(provider.render({ workspaceId: "workspace-1", agentId: conversations[1]!.label })).rejects.toMatchObject({ code: "agent_not_found" });

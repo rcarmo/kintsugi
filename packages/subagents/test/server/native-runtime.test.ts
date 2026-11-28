@@ -18,13 +18,13 @@ afterEach(async () => { for (const owner of owners.splice(0)) await owner.suspen
 async function setup(pauseSpawn?: (context: Context) => Promise<void>) {
   const path = await mkdtemp(join(tmpdir(), "native-delegation-")); paths.push(path);
   const models = createModels();
-  const faux = fauxProvider({ tokensPerSecond: 100000, models: [{ id: "faux-1" }, { id: "fast" }, { id: "vendor/review" }, { id: "disabled" }] });
+  const faux = fauxProvider({ tokensPerSecond: 100000, models: [{ id: "faux-1", reasoning: true }, { id: "fast" }, { id: "vendor/review", reasoning: true }, { id: "disabled" }] });
   models.setProvider(faux.provider);
   const disabled = new Set(["disabled"]);
   const open = async () => {
     let harness: Harness;
     const registry = createRegistry();
-    const extension: Extension = createNativeDelegationExtension(() => harness, async (provider, id) => disabled.has(id) ? undefined : models.getModel(provider, id));
+    const extension: Extension = createNativeDelegationExtension(() => harness, async (provider, id) => disabled.has(id) ? undefined : models.getModel(provider, id), (provider, id) => models.getModel(provider, id));
     registry.install(defineExtension({ ...extension, tools: extension.tools!.map(tool => tool.name !== "spawn_agent" ? tool : { ...tool, async execute(args, api, context) {
       const result = await tool.execute(args, api, context);
       await pauseSpawn?.(context);
@@ -170,6 +170,16 @@ test("different root trees cannot address each other's children", async () => {
   expect(Object.values((await owner.harness.snapshot(Delegation, context))!.receipts).some(receipt => receipt.text === "Cross-tree intrusion")).toBe(false);
   const history = await other.history({}, 100, undefined, context);
   expect(JSON.stringify(history)).toContain("Unknown agent in this delegation tree");
+  faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("spawn_agent", { task_name: "peer", message: "Separate task", fork_turns: "none" }), { stopReason: "toolUse" }),
+    fauxAssistantMessage("Done"), fauxAssistantMessage("Done"),
+  ]);
+  await (await other.submit({ requestId: "spawn-peer", text: "Delegate separately" })).wait(context);
+  await completedDeliveries(owner);
+  const all = () => owner.harness.commit(tx => nativeSubagentViews(tx), context);
+  expect((await all()).map(agent => [agent.rootId, agent.taskName])).toEqual([["root", "private"], ["other", "peer"]]);
+  expect(await clearFinishedSubagents(owner.harness, "other")).toBe(1);
+  expect((await all()).map(agent => [agent.rootId, agent.cleared])).toEqual([["root", false], ["other", true]]);
   await root.close();
 });
 
@@ -190,7 +200,7 @@ test("parallel persistent subagents use distinct chosen models on their first tu
     spawned = true;
     return fauxAssistantMessage([
       fauxToolCall("spawn_agent", { task_name: "fast", message: "Draft", model: "faux/fast", fork_turns: "none" }),
-      fauxToolCall("spawn_agent", { task_name: "review", message: "Review", model: "faux/vendor/review", fork_turns: "none" }),
+      fauxToolCall("spawn_agent", { task_name: "review", message: "Review", model: "faux/vendor/review", thinkingLevel: "low", fork_turns: "none" }),
       fauxToolCall("spawn_agent", { task_name: "inherit", message: "Check", fork_turns: "none" }),
       fauxToolCall("spawn_agent", { task_name: "blocked", message: "Do not run", model: "faux/disabled", fork_turns: "none" }),
       fauxToolCall("spawn_agent", { task_name: "malformed", message: "Do not run", model: "fast", fork_turns: "none" }),
@@ -208,6 +218,7 @@ test("parallel persistent subagents use distinct chosen models on their first tu
     expect(records.filter(record => record.parentId).map(record => record.taskName).sort()).toEqual(["fast", "inherit", "review"]);
     const rootId = records.find(record => !record.parentId)!.agentId;
     const agents = await owner.harness.commit(tx => nativeSubagentViews(tx, rootId), context);
+    expect(agents.find(agent => agent.taskName === "review")).toMatchObject({ thinkingLevel: "low" });
     const activities = subagentActivities({ agents, messages: [] }, rootId);
     expect(Object.fromEntries(activities.map(activity => [activity.title, [activity.subtitle, activity.details.Model]]))).toEqual({
       fast: ["faux/fast", "faux/fast"], review: ["faux/vendor/review", "faux/vendor/review"], inherit: ["faux/faux-1", "faux/faux-1"],
@@ -231,9 +242,44 @@ test("parallel persistent subagents use distinct chosen models on their first tu
     await completedDeliveries(reopened);
     expect(Object.fromEntries(used)).toEqual({ fast: "faux/fast", review: "faux/vendor/review" });
     expect(await reopened.catalog()).toHaveLength(4);
+    const persistedReview = (await reopened.catalog()).find(record => record.taskName === "review")!;
+    expect(await (await reopened.harness.conversation(persistedReview.durableId, context))!.agent(context)).toMatchObject({ thinkingLevel: "low" });
     await restored.close();
   } finally { release.resolve(); }
 }, 20_000);
+
+test("spawn validates explicit thinking and persists inherited, combined and clamped settings atomically", async () => {
+  const { owner, root, faux } = await setup();
+  await owner.harness.commit(tx => configure(tx, root.id, { thinkingLevel: "high" }), context);
+  let spawned = false;
+  faux.setResponses(Array.from({ length: 30 }, () => request => {
+    if (JSON.stringify(request.messages).includes("Your canonical task name is /root/")) return fauxAssistantMessage("Child done");
+    if (spawned) return fauxAssistantMessage("Delegated");
+    spawned = true;
+    return fauxAssistantMessage([
+      fauxToolCall("spawn_agent", { task_name: "combined", message: "Explicit pair", model: "faux/vendor/review", thinkingLevel: "low" }),
+      fauxToolCall("spawn_agent", { task_name: "thinking_only", message: "Explicit level", thinkingLevel: "medium" }),
+      fauxToolCall("spawn_agent", { task_name: "inherited", message: "Inherit both" }),
+      fauxToolCall("spawn_agent", { task_name: "clamped", message: "Clamp inherited level", model: "faux/fast" }),
+      fauxToolCall("spawn_agent", { task_name: "unsupported", message: "Reject", thinkingLevel: "max" }),
+    ], { stopReason: "toolUse" });
+  }));
+  await (await root.submit({ requestId: "thinking", text: "Delegate with thinking" })).wait(context);
+  await completedDeliveries(owner);
+  const records = (await owner.catalog()).filter(record => record.parentId);
+  expect(records.map(record => record.taskName)).toEqual(["combined", "thinking_only", "inherited", "clamped"]);
+  const settings = new Map(await Promise.all(records.map(async record => [record.taskName, await (await owner.harness.conversation(record.durableId, context))!.agent(context)] as const)));
+  expect(settings.get("combined")).toMatchObject({ model: { provider: "faux", modelId: "vendor/review" }, thinkingLevel: "low" });
+  expect(settings.get("thinking_only")).toMatchObject({ model: { provider: "faux", modelId: "faux-1" }, thinkingLevel: "medium" });
+  expect(settings.get("inherited")).toMatchObject({ model: { provider: "faux", modelId: "faux-1" }, thinkingLevel: "high" });
+  expect(settings.get("clamped")).toMatchObject({ model: { provider: "faux", modelId: "fast" }, thinkingLevel: "off" });
+  expect(JSON.stringify(await root.history({}, 100, undefined, context))).toContain("Thinking level max isn’t supported by faux/faux-1");
+  const views = await owner.harness.commit(tx => nativeSubagentViews(tx), context);
+  expect(views.map(agent => [agent.taskName, agent.thinkingLevel])).toEqual([
+    ["combined", "low"], ["thinking_only", "medium"], ["inherited", "high"], ["clamped", "off"],
+  ]);
+  await root.close();
+});
 
 test("clearing finished subagents survives reopen, leaves active work alone, and preserves follow-ups", async () => {
   const { owner, root, faux, open } = await setup();
@@ -370,17 +416,17 @@ test("replay after spawn committed but before its tool result reuses the same ch
   let spawned = false;
   faux.setResponses(Array.from({ length: 10 }, () => request => {
     if (JSON.stringify(request.messages).includes("Your canonical task name is /root/once.")) return fauxAssistantMessage("One child result");
-    if (!spawned) { spawned = true; return fauxAssistantMessage(fauxToolCall("spawn_agent", { task_name: "once", message: "Run once", model: "faux/fast", fork_turns: "none" }), { stopReason: "toolUse" }); }
+    if (!spawned) { spawned = true; return fauxAssistantMessage(fauxToolCall("spawn_agent", { task_name: "once", message: "Run once", model: "faux/vendor/review", thinkingLevel: "high", fork_turns: "none" }), { stopReason: "toolUse" }); }
     return fauxAssistantMessage("Parent done");
   }));
   await root.submit({ requestId: "replay-spawn", text: "Delegate" });
   await committed.promise;
   const firstId = (await owner.catalog()).find(record => record.parentId)!.agentId;
-  await owner.suspend(); pause = false; disabled.add("fast");
+  await owner.suspend(); pause = false; disabled.add("vendor/review");
   const reopened = await open(); await reopened.resume(); await completedDeliveries(reopened);
   const children = (await reopened.catalog()).filter(record => record.parentId);
   expect(children).toHaveLength(1); expect(children[0]?.agentId).toBe(firstId);
-  expect((await (await reopened.harness.conversation(children[0]!.durableId, context))!.agent(context)).model).toEqual({ provider: "faux", modelId: "fast" });
+  expect(await (await reopened.harness.conversation(children[0]!.durableId, context))!.agent(context)).toMatchObject({ model: { provider: "faux", modelId: "vendor/review" }, thinkingLevel: "high" });
   const receipts = Object.values((await reopened.harness.snapshot(Delegation, context))!.receipts);
   expect(receipts.filter(receipt => receipt.kind === "task")).toHaveLength(1);
   expect(receipts.filter(receipt => receipt.kind === "completion")).toHaveLength(1);

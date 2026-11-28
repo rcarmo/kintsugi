@@ -72,6 +72,14 @@ interface WorkspaceAttachContext {
   events?: KintsugiEventBus;
 }
 
+export type WorkspaceAgentTab = WorkspaceAgentTabSummary & { agentTypeId: string };
+
+export interface WorkspaceAgentSettings {
+  /** Canonical provider/modelId. Only configured values are projected. */
+  model?: string;
+  thinkingLevel?: string;
+}
+
 export interface WorkspaceAgentTabSummary {
   id: string;
   title: string;
@@ -90,6 +98,8 @@ export interface WorkspaceAgentPane {
 /** Durable Agent-tab seam: cheap shell metadata plus on-demand body rendering. */
 export interface WorkspaceAgentTabProvider {
   list(context: { workspaceId: string }): Promise<readonly WorkspaceAgentTabSummary[]>;
+  /** Narrow, on-demand batch settings projection for a captured tab roster. */
+  settings?(context: { workspaceId: string; agentIds: readonly string[] }): Promise<ReadonlyMap<string, WorkspaceAgentSettings>>;
   render(context: { workspaceId: string; agentId: string }): Promise<WorkspaceAgentPane>;
   close(context: { workspaceId: string; agentId: string }): Promise<void>;
 }
@@ -127,8 +137,12 @@ export interface WorkspaceModuleWorkViewAdapter<Reference extends WorkspaceWorkV
   type: Reference["type"];
   parseReference(value: JsonValue): Reference;
   identity(reference: Reference): string;
-  /** Expensive body rendering is called only by the Work-view hydration endpoint. */
-  render(context: { workspaceId: string; reference: Reference }): Promise<string> | string;
+  /** Render on hydration; views can lazily list tabs and project one Agent's configured settings. */
+  render(
+    context: { workspaceId: string; reference: Reference },
+    listAgents: () => Promise<readonly WorkspaceAgentTab[]>,
+    agentSettings: (agents: readonly WorkspaceAgentTab[]) => Promise<ReadonlyMap<string, WorkspaceAgentSettings>>,
+  ): Promise<string> | string;
   close?(context: { workspaceId: string; reference: Reference }): Promise<void> | void;
 }
 

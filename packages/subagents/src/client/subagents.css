@@ -1,6 +1,11 @@
 .builtin-agent-shell .agent-transcript-region { flex-direction: column; }
 /* The Work pane owns scrolling independently of the Agent transcript. */
 .subagents-work-view { min-height: 0; height: 100%; overflow: auto; padding: 12px; }
+.subagents-root + .subagents-root { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; }
+.subagents-root h3 { margin: 0; font-size: var(--text-body); }
+.subagents-root h3 a { color: var(--text-bright); text-decoration: none; }
+.subagents-settings { color: var(--text-muted); font-size: var(--text-code); margin: 2px 0 6px; overflow-wrap: anywhere; }
+.subagents-root h3 a:hover { text-decoration: underline; }
 .subagents-empty { color: var(--text-muted); margin: 0; }
 .subagents-actions { margin-block: 0 8px; }
 .subagent-state { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: var(--text-code); color: var(--text-muted); }

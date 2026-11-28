@@ -1,8 +1,9 @@
 import type { KintsugiEventBus, JsonObject } from "@kintsugi/core";
-import type { WorkspaceModule } from "@kintsugi/shared";
+import type { WorkspaceAgentSettings, WorkspaceModule } from "@kintsugi/shared";
 import type { createCliModelSettings } from "@kintsugi/cli-agent/server";
 import type { NativeAgentRuntime, NativeAgents } from "./agents.ts";
 import type { NativeAgentRendering } from "./render.ts";
+import { parseModelRef } from "@kintsugi/llm/server";
 
 /** Path parameters of every native Agent route. */
 export const nativeAgentParameters = ["id", "agentId"].map(name => ({ name, in: "path", required: true, schema: { type: "string" } }));
@@ -45,6 +46,20 @@ export function createNativeAgentModule<Runtime extends NativeAgentRuntime>(opti
       async create({ workspaceId }) { await requireSetup(); return agents.create(workspaceId); },
       tabs: {
         async list({ workspaceId }) { return agents.list(workspaceId).map(record => ({ id: record.id, title: record.title })); },
+        async settings({ workspaceId, agentIds }) {
+          const records = agents.list(workspaceId);
+          const projected = new Map<string, WorkspaceAgentSettings>();
+          for (const agentId of agentIds) {
+            const record = records.find(item => item.id === agentId);
+            if (!record) continue;
+            const model = record.model ? parseModelRef(record.model) : undefined;
+            const settings: WorkspaceAgentSettings = {};
+            if (model) settings.model = `${model.provider}/${model.id}`;
+            if (record.thinkingLevel) settings.thinkingLevel = record.thinkingLevel;
+            projected.set(agentId, settings);
+          }
+          return projected;
+        },
         async render({ workspaceId, agentId }) { return options.rendering.paneHtml(await agents.ready(workspaceId, agentId)); },
         close: ({ workspaceId, agentId }) => agents.close(workspaceId, agentId),
       },

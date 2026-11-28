@@ -528,7 +528,11 @@ export function createWebApp(deps: WebAppDeps): WebApp {
     // A closed Work view's pane leaves the chrome; an unavailable one keeps what its body last showed.
     if (!view || view.availability.phase === "unavailable") return [];
     const { reference } = storedWorkViews.find(stored => workViewKey(stored.reference) === key)!;
-    return [{ target: paneContentId(workspaceId, "work-view-body", key), html: await workViewAdapterByType.get(reference.type)!.render({ workspaceId, reference }) }];
+    return [{ target: paneContentId(workspaceId, "work-view-body", key), html: await workViewAdapterByType.get(reference.type)!.render(
+      { workspaceId, reference },
+      () => agentTabs.list({ workspaceId }),
+      agents => agentTabs.settings({ workspaceId, agents }),
+    ) }];
   }
 
   function workspaceBootMountHtml(entry: WorkspaceEntry): string {

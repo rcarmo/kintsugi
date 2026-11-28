@@ -324,6 +324,7 @@ export class ClaudeRuntime {
       this.save();
       await this.refreshContextUsage();
       this.changed();
+      await this.events.emit("workspace_agent_view_invalidated", { workspaceId: this.workspaceId, agentId: this.agentId });
     });
   }
   async rename(title: string) {

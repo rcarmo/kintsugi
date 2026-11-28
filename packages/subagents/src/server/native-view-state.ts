@@ -33,13 +33,14 @@ export async function nativeSubagentViews(tx: Tx, rootId?: string) {
   const agents = [];
   // One-shot agents are Code Mode's, not delegation's.
   for (const record of records.filter(item => item.parentId && !isOneShotAgent(item) && (rootId === undefined || item.rootId === rootId))) {
-    const model = (await tx.doc(AgentDoc, record.durableId)).model;
+    const { model, thinkingLevel } = await tx.doc(AgentDoc, record.durableId);
     const status = await nativeStatus(tx, record);
     const mark = at[record.agentId];
     const cleared = mark !== undefined && !isActiveSubagent({ status }) && mark === (await tx.latestEntryId(record.durableId) ?? 0);
     agents.push({
       id: record.agentId, parentId: record.parentId!, rootId: record.rootId!, taskName: record.taskName!, status, cleared, task: record.title,
       model: model ? { provider: model.provider, modelId: model.modelId } : null,
+      thinkingLevel: thinkingLevel ?? null,
     });
   }
   return agents;

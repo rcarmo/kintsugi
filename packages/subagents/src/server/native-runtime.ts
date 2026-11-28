@@ -1,4 +1,4 @@
-import { clampThinkingLevel, type Api, type Message, type Model } from "@earendil-works/pi-ai";
+import { clampThinkingLevel, getSupportedThinkingLevels, type Api, type Message, type Model, type ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
@@ -60,7 +60,11 @@ async function codexStatus(tx: Tx, record: DurableAgentRecord): Promise<JsonValu
 function output(value: JsonValue) { return { output: [{ type: "text" as const, text: value === "" ? "" : JSON.stringify(value) }] }; }
 
 /** All effects are journal transactions or receipt-addressed native admissions. */
-export function createNativeDelegationExtension(harness: () => Harness, availableModel: (provider: string, id: string) => Promise<Model<Api> | undefined>) {
+export function createNativeDelegationExtension(
+  harness: () => Harness,
+  availableModel: (provider: string, id: string) => Promise<Model<Api> | undefined>,
+  knownModel: (provider: string, id: string) => Model<Api> | undefined,
+) {
   const anchor = defineTask<Record<string, never>, { phase: "alive" }, null>({
     name: anchorTaskName, version: 1, initial: () => ({ phase: "alive" }),
     phases: { async alive(_task, runtime, context) {
@@ -175,6 +179,7 @@ export function createNativeDelegationExtension(harness: () => Harness, availabl
     defineTool({ name: "spawn_agent", description: codexSubagentDescriptions.spawn_agent, replay: "safe", parameters: Type.Object({
       task_name: Type.String(), message: Type.String(), fork_turns: Type.Optional(Type.String()),
       model: Type.Optional(Type.String({ maxLength: 1024, description: "An enabled, available chat model as provider/modelId. Omit to inherit the parent’s model." })),
+      thinkingLevel: Type.Optional(Type.String({ maxLength: 64, description: "A thinking level supported by the child’s effective model. Omit to inherit the parent’s level, clamped when model is changed." })),
     }, { additionalProperties: false }),
       async execute(args, api, context) {
         if (!/^[a-z0-9_]+$/.test(args.task_name)) throw new Error("task_name must use lowercase letters, digits and underscores");
@@ -182,13 +187,34 @@ export function createNativeDelegationExtension(harness: () => Harness, availabl
         const mode = parseForkTurns(args.fork_turns);
         const operation = String(api.taskId);
         const replay = (await api.snapshot(Delegation, context))?.operations[operation]?.child;
-        let model: Model<Api> | undefined;
+        let choice: { model?: { provider: string; modelId: string }; thinkingLevel?: ModelThinkingLevel } | undefined;
         // Replays reattach to the durable child even if the provider is now unavailable.
-        if (!replay && args.model !== undefined) {
-          const slash = args.model.indexOf("/");
-          if (slash < 1 || slash === args.model.length - 1) throw new Error("Use provider/modelId for model.");
-          model = await availableModel(args.model.slice(0, slash), args.model.slice(slash + 1));
-          if (!model) throw new Error(`Model ${args.model} isn’t available. Enable it and connect its provider in Models.`);
+        if (!replay) {
+          const own = await api.agent(context);
+          let model: Model<Api> | undefined;
+          if (args.model !== undefined) {
+            const slash = args.model.indexOf("/");
+            if (slash < 1 || slash === args.model.length - 1) throw new Error("Use provider/modelId for model.");
+            model = await availableModel(args.model.slice(0, slash), args.model.slice(slash + 1));
+            if (!model) throw new Error(`Model ${args.model} isn’t available. Enable it and connect its provider in Models.`);
+          } else if (own.model) {
+            model = knownModel(own.model.provider, own.model.modelId);
+          }
+          let thinkingLevel: ModelThinkingLevel | undefined;
+          if (args.thinkingLevel !== undefined) {
+            if (!model) throw new Error(own.model ? `Could not find the effective model ${own.model.provider}/${own.model.modelId}.` : "The parent has no model; choose an enabled, available model before setting thinkingLevel.");
+            const supported = getSupportedThinkingLevels(model);
+            const requested = supported.find(level => level === args.thinkingLevel);
+            if (!requested) throw new Error(`Thinking level ${args.thinkingLevel} isn’t supported by ${model.provider}/${model.id}. Supported levels: ${supported.join(", ")}.`);
+            thinkingLevel = requested;
+          } else if (args.model !== undefined && model) {
+            thinkingLevel = clampThinkingLevel(model, own.thinkingLevel ?? "off");
+          } else if (own.thinkingLevel) {
+            thinkingLevel = own.thinkingLevel;
+          }
+          choice = {};
+          if (model) choice.model = { provider: model.provider, modelId: model.id };
+          if (thinkingLevel !== undefined) choice.thinkingLevel = thinkingLevel;
         }
         let inherited: Message[] = [];
         if (!replay && mode !== "none") {
@@ -210,10 +236,8 @@ export function createNativeDelegationExtension(harness: () => Harness, availabl
           const child: DurableAgentRecord = { agentId: randomUUID(), durableId: created.id, parentId: caller.agentId, rootId: root(caller), taskName: args.task_name, label: args.task_name, title: args.message.slice(0, 100) };
           const copied = await tx.doc(AgentDoc, created.id);
           const instructions = copied.instructions?.replace(`Your Kintsugi Agent ID is ${JSON.stringify(caller.agentId)}.`, `Your Kintsugi Agent ID is ${JSON.stringify(child.agentId)}.`);
-          await configure(tx, created.id, model ? {
-            instructions, model: { provider: model.provider, modelId: model.id },
-            thinkingLevel: clampThinkingLevel(model, copied.thinkingLevel ?? "off"),
-          } : { instructions });
+          if (!choice) throw new Error("Subagent settings disappeared before creation");
+          await configure(tx, created.id, { instructions, ...choice });
           catalog.agents.push(child);
           for (const message of inherited) await tx.appendEntry(created.id, { kind: "kintsugi.inherited-context", model: [message] });
           await tx.appendEntry(inheritedBoundaryEntry, created.id, { data: { source: nativePath(catalog.agents, caller), count: inherited.length } });

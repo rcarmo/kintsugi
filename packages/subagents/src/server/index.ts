@@ -27,7 +27,7 @@ export const kintsugiServerModule: WorkspaceModule = {
         const extension = createNativeDelegationExtension(harness, async (provider, id) => {
           const enabled = await enabledModelOptionViews({ provider, id });
           return enabled.some(item => item.selected && item.available) ? models.getModel(provider, id) : undefined;
-        });
+        }, (provider, id) => models.getModel(provider, id));
         return { extension, models: delegationModels(models, harness) };
       },
       requestMessages: stampDelegationRequestIdentity,
@@ -45,19 +45,19 @@ export const kintsugiServerModule: WorkspaceModule = {
       return value;
     },
     identity: () => "workspace",
-    render: ({ workspaceId }) => renderSubagentsWorkView(workspaceId),
+    render: async ({ workspaceId }, listAgents, agentSettings) => renderSubagentsWorkView(workspaceId, await listAgents(), agentSettings),
   }],
   commands: [{ id: "subagents.open", execute: () => ({ createdWorkView: reference }) }],
   attachToWorkspace: () => ({
     workViews: [{ reference, sourceKey: subagentsWorkKey, label: "Subagents", kind: "contextual", iconHtml: Icons.Subagents, availability: { phase: "live" }, initiallyOpen: false }],
-    commands: [{ id: "subagents.open", label: "Open Subagents", description: "Inspect the selected Agent’s delegated work.", scope: "workspace", surfaces: { ui: { placement: "work-launcher", label: "Subagents", iconHtml: Icons.Subagents } } }],
+    commands: [{ id: "subagents.open", label: "Open Subagents", description: "Inspect the workspace’s Agents and delegated work.", scope: "workspace", surfaces: { ui: { placement: "work-launcher", label: "Subagents", iconHtml: Icons.Subagents } } }],
   }),
   cableChannels: [{
     name: "subagents",
     subscribe(identifier, listener) {
       if (identifier.channel !== "module" || identifier.name !== "subagents") throw new Error("Invalid Subagents channel");
-      const params = Value.Parse(Type.Object({ agentId: Type.String({ minLength: 1 }) }, { additionalProperties: false }), identifier.params);
-      return subscribeSubagentTree(identifier.workspaceId, params.agentId, listener);
+      Value.Assert(Type.Object({}, { additionalProperties: false }), identifier.params);
+      return subscribeSubagentTree(identifier.workspaceId, listener);
     },
   }],
   routes: [{

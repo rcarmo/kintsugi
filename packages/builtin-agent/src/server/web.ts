@@ -12,7 +12,7 @@ import { registerWorkspaceAgentTool } from "@kintsugi/agent/server/tools";
 import { createCredentialCatalogueTool } from "./credential-catalogue.ts";
 import { KintsugiCoreError, createKeyedOperationQueue, type KintsugiEventBus } from "@kintsugi/core";
 import { builtinAgentIconHtml } from "@kintsugi/design-system/icons";
-import { launchComposerCommand, type WorkspaceAgentPane, type WorkspaceAgentTabProvider, type WorkspaceCommandContribution, type WorkspaceModule } from "@kintsugi/shared";
+import { launchComposerCommand, type WorkspaceAgentPane, type WorkspaceAgentSettings, type WorkspaceAgentTabProvider, type WorkspaceCommandContribution, type WorkspaceModule } from "@kintsugi/shared";
 import { registerAgentEvents } from "./agent-events.ts";
 import { resolveAgent } from "./delegation.ts";
 import { removeWorkspaceInitialPromptDrafts } from "./initial-prompt-draft.ts";
@@ -26,6 +26,10 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { refreshWorkspaceCompletionCatalogs, closeWorkspaceAgent, getWorkspaceAgentController, getWorkspaceAgentPresentation, restoreWorkspaceAgentRuntime, knownWorkspaceAgentRequest } from "./runtime.ts";
 import { removeClosedWorkspaceAgent, createNextWorkspaceAgent, listWorkspaceAgents, untitledAgentTitle, type WorkspaceAgentInfo } from "./agent-store.ts";
+import { AgentDoc } from "@earendil-works/pi-durable";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { durableWorkspaceOwner } from "./runtime.ts";
+import { WorkspaceAgents } from "./durable-workspace.ts";
 
 const toolAbortRequestSchema = { type: "object", properties: { note: { type: "string", description: "Optional user note returned in the tool result" } } };
 
@@ -33,6 +37,7 @@ let agentEvents: KintsugiEventBus | undefined;
 
 export function createWorkspaceAgentTabProvider(dependencies: {
   list(workspaceId: string): Promise<readonly WorkspaceAgentInfo[]>;
+  settings?(workspaceId: string, agentIds: readonly string[]): Promise<ReadonlyMap<string, WorkspaceAgentSettings>>;
   render(conversation: WorkspaceAgentInfo): Promise<WorkspaceAgentPane>;
   dispose(workspaceId: string, agentId: string): Promise<void>;
   restore(workspaceId: string, agentId: string): void;
@@ -43,6 +48,10 @@ export function createWorkspaceAgentTabProvider(dependencies: {
   return {
     async list({ workspaceId }) {
       return (await dependencies.list(workspaceId)).map(({ agentId, title }) => ({ id: agentId, title, untitled: title === untitledAgentTitle }));
+    },
+
+    async settings({ workspaceId, agentIds }) {
+      return await dependencies.settings?.(workspaceId, agentIds) ?? new Map();
     },
 
     async render({ workspaceId, agentId }) {
@@ -70,6 +79,23 @@ export function createWorkspaceAgentTabProvider(dependencies: {
 
 export const workspaceAgentTabProvider = createWorkspaceAgentTabProvider({
   list: listWorkspaceAgents,
+  async settings(workspaceId, agentIds) {
+    const owner = await durableWorkspaceOwner(workspaceId);
+    return owner.harness.commit(async tx => {
+      const records = (await tx.doc(WorkspaceAgents)).agents;
+      const projected = new Map<string, WorkspaceAgentSettings>();
+      for (const agentId of agentIds) {
+        const record = records.find(item => item.agentId === agentId && !item.parentId);
+        if (!record) continue;
+        const agent = await tx.doc(AgentDoc, record.durableId);
+        const settings: WorkspaceAgentSettings = {};
+        if (agent.model) settings.model = `${agent.model.provider}/${agent.model.modelId}`;
+        if (agent.thinkingLevel) settings.thinkingLevel = agent.thinkingLevel;
+        projected.set(agentId, settings);
+      }
+      return projected;
+    }, BACKGROUND_CONTEXT);
+  },
   async render(conversation) {
     const runtime = await getWorkspaceAgentPresentation(conversation, { events: agentEvents });
     await runtime.loadCompletionCatalog();
